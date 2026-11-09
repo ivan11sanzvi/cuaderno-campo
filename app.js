@@ -41,7 +41,7 @@
   const fmtFecha = iso => { if (!iso) return ''; const [y, m, d] = iso.split('-'); return `${+d} ${MESES[+m - 1]} ${y}`; };
   const numStr = v => (v == null || v === '' || isNaN(v)) ? '' : String(v).replace('.', ',');
   const sum = (arr, f) => arr.reduce((a, x) => a + (+f(x) || 0), 0);
-  const byNombre = (a, b) => a.nombre.localeCompare(b.nombre, 'es');
+  const byNombre = (a, b) => a.nombre.localeCompare(b.nombre, 'es', { numeric: true });
   const byFechaDesc = (a, b) => (b.fecha || '').localeCompare(a.fecha || '') || (b.id < a.id ? -1 : 1);
 
   // Acepta "1.250,5", "1250.5", "1250,5" y, en campos de kilos/euros, "1.250" como mil doscientos cincuenta.
