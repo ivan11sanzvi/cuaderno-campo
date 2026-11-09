@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Cuaderno de Campo</title>
+<meta name="theme-color" content="#2e5a31">
+<meta name="description" content="Fincas, labores, cuentas y cosechas de la explotación.">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<!--APP-->
+<header class="top">
+  <h1 id="title">Fincas</h1>
+  <button class="camp" id="campBtn" aria-label="Cambiar campaña">2026/27</button>
+  <button class="iconbtn" id="cfgBtn" aria-label="Ajustes y copias de seguridad">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1.08 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.6.85 1 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+  </button>
+</header>
+<main id="main"></main>
+<div id="fabSlot"></div>
+<nav class="tabs" aria-label="Secciones">
+  <button data-tab="fincas"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20h18M3 20l3-9h12l3 9M6 11l2-6h8l2 6M9 11l-1 9M15 11l1 9"/></svg>Fincas</button>
+  <button data-tab="cuaderno"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h12a3 3 0 0 1 3 3v13H7a3 3 0 0 1-3-3z"/><path d="M8 9h7M8 13h7M8 17h4"/></svg>Cuaderno</button>
+  <button data-tab="cuentas"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 6.5A6 6 0 1 0 17 17.5"/><path d="M4 10h9M4 14h9"/></svg>Cuentas</button>
+  <button data-tab="cosechas"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22V8"/><path d="M12 8c0-3 2-5 2-5s2 2 0 5-2 0-2 0zM12 8c0-3-2-5-2-5s-2 2 0 5 2 0 2 0z"/><path d="M12 13c2-2 5-2 5-2s0 3-2 4-3-2-3-2zM12 13c-2-2-5-2-5-2s0 3 2 4 3-2 3-2zM12 18c2-2 5-2 5-2s0 3-2 4-3-2-3-2zM12 18c-2-2-5-2-5-2s0 3 2 4 3-2 3-2z"/></svg>Cosechas</button>
+  <button data-tab="resumen"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Resumen</button>
+</nav>
+<div id="layer"></div>
+<div id="toast" class="toast" hidden></div>
+<input type="file" id="fileIn" accept=".json,application/json" hidden>
+<!--/APP-->
+<script src="app.js"></script>
+</body>
+</html>
