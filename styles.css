@@ -202,3 +202,28 @@ tr.grp td { background: var(--surface-2); font-weight: 700; text-align: left; }
 .small { font-size: .85rem; }
 .sp { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
 .note { font-size: .85rem; color: var(--muted); margin: 0 2px; }
+
+/* Mapa */
+.mapa { height: calc(100dvh - 300px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); min-height: 340px; border-radius: var(--r); border: 1px solid var(--line); overflow: hidden; background: #c9cfc0; z-index: 0; }
+.mapa .etq { background: rgba(10, 14, 9, .62); color: #fff; border: 0; box-shadow: none; font: 700 .8rem/1.2 var(--font); padding: 2px 7px; border-radius: 6px; white-space: nowrap; }
+.mapa .etq::before { display: none; }
+.mapa:not(.etiquetas) .etq { display: none; }
+.mapctl { display: flex; flex-direction: column; gap: 6px; }
+.mapctl button { width: 44px; height: 44px; border-radius: 10px; border: 0; background: #fff; color: #1b2218; display: grid; place-items: center; box-shadow: 0 1px 5px rgba(0, 0, 0, .35); }
+.mapctl button svg { width: 22px; height: 22px; }
+.mapctl button[aria-pressed="false"] { opacity: .55; }
+.mapa .leaflet-control-zoom a { width: 40px; height: 40px; line-height: 40px; font-size: 20px; }
+.mapa .leaflet-popup-content-wrapper { background: var(--surface); color: var(--ink); border-radius: 12px; }
+.mapa .leaflet-popup-tip { background: var(--surface); }
+.mapa .leaflet-popup-content { margin: 12px 14px; font: 14px/1.4 var(--font); }
+.mapa .leaflet-container a.leaflet-popup-close-button { color: var(--muted); }
+.pop { display: flex; flex-direction: column; gap: 6px; min-width: 190px; }
+.pop .t { font-weight: 700; font-size: 1rem; }
+.pop .btn { margin-top: 4px; }
+.popbtns { display: flex; gap: 6px; flex-wrap: wrap; }
+.popbtns .btn { flex: 1 1 auto; }
+.leyenda { display: flex; flex-wrap: wrap; gap: 6px; }
+.mapinfo { display: flex; flex-direction: column; gap: 8px; }
+.mapinfo p { margin: 0; }
+.sigpac .refs { margin: 4px 0; display: flex; flex-wrap: wrap; gap: 4px; }
+.sigpac code { font: 600 .82rem/1.3 ui-monospace, "Roboto Mono", monospace; background: var(--surface-2); border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px; }

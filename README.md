@@ -6,6 +6,8 @@ App para el móvil (PWA) para llevar una explotación de cereal, leguminosas y c
 - **Cuaderno de campo**: labrado, siembra, abonado, tratamientos (producto, dosis, nº de registro, plaga), cosecha… Si una labor lleva coste, se apunta sola como gasto.
 - **Cuentas**: gastos e ingresos por finca o generales (seguro, gasóleo, PAC). En ventas de grano calcula el importe a partir de los kilos y el precio.
 - **Cosechas**: kilos por finca (cada remolque o el total) y rendimiento en kg/ha.
+- **Mapa**: tus fincas sobre la ortofoto del PNOA (IGN) con los linderos de SIGPAC, coloreadas por cultivo. Al tocar cualquier parcela se ven su referencia, superficie y uso, y se puede crear una finca con ella o añadirla a una existente. Botón de «Mi ubicación» con el GPS.
+- **Excel**: importa las fincas de una hoja de cálculo (nombre, superficie, provincia, municipio, polígono, parcela, recinto, cultivo, variedad, campaña, notas). Reconoce títulos parecidos (Paraje, Ha, Pol.…) y junta en una finca las filas con el mismo nombre. También exporta las fincas y descarga una plantilla.
 - **Resumen**: superficie, kg/ha y margen €/ha por cultivo y por finca, y comparativa entre campañas.
 
 Funciona sin cobertura. Los datos se guardan en el propio teléfono. Desde **Ajustes → Copia de seguridad** se crea un archivo `.json` que se puede mandar a Google Drive, WhatsApp o al correo, e importar en otro móvil.
@@ -31,7 +33,13 @@ Las campañas van de septiembre a agosto (por ejemplo, 2026/27).
 | `index.html` | Estructura de la pantalla |
 | `styles.css` | Diseño (modo claro y oscuro) |
 | `app.js` | Toda la lógica y los datos |
-| `sw.js` | Guarda la app para usarla sin cobertura |
+| `sw.js` | Guarda la app (y la ortofoto ya vista) para usarla sin cobertura |
+| `vendor/` | Leaflet 1.9.4 (mapa) y SheetJS 0.18.5 (Excel) |
 | `manifest.webmanifest`, `icons/` | Nombre, icono y colores al instalarla |
 
 Al cambiar `app.js` o `styles.css`, sube el número de `CACHE` en `sw.js` para que los móviles descarguen la versión nueva.
+
+## Fuentes de datos del mapa
+
+- Recintos SIGPAC: `https://sigpac-hubcloud.es` (FEGA), consulta por referencia (`/ogcapi/collections/recintos/items`) y por punto (`/servicioconsultassigpac/query/recinfobypoint`). Linderos en WMS (`/wms`, capa `recinto`).
+- Ortofoto: PNOA máxima actualidad, `https://tms-pnoa-ma.idee.es` (IGN).

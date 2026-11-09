@@ -2,7 +2,7 @@
 (function () {
   // ---------- Constantes ----------
   const KEY = 'cuadernoCampo.v1';
-  const VERSION = '1.0.0';
+  const VERSION = '1.1.0';
   const TIPOS_LABOR = ['Labrado', 'Siembra', 'Abonado', 'Tratamiento', 'Rodillo', 'Cosecha', 'Empacado', 'Otro'];
   const CON_DOSIS = ['Siembra', 'Abonado', 'Tratamiento'];
   const UNIDADES = ['kg/ha', 'L/ha', 'g/ha', 'cc/ha', 'kg', 'L'];
@@ -16,10 +16,20 @@
   const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
   const MESES_L = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
   const TITULOS = { fincas: 'Fincas', cuaderno: 'Cuaderno de campo', cuentas: 'Cuentas', cosechas: 'Cosechas', resumen: 'Resumen' };
+  // Servicios públicos: SIGPAC (FEGA) y ortofoto PNOA (IGN).
+  const SIGPAC = 'https://sigpac-hubcloud.es';
+  const PNOA = 'https://tms-pnoa-ma.idee.es/1.0.0/pnoa-ma/{z}/{x}/{y}.jpeg';
+  const XLSX_SRC = window.XLSX_SRC || 'vendor/xlsx.full.min.js';
+  const USOS = { TA: 'Tierra arable', TH: 'Huerta', PS: 'Pastizal', PR: 'Pasto arbustivo', PA: 'Pasto con arbolado', FO: 'Forestal', OV: 'Olivar', VI: 'Viñedo', FY: 'Frutales', FS: 'Frutos secos', FL: 'Frutos secos y olivar', CI: 'Cítricos', IM: 'Improductivo', CA: 'Viales', ED: 'Edificaciones', ZU: 'Zona urbana', AG: 'Agua', IV: 'Invernadero', ZC: 'Zona concentrada', ZV: 'Zona censurada' };
+  const PROVINCIAS = ['', 'Álava', 'Albacete', 'Alicante', 'Almería', 'Ávila', 'Badajoz', 'Baleares', 'Barcelona', 'Burgos', 'Cáceres', 'Cádiz', 'Castellón', 'Ciudad Real', 'Córdoba', 'A Coruña', 'Cuenca', 'Girona', 'Granada', 'Guadalajara', 'Gipuzkoa', 'Huelva', 'Huesca', 'Jaén', 'León', 'Lleida', 'La Rioja', 'Lugo', 'Madrid', 'Málaga', 'Murcia', 'Navarra', 'Ourense', 'Asturias', 'Palencia', 'Las Palmas', 'Pontevedra', 'Salamanca', 'Santa Cruz de Tenerife', 'Cantabria', 'Segovia', 'Sevilla', 'Soria', 'Tarragona', 'Teruel', 'Toledo', 'Valencia', 'Valladolid', 'Bizkaia', 'Zamora', 'Zaragoza', 'Ceuta', 'Melilla'];
+  const PROV_ALIAS = { araba: 1, alacant: 3, 'illes balears': 7, 'islas baleares': 7, castello: 12, 'la coruna': 15, coruna: 15, gerona: 17, guipuzcoa: 20, lerida: 25, orense: 32, vizcaya: 48, rioja: 26, navarra: 31, 'valencia valencia': 46 };
+  // Recintos reales de ejemplo (datos públicos SIGPAC, simplificados).
+  const EJ_GEO = {"47:215:0:0:403:30:1":{"ha":15.8929,"c":[[[[-5.052177,42.078819],[-5.052217,42.07888],[-5.052783,42.080031],[-5.052848,42.080194],[-5.05288,42.0803],[-5.052918,42.080638],[-5.052963,42.081228],[-5.052991,42.081476],[-5.047682,42.082866],[-5.04761,42.082653],[-5.047246,42.081465],[-5.047224,42.081414],[-5.047168,42.081335],[-5.046598,42.080636],[-5.045823,42.079731],[-5.045817,42.079716],[-5.047099,42.079798],[-5.047188,42.079801],[-5.047332,42.079795],[-5.050176,42.079207],[-5.052177,42.078819]]]]},"47:215:0:0:403:69:1":{"ha":13.0009,"c":[[[[-5.053132,42.074777],[-5.056275,42.074923],[-5.056226,42.075195],[-5.056221,42.075321],[-5.05623,42.075435],[-5.056249,42.075548],[-5.056301,42.075718],[-5.056572,42.076429],[-5.048802,42.077866],[-5.049292,42.075284],[-5.053029,42.075723],[-5.053045,42.07564],[-5.053132,42.074777]]]]},"47:215:0:0:403:36:1":{"ha":13.2826,"c":[[[[-5.049995,42.082359],[-5.051586,42.085451],[-5.047842,42.086482],[-5.047402,42.086353],[-5.045896,42.083426],[-5.049995,42.082359]]]]},"47:215:0:0:404:39:1":{"ha":5.0953,"c":[[[[-5.049141,42.09618],[-5.050061,42.09809],[-5.047217,42.097892],[-5.04508,42.097718],[-5.044889,42.097327],[-5.047057,42.096749],[-5.049141,42.09618]]]]},"47:215:0:0:403:8:1":{"ha":3.1385,"c":[[[[-5.04734,42.089678],[-5.048955,42.092867],[-5.04802,42.093132],[-5.046401,42.089936],[-5.04734,42.089678]]]]}};
 
   // ---------- Utilidades ----------
   const $ = (s, el) => (el || document).querySelector(s);
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const norm = s => String(s == null ? '' : s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
   const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
   const hoyISO = () => { const d = new Date(); return new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
   const campanaDe = iso => { const [y, m] = iso.split('-').map(Number); const a = m >= 9 ? y : y - 1; return a + '/' + String((a + 1) % 100).padStart(2, '0'); };
@@ -80,6 +90,138 @@
   const siembraDe = (fid, c) => db.siembras.find(s => s.fincaId === fid && s.campana === c) || null;
   const cultivoDe = (fid, c) => { const s = siembraDe(fid, c); return s ? s.cultivo : null; };
 
+  // ---------- SIGPAC: referencias y contornos ----------
+  // "1, 2, 5-7" -> [1,2,5,6,7]
+  function listaRecintos(s) {
+    const out = [];
+    String(s == null ? '' : s).split(/[,;\s]+/).forEach(t => {
+      const m = t.match(/^(\d+)(?:-(\d+))?$/); if (!m) return;
+      const a = +m[1], b = m[2] ? +m[2] : a;
+      for (let i = a; i <= Math.min(b, a + 300); i++) out.push(i);
+    });
+    return [...new Set(out)];
+  }
+  // Todas las referencias SIGPAC de una finca: la principal (con sus recintos) y las de «otras parcelas».
+  function refsFinca(f) {
+    const pr = +f.provincia || 0, mu = +f.codMunicipio || 0, ag = +f.agregado || 0, zo = +f.zona || 0;
+    const out = [];
+    const add = r => { if (r.pr && r.mu && r.po && r.pa) out.push(r); };
+    if (f.poligono && f.parcela) {
+      const base = { pr, mu, ag, zo, po: +f.poligono, pa: +f.parcela };
+      const recs = listaRecintos(f.recinto);
+      if (recs.length) recs.forEach(re => add(Object.assign({ re }, base))); else add(Object.assign({ re: null }, base));
+    }
+    String(f.otras || '').split(/[\n;]+/).forEach(l => {
+      const n = l.trim().split(/[:\-\/\s]+/).filter(Boolean).map(Number);
+      if (!n.length || n.some(isNaN)) return;
+      if (n.length >= 6) add({ pr: n[0], mu: n[1], ag: n[2], zo: n[3], po: n[4], pa: n[5], re: n[6] || null });
+      else if (n.length >= 2) add({ pr, mu, ag, zo, po: n[0], pa: n[1], re: n[2] || null });
+    });
+    return out;
+  }
+  const refTxt = r => [r.pr, r.mu, r.ag, r.zo, r.po, r.pa].join(':') + (r.re ? ':' + r.re : '');
+  const refsKey = f => refsFinca(f).map(refTxt).join('|');
+  const nombreProv = c => PROVINCIAS[+c] || '';
+  function provinciaDe(v) {
+    if (v == null || v === '') return '';
+    if (/^\d+$/.test(String(v).trim())) return +v;
+    const n = norm(v);
+    const i = PROVINCIAS.findIndex(p => p && norm(p) === n);
+    return i > 0 ? i : (PROV_ALIAS[n] || '');
+  }
+  function fincaConRecinto(x) {
+    return db.fincas.find(f => refsFinca(f).some(r => r.pr === x.provincia && r.mu === x.municipio && r.ag === x.agregado && r.zo === x.zona && r.po === x.poligono && r.pa === x.parcela && (!r.re || r.re === x.recinto)));
+  }
+
+  function dp(pts, tol) {
+    if (pts.length < 3) return pts;
+    const a = pts[0], b = pts[pts.length - 1], dx = b[0] - a[0], dy = b[1] - a[1], L = Math.hypot(dx, dy);
+    let dmax = 0, idx = 0;
+    for (let i = 1; i < pts.length - 1; i++) {
+      const p = pts[i];
+      const d = L ? Math.abs(dy * p[0] - dx * p[1] + b[0] * a[1] - b[1] * a[0]) / L : Math.hypot(p[0] - a[0], p[1] - a[1]);
+      if (d > dmax) { dmax = d; idx = i; }
+    }
+    return dmax > tol ? dp(pts.slice(0, idx + 1), tol).slice(0, -1).concat(dp(pts.slice(idx), tol)) : [a, b];
+  }
+  // Redondea a ~10 cm y quita vértices sobrantes (< 0,4 m) para que quepan muchas fincas en el teléfono.
+  function simplificarAnillo(r) {
+    const pts = r.map(p => [Math.round(p[0] * 1e6) / 1e6, Math.round(p[1] * 1e6) / 1e6]);
+    if (pts.length < 8) return pts;
+    let m = 0, dm = 0;
+    pts.forEach((p, i) => { const d = Math.hypot(p[0] - pts[0][0], p[1] - pts[0][1]); if (d > dm) { dm = d; m = i; } });
+    return dp(pts.slice(0, m + 1), 4e-6).slice(0, -1).concat(dp(pts.slice(m), 4e-6));
+  }
+  function areaAnillo(r) {
+    const R = 6378137, d = Math.PI / 180; let a = 0;
+    for (let i = 0; i < r.length - 1; i++) { const [x1, y1] = r[i], [x2, y2] = r[i + 1]; a += (x2 - x1) * d * (2 + Math.sin(y1 * d) + Math.sin(y2 * d)); }
+    return Math.abs(a * R * R / 2);
+  }
+  const areaHa = c => c.reduce((s, poly) => s + poly.reduce((t, r, i) => t + (i ? -1 : 1) * areaAnillo(r), 0), 0) / 1e4;
+  // WKT (POLYGON / MULTIPOLYGON) -> coordenadas MultiPolygon
+  function wktCoords(w) {
+    const polys = []; const rd = /MULTIPOLYGON/i.test(w) ? 3 : 2;
+    let depth = 0, poly = null, buf = '';
+    for (const ch of String(w)) {
+      if (ch === '(') { depth++; if (depth === rd - 1) poly = []; if (depth === rd) buf = ''; }
+      else if (ch === ')') { if (depth === rd) poly.push(buf.split(',').map(p => p.trim().split(/\s+/).map(Number))); if (depth === rd - 1) polys.push(poly); depth--; }
+      else if (depth === rd) buf += ch;
+    }
+    return polys;
+  }
+
+  async function contornoFinca(f) {
+    // Una consulta por parcela; si solo son algunos recintos, se filtran.
+    const grupos = new Map();
+    for (const r of refsFinca(f)) {
+      const k = [r.pr, r.mu, r.ag, r.zo, r.po, r.pa].join(':');
+      const g = grupos.get(k) || { r, recs: new Set(), todo: false };
+      if (r.re) g.recs.add(r.re); else g.todo = true;
+      grupos.set(k, g);
+    }
+    const polys = []; let ha = 0;
+    for (const { r, recs, todo } of grupos.values()) {
+      const q = new URLSearchParams({ f: 'json', provincia: r.pr, municipio: r.mu, agregado: r.ag, zona: r.zo, poligono: r.po, parcela: r.pa, limit: '1000' });
+      if (!todo && recs.size === 1) q.set('recinto', [...recs][0]);
+      const res = await fetch(`${SIGPAC}/ogcapi/collections/recintos/items?${q}`);
+      if (!res.ok) throw new Error('SIGPAC ' + res.status);
+      const d = await res.json();
+      for (const ft of d.features || []) {
+        if (!todo && !recs.has(ft.properties && ft.properties.recinto)) continue;
+        const g = ft.geometry; if (!g) continue;
+        const ps = g.type === 'Polygon' ? [g.coordinates] : g.type === 'MultiPolygon' ? g.coordinates : [];
+        ps.forEach(p => { const s = p.map(simplificarAnillo); polys.push(s); ha += areaHa([p]); });
+      }
+    }
+    return { k: refsKey(f), c: polys, ha: Math.round(ha * 100) / 100, t: hoyISO() };
+  }
+  let buscandoContornos = false;
+  const fallidos = new Set(); // referencias que fallaron en esta sesión (no se reintentan solas)
+  async function actualizarContornos(opts = {}) {
+    db.fincas.forEach(f => { if (f.geo && !refsKey(f)) delete f.geo; });
+    if (opts.forzar) fallidos.clear();
+    const pend = db.fincas.filter(f => { const k = refsKey(f); return k && !fallidos.has(k) && (opts.forzar || !f.geo || f.geo.k !== k); });
+    if (!pend.length || buscandoContornos) { if (opts.forzar && !opts.silencioso && !pend.length) toast('Ninguna finca tiene referencia SIGPAC'); return; }
+    if (navigator.onLine === false) { if (!opts.silencioso) toast('Sin conexión: los contornos se buscarán cuando haya cobertura'); return; }
+    buscandoContornos = true;
+    if (!opts.silencioso || pend.length > 2) toast(`Buscando ${pend.length === 1 ? 'la finca' : pend.length + ' fincas'} en SIGPAC…`);
+    let ok = 0, no = 0, fallo = 0;
+    for (const f of pend) {
+      try {
+        const g = await contornoFinca(f);
+        f.geo = g;
+        if (g.c.length) { ok++; if (!(f.superficie > 0) && g.ha) f.superficie = g.ha; } else no++;
+      } catch (e) { fallo++; fallidos.add(refsKey(f)); }
+    }
+    buscandoContornos = false;
+    guardar(false); render();
+    const partes = [];
+    if (ok) partes.push(`${ok} ${ok === 1 ? 'finca situada' : 'fincas situadas'} en el mapa`);
+    if (no) partes.push(`${no} no ${no === 1 ? 'aparece' : 'aparecen'} en SIGPAC (revisa la referencia)`);
+    if (fallo) partes.push(`${fallo} sin respuesta de SIGPAC; se reintentará`);
+    if (partes.length && (!opts.silencioso || no || fallo || ok > 2)) toast(partes.join(' · '));
+  }
+
   function statsFinca(fid, c) {
     const f = finca(fid); const ha = (f && f.superficie) || 0;
     const kg = sum(db.cosechas.filter(x => x.fincaId === fid && x.campana === c), x => x.kg);
@@ -110,7 +252,7 @@
   }
 
   // ---------- Estado de la interfaz y navegación (botón atrás de Android) ----------
-  const ui = { tab: 'fincas', fincaId: null, filtroLabor: { finca: '', tipo: '' }, filtroMov: 'todos' };
+  const ui = { tab: 'fincas', fincaId: null, filtroLabor: { finca: '', tipo: '' }, filtroMov: 'todos', vistaFincas: 'lista', enfocar: null, mapaAjustado: false };
   const capas = [];
   const profundidad = () => capas.length + (ui.fincaId ? 1 : 0);
   function empujar() { try { history.pushState({ d: profundidad() }, ''); } catch (e) { /* ignorar */ } }
@@ -179,11 +321,14 @@
   // ---------- Vistas ----------
   function vFincas() {
     let h = bannerAvisos();
+    const segs = `<div class="segs" role="group" aria-label="Vista">${[['lista', 'Lista'], ['mapa', 'Mapa']].map(([k, t]) => `<button data-act="vistaFincas" data-k="${k}" aria-pressed="${ui.vistaFincas === k}">${t}</button>`).join('')}</div>`;
+    if (ui.vistaFincas === 'mapa') return h + segs + vMapaInfo();
     if (!db.fincas.length) {
-      return h + vacio('Aún no tienes fincas', 'Da de alta tus fincas con su superficie. Después podrás apuntar labores, gastos y cosechas de cada una.',
-        '<button class="btn primary" data-act="nuevaFinca">Añadir finca</button><button class="btn" data-act="ejemplo">Ver con datos de ejemplo</button>');
+      return h + vacio('Aún no tienes fincas', 'Da de alta tus fincas con su superficie, tráelas de un Excel o tócalas en el mapa de SIGPAC. Después podrás apuntar labores, gastos y cosechas de cada una.',
+        '<button class="btn primary" data-act="nuevaFinca">Añadir finca</button><button class="btn" data-act="importarExcel">Importar desde Excel</button><button class="btn" data-act="vistaFincas" data-k="mapa">Buscar en el mapa</button><button class="btn" data-act="ejemplo">Ver con datos de ejemplo</button>');
     }
     const c = db.campanaActiva;
+    h += segs;
     const ha = sum(db.fincas, f => f.superficie);
     const sembrado = sum(db.fincas.filter(f => { const cu = cultivoDe(f.id, c); return cu && cu !== 'Barbecho'; }), f => f.superficie);
     h += `<div class="stats">${stat('Fincas', db.fincas.length)}${stat('Superficie', fmtN(ha) + ' ha')}${stat('Sembrado ' + c, fmtN(sembrado) + ' ha')}</div>`;
@@ -198,8 +343,19 @@
     const f = finca(id); if (!f) { ui.fincaId = null; return vFincas(); }
     const c = db.campanaActiva; const s = siembraDe(id, c); const st = statsFinca(id, c);
     const sig = [f.poligono && `Pol. ${f.poligono}`, f.parcela && `Parc. ${f.parcela}`, f.recinto && `Rec. ${f.recinto}`].filter(Boolean).join(' · ');
+    const refs = refsFinca(f);
     let h = `<div class="backhdr"><button class="iconbtn" data-act="atras" aria-label="Volver">${ico.back}</button><h2>${esc(f.nombre)}</h2><button class="iconbtn" data-act="editFinca" data-id="${id}" aria-label="Editar finca">${ico.edit}</button></div>
       <div class="meta"><span><b>${fmtN(f.superficie)} ha</b></span>${f.municipio ? `<span>${esc(f.municipio)}</span>` : ''}${sig ? `<span>SIGPAC ${esc(sig)}</span>` : ''}</div>`;
+    if (refs.length) {
+      const enMapa = f.geo && f.geo.c.length && f.geo.k === refsKey(f);
+      const noEnc = f.geo && !f.geo.c.length && f.geo.k === refsKey(f);
+      h += `<div class="card pad sigpac"><div class="sp"><div style="min-width:0"><div class="tag">SIGPAC${f.provincia ? ' · ' + esc(nombreProv(f.provincia)) : ''}</div>
+        <div class="refs">${refs.slice(0, 4).map(r => `<code>${refTxt(r)}</code>`).join(' ')}${refs.length > 4 ? ` <span class="muted small">y ${refs.length - 4} más</span>` : ''}</div>
+        <div class="small ${noEnc ? 'neg' : 'muted'}">${enMapa ? `Superficie SIGPAC: <b>${fmtN(f.geo.ha)} ha</b>` : noEnc ? 'No aparece en SIGPAC: revisa los códigos' : 'Contorno pendiente de buscar'}</div></div>
+        ${enMapa ? `<button class="btn sm" data-act="verMapa" data-id="${id}">Ver en el mapa</button>` : `<button class="btn sm" data-act="contornos">Buscar</button>`}</div></div>`;
+    } else {
+      h += `<div class="card pad sp"><span class="small muted">Sin referencia SIGPAC: no se puede situar en el mapa.</span><button class="btn sm" data-act="editFinca" data-id="${id}">Añadir referencia</button></div>`;
+    }
     h += `<div class="card pad" style="display:flex;flex-direction:column;gap:12px">
       <div class="sp"><div><div class="tag">Campaña ${c}</div><div style="margin-top:4px">${chip(s && s.cultivo)} ${s && s.variedad ? `<span class="muted small">${esc(s.variedad)}</span>` : ''}</div></div>
       <button class="btn sm" data-act="asignar" data-id="${id}">${s ? 'Cambiar cultivo' : 'Asignar cultivo'}</button></div>
@@ -302,6 +458,129 @@
     return h;
   }
 
+  // ---------- Mapa (ortofoto PNOA + linderos SIGPAC) ----------
+  let mapa = null, mapaEl = null, capaFincas = null, capaSel = null, capaSigpac = null, capaPos = null;
+  const icoMapa = {
+    loc: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>',
+    fit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>',
+    sig: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><path d="M3 4h8v7H3zM13 4h8v10h-8zM3 13h8v7H3zM13 16h8v4h-8z"/></svg>'
+  };
+  function vMapaInfo() {
+    const conGeo = db.fincas.filter(f => f.geo && f.geo.c.length);
+    const sinRef = db.fincas.filter(f => !refsKey(f));
+    const noEnc = db.fincas.filter(f => f.geo && !f.geo.c.length && f.geo.k === refsKey(f));
+    const pend = db.fincas.filter(f => refsKey(f) && (!f.geo || f.geo.k !== refsKey(f)));
+    const cults = [...new Set(conGeo.map(f => cultivoDe(f.id, db.campanaActiva)).filter(Boolean))];
+    let h = '<div id="mapSlot"></div>';
+    if (cults.length) h += `<div class="leyenda">${cults.map(chip).join('')}</div>`;
+    h += `<div class="card pad mapinfo"><p><b>Toca una parcela</b> del mapa para ver su referencia SIGPAC y añadirla a tus fincas.</p>`;
+    if (db.fincas.length) h += `<p class="small">${conGeo.length} de ${db.fincas.length} fincas en el mapa.${sinRef.length ? ` ${sinRef.length} sin referencia SIGPAC (${sinRef.slice(0, 3).map(f => esc(f.nombre)).join(', ')}${sinRef.length > 3 ? '…' : ''}).` : ''}${noEnc.length ? ` <span class="neg">${noEnc.length} no aparecen en SIGPAC: revisa su polígono y parcela.</span>` : ''}${pend.length ? ` ${pend.length} pendientes de buscar.` : ''}</p>`;
+    h += `<div class="btns" style="justify-content:flex-start">${db.fincas.some(f => refsKey(f)) ? '<button class="btn sm" data-act="contornos">Actualizar contornos</button>' : ''}<button class="btn sm" data-act="importarExcel">Importar Excel</button></div></div>`;
+    h += '<p class="note">Ortofoto: PNOA © Instituto Geográfico Nacional. Recintos: SIGPAC © FEGA. El mapa de fondo necesita cobertura; tus fincas se ven siempre.</p>';
+    return h;
+  }
+  function crearMapa() {
+    mapaEl = document.createElement('div'); mapaEl.className = 'mapa';
+    mapa = L.map(mapaEl, { zoomControl: true, attributionControl: true, maxZoom: 20 }).setView([40.4, -3.7], 6);
+    mapa.attributionControl.setPrefix('');
+    L.tileLayer(PNOA, { tms: true, maxZoom: 20, maxNativeZoom: 19, attribution: 'PNOA © IGN' }).addTo(mapa);
+    capaSigpac = L.tileLayer.wms(SIGPAC + '/wms', { layers: 'recinto', format: 'image/png', transparent: true, minZoom: 14, maxZoom: 20, attribution: 'SIGPAC © FEGA' }).addTo(mapa);
+    capaFincas = L.featureGroup().addTo(mapa);
+    const ctl = L.control({ position: 'topright' });
+    ctl.onAdd = () => {
+      const d = L.DomUtil.create('div', 'mapctl');
+      d.innerHTML = `<button type="button" data-m="loc" aria-label="Mi ubicación" title="Mi ubicación">${icoMapa.loc}</button><button type="button" data-m="fit" aria-label="Ver todas mis fincas" title="Ver todas mis fincas">${icoMapa.fit}</button><button type="button" data-m="sig" aria-pressed="true" aria-label="Linderos SIGPAC" title="Linderos SIGPAC">${icoMapa.sig}</button>`;
+      L.DomEvent.disableClickPropagation(d);
+      d.addEventListener('click', e => {
+        const b = e.target.closest('[data-m]'); if (!b) return;
+        if (b.dataset.m === 'loc') { toast('Buscando tu ubicación…'); mapa.locate({ setView: true, maxZoom: 17, enableHighAccuracy: true }); }
+        if (b.dataset.m === 'fit') ajustarMapa(true);
+        if (b.dataset.m === 'sig') {
+          const on = mapa.hasLayer(capaSigpac); if (on) mapa.removeLayer(capaSigpac); else capaSigpac.addTo(mapa);
+          b.setAttribute('aria-pressed', String(!on));
+        }
+      });
+      return d;
+    };
+    ctl.addTo(mapa);
+    mapa.on('click', e => identificar(e.latlng));
+    mapa.on('zoomend', () => mapaEl.classList.toggle('etiquetas', mapa.getZoom() >= 14));
+    mapa.on('popupclose', () => { if (capaSel) { capaSel.remove(); capaSel = null; } });
+    mapa.on('locationfound', e => {
+      if (capaPos) capaPos.remove();
+      capaPos = L.layerGroup([L.circle(e.latlng, { radius: e.accuracy, weight: 1, color: '#3b82f6', fillOpacity: .12, interactive: false }), L.circleMarker(e.latlng, { radius: 8, weight: 3, color: '#fff', fillColor: '#3b82f6', fillOpacity: 1, interactive: false })]).addTo(mapa);
+    });
+    mapa.on('locationerror', () => toast('No se ha podido obtener tu ubicación. Activa el GPS y da permiso a la app.'));
+    // Clics en botones dentro de los globos del mapa
+    mapaEl.addEventListener('click', e => {
+      const b = e.target.closest('.leaflet-popup [data-act]');
+      if (b && acciones[b.dataset.act]) { e.stopPropagation(); acciones[b.dataset.act](b); }
+    });
+  }
+  function pintarFincas() {
+    capaFincas.clearLayers();
+    const c = db.campanaActiva;
+    db.fincas.forEach(f => {
+      if (!f.geo || !f.geo.c.length) return;
+      const cu = cultivoDe(f.id, c);
+      const col = cu ? `hsl(${hue(cu)} 90% 58%)` : '#ffffff';
+      const lyr = L.geoJSON({ type: 'MultiPolygon', coordinates: f.geo.c }, { style: { color: col, weight: 3, fillColor: col, fillOpacity: .28 } });
+      lyr.fincaId = f.id;
+      lyr.bindTooltip(esc(f.nombre), { permanent: true, direction: 'center', className: 'etq' });
+      lyr.on('click', ev => { L.DomEvent.stopPropagation(ev); globoFinca(f, ev.latlng); });
+      lyr.addTo(capaFincas);
+    });
+  }
+  function globoFinca(f, ll) {
+    const cu = cultivoDe(f.id, db.campanaActiva); const st = statsFinca(f.id, db.campanaActiva);
+    L.popup({ maxWidth: 260 }).setLatLng(ll).setContent(`<div class="pop"><div class="t">${esc(f.nombre)}</div><div>${chip(cu)} <span class="muted">${fmtN(f.superficie)} ha</span></div>
+      ${st.kgHa ? `<div class="small">${fmtN(st.kgHa, 0)} kg/ha en ${db.campanaActiva}</div>` : ''}${f.geo && f.geo.ha ? `<div class="small muted">SIGPAC: ${fmtN(f.geo.ha)} ha</div>` : ''}
+      <button class="btn sm primary" data-act="verFinca" data-id="${f.id}">Abrir ficha</button></div>`).openOn(mapa);
+  }
+  function ajustarMapa(avisar) {
+    const b = capaFincas.getBounds();
+    if (b.isValid()) mapa.fitBounds(b, { padding: [24, 24], maxZoom: 17 });
+    else if (avisar) toast('Todavía no hay fincas situadas en el mapa');
+  }
+  async function identificar(ll) {
+    const pop = L.popup({ maxWidth: 280 }).setLatLng(ll).setContent('<div class="pop">Consultando SIGPAC…</div>').openOn(mapa);
+    if (mapa.getZoom() < 13) { pop.setContent('<div class="pop">Acércate más al terreno para elegir una parcela.</div>'); return; }
+    try {
+      const r = await fetch(`${SIGPAC}/servicioconsultassigpac/query/recinfobypoint/4258/${ll.lng.toFixed(6)}/${ll.lat.toFixed(6)}.json`);
+      if (!r.ok) throw new Error();
+      const d = await r.json(); const x = Array.isArray(d) ? d[0] : null;
+      if (!mapa.hasLayer(pop)) return;
+      if (!x) { pop.setContent('<div class="pop">Aquí no hay ningún recinto SIGPAC.</div>'); return; }
+      ui.recSel = x;
+      if (capaSel) capaSel.remove();
+      capaSel = L.geoJSON({ type: 'MultiPolygon', coordinates: wktCoords(x.wkt) }, { style: { color: '#ffd400', weight: 3, dashArray: '6 5', fillColor: '#ffd400', fillOpacity: .15 }, interactive: false }).addTo(mapa);
+      const ya = fincaConRecinto(x);
+      const ref = refTxt({ pr: x.provincia, mu: x.municipio, ag: x.agregado, zo: x.zona, po: x.poligono, pa: x.parcela, re: x.recinto });
+      pop.setContent(`<div class="pop"><div class="tag">Recinto SIGPAC</div><div class="t">${ref}</div>
+        <div class="small">${esc(nombreProv(x.provincia))} · Pol. ${x.poligono} · Parc. ${x.parcela} · Rec. ${x.recinto}</div>
+        <div class="small"><b>${fmtN(x.superficie)} ha</b> · ${esc(USOS[x.uso_sigpac] || x.uso_sigpac || '')}${x.pendiente_media != null ? ` · pendiente ${fmtN(x.pendiente_media, 1)} %` : ''}</div>
+        ${ya ? `<div class="small">Forma parte de <b>${esc(ya.nombre)}</b></div><button class="btn sm primary" data-act="verFinca" data-id="${ya.id}">Abrir ficha</button>`
+          : `<div class="popbtns"><button class="btn sm primary" data-act="fincaDesdeRecinto">Crear finca</button>${db.fincas.length ? '<button class="btn sm" data-act="anadirRecinto">Añadir a una finca</button>' : ''}</div>`}</div>`);
+    } catch (e) {
+      pop.setContent('<div class="pop">No se ha podido consultar SIGPAC. Comprueba que tienes cobertura.</div>');
+    }
+  }
+  function montarMapa() {
+    const slot = $('#mapSlot'); if (!slot) return;
+    if (!window.L) { slot.outerHTML = '<div class="card pad">No se ha podido cargar el mapa.</div>'; return; }
+    if (!mapa) crearMapa();
+    slot.replaceWith(mapaEl);
+    mapa.invalidateSize();
+    pintarFincas();
+    if (ui.enfocar) {
+      const lyr = capaFincas.getLayers().find(l => l.fincaId === ui.enfocar);
+      if (lyr) { mapa.fitBounds(lyr.getBounds(), { padding: [30, 30], maxZoom: 17 }); globoFinca(finca(ui.enfocar), lyr.getBounds().getCenter()); }
+      ui.enfocar = null; ui.mapaAjustado = true;
+    } else if (!ui.mapaAjustado) { ajustarMapa(false); ui.mapaAjustado = capaFincas.getLayers().length > 0; }
+    setTimeout(() => mapa.invalidateSize(), 50);
+    actualizarContornos({ silencioso: true });
+  }
+
   // ---------- Render principal ----------
   function render() {
     $('#campBtn').textContent = db.campanaActiva + ' ▾';
@@ -310,8 +589,9 @@
     const main = $('#main');
     main.innerHTML = ui.fincaId ? vDetalle(ui.fincaId) : ({ fincas: vFincas, cuaderno: vCuaderno, cuentas: vCuentas, cosechas: vCosechas, resumen: vResumen }[ui.tab])();
     const fab = { fincas: ['nuevaFinca', 'Finca'], cuaderno: ['nuevaLabor', 'Labor'], cuentas: ['nuevoMov', 'Apunte'], cosechas: ['nuevaCosecha', 'Cosecha'] }[ui.tab];
-    const mostrarFab = fab && !ui.fincaId && (ui.tab === 'fincas' ? db.fincas.length : db.fincas.length);
+    const mostrarFab = fab && !ui.fincaId && db.fincas.length && !(ui.tab === 'fincas' && ui.vistaFincas === 'mapa');
     $('#fabSlot').innerHTML = mostrarFab ? `<button class="fab" data-act="${fab[0]}">${ico.plus}${fab[1]}</button>` : '';
+    montarMapa();
   }
 
   // ---------- Hojas (formularios) ----------
@@ -348,7 +628,7 @@
       const id = 'f_' + f.k; const v = vals[f.k];
       let inp;
       if (f.type === 'select') inp = `<select id="${id}" name="${f.k}">${f.opts(vals).map(([val, t]) => `<option value="${esc(val)}"${String(v ?? '') === String(val) ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select>`;
-      else if (f.type === 'textarea') inp = `<textarea id="${id}" name="${f.k}" rows="3">${esc(v)}</textarea>`;
+      else if (f.type === 'textarea') inp = `<textarea id="${id}" name="${f.k}" rows="3" placeholder="${esc(f.placeholder || '')}">${esc(v)}</textarea>`;
       else if (f.type === 'num') inp = `<input id="${id}" name="${f.k}" type="text" inputmode="decimal" autocomplete="off" value="${esc(numStr(v))}" placeholder="${esc(f.placeholder || '')}">`;
       else inp = `<input id="${id}" name="${f.k}" type="${f.type || 'text'}" value="${esc(v)}" placeholder="${esc(f.placeholder || '')}" autocomplete="off"${f.type === 'text' || !f.type ? ' autocapitalize="sentences"' : ''}>`;
       return `<div class="field" data-k="${f.k}"><label for="${id}">${f.label}${f.req ? '' : ' <span class="muted small">(opcional)</span>'}</label>${inp}${f.hint ? `<div class="hint">${f.hint}</div>` : ''}<div class="err" hidden></div></div>`;
@@ -396,6 +676,7 @@
         const r = spec.guardar(out);
         if (typeof r === 'string') { toast(r); return; }
         guardar(); volverA(d - 1); render(); toast('Guardado');
+        if (spec.despues) spec.despues();
       });
       const del = el.querySelector('[data-del]');
       if (del) del.addEventListener('click', async () => {
@@ -411,24 +692,31 @@
   const optsCamp = () => listaCampanas().map(c => [c, c]);
   const campoCampana = { k: 'campana', label: 'Campaña', type: 'select', req: 1, opts: optsCamp, hint: 'La campaña va de septiembre a agosto.' };
 
-  function formFinca(id) {
+  function formFinca(id, pre) {
     const f = id ? finca(id) : null;
     formulario({
       titulo: f ? 'Editar finca' : 'Nueva finca',
-      valores: f || {},
+      valores: f || Object.assign({ agregado: 0, zona: 0 }, pre || {}),
       campos: [
         { k: 'nombre', label: 'Nombre', req: 1, placeholder: 'Ej.: El Llano' },
         { k: 'superficie', label: 'Superficie (ha)', type: 'num', req: 1, placeholder: 'Ej.: 12,45' },
-        { k: 'municipio', label: 'Municipio' },
+        { k: 'municipio', label: 'Municipio', placeholder: 'Nombre del pueblo' },
+        { k: 'provincia', label: 'Provincia (código)', type: 'num', half: 1, placeholder: 'Ej.: 47' },
+        { k: 'codMunicipio', label: 'Municipio (código)', type: 'num', half: 1, placeholder: 'Ej.: 215' },
         { k: 'poligono', label: 'Polígono', half: 1, placeholder: 'SIGPAC' },
         { k: 'parcela', label: 'Parcela', half: 1, placeholder: 'SIGPAC' },
-        { k: 'recinto', label: 'Recinto(s)' },
+        { k: 'recinto', label: 'Recinto(s)', placeholder: 'Ej.: 1, 2, 5-7 · vacío = toda la parcela' },
+        { k: 'agregado', label: 'Agregado', type: 'num', half: 1, placeholder: '0' },
+        { k: 'zona', label: 'Zona', type: 'num', half: 1, placeholder: '0' },
+        { k: 'otras', label: 'Otras parcelas de esta finca', type: 'textarea', placeholder: 'Una por línea: polígono-parcela-recinto\nEj.: 403-36-1', hint: 'Los códigos los ves en tu declaración de la PAC o en el visor SIGPAC. Lo más fácil: toca la parcela en el mapa de la app.' },
         { k: 'notas', label: 'Notas', type: 'textarea', placeholder: 'Propiedad o arrendada, tipo de suelo, linderos…' }
       ],
       guardar(v) {
         if (v.superficie <= 0) return 'La superficie tiene que ser mayor que cero';
+        if ((v.poligono || v.parcela) && (!v.provincia || !v.codMunicipio)) return 'Para situarla en el mapa faltan los códigos de provincia y municipio';
         if (f) Object.assign(f, v); else db.fincas.push(Object.assign({ id: uid() }, v));
       },
+      despues: () => actualizarContornos({ silencioso: true }),
       textoBorrar: 'Se borrarán la finca, sus cultivos, labores y cosechas. Sus gastos e ingresos se mantienen como generales.',
       borrar: f && (() => {
         db.fincas = db.fincas.filter(x => x.id !== f.id);
@@ -440,6 +728,28 @@
         db.movimientos.forEach(m => { if (m.fincaId === f.id) m.fincaId = ''; });
         return 'salirDetalle';
       })
+    });
+  }
+
+  // Desde el mapa: recinto tocado -> finca nueva o añadirlo a una existente
+  function formAnadirRecinto(x) {
+    const ref = refTxt({ pr: x.provincia, mu: x.municipio, ag: x.agregado, zo: x.zona, po: x.poligono, pa: x.parcela, re: x.recinto });
+    formulario({
+      titulo: 'Añadir recinto a una finca',
+      valores: { fincaId: optsFincas()[0][0], sumar: 'si' },
+      campos: [
+        { k: 'fincaId', label: 'Finca', type: 'select', req: 1, opts: optsFincas, hint: `Recinto ${ref} · ${fmtN(x.superficie)} ha` },
+        { k: 'sumar', label: 'Superficie', type: 'select', req: 1, opts: () => [['si', `Sumar ${fmtN(x.superficie)} ha a la finca`], ['no', 'Dejar la superficie como está']] }
+      ],
+      guardar(v) {
+        const f = finca(v.fincaId);
+        const mismaParcela = +f.provincia === x.provincia && +f.codMunicipio === x.municipio && +(f.agregado || 0) === x.agregado && +(f.zona || 0) === x.zona && +f.poligono === x.poligono && +f.parcela === x.parcela;
+        if (!f.poligono || !f.parcela) Object.assign(f, { provincia: x.provincia, codMunicipio: x.municipio, agregado: x.agregado, zona: x.zona, poligono: String(x.poligono), parcela: String(x.parcela), recinto: String(x.recinto) });
+        else if (mismaParcela) { const recs = listaRecintos(f.recinto); if (recs.length && !recs.includes(x.recinto)) f.recinto = [...recs, x.recinto].sort((a, b) => a - b).join(', '); }
+        else f.otras = (f.otras ? f.otras.trim() + '\n' : '') + ref;
+        if (v.sumar === 'si') f.superficie = Math.round(((+f.superficie || 0) + x.superficie) * 100) / 100;
+      },
+      despues: () => actualizarContornos({ silencioso: true })
     });
   }
 
@@ -584,6 +894,13 @@
           <button class="btn block" data-a="descargar">Descargar copia en el teléfono</button>
           <button class="btn block" data-a="importar">Importar una copia</button>
         </div>
+        <h2 class="sec">Fincas en Excel</h2>
+        <div class="card pad" style="display:flex;flex-direction:column;gap:10px">
+          <p style="margin:0">Trae tus fincas de una hoja de cálculo: nombre, superficie, polígono, parcela, recinto, cultivo, notas… Vale el listado de la PAC.</p>
+          <button class="btn primary block" data-a="importarExcel">Importar Excel de fincas</button>
+          <button class="btn block" data-a="plantilla">Descargar plantilla de ejemplo</button>
+          ${db.fincas.length ? '<button class="btn block" data-a="exportarExcel">Exportar mis fincas a Excel</button>' : ''}
+        </div>
         <h2 class="sec">Cultivos</h2>
         <div class="card pad" style="display:flex;flex-direction:column;gap:10px">
           <div style="display:flex;flex-wrap:wrap;gap:6px">${db.cultivos.map(c => `<span class="chip" style="--h:${hue(c)}">${esc(c)}${usados.has(c) ? '' : ` <button data-quitar="${esc(c)}" aria-label="Quitar ${esc(c)}" style="border:0;background:none;padding:0 0 0 4px;font-weight:700;color:inherit">×</button>`}</span>`).join('')}</div>
@@ -608,6 +925,9 @@
         if (a === 'compartir') { await exportar(true); repintar(); }
         else if (a === 'descargar') { await exportar(false); repintar(); }
         else if (a === 'importar') $('#fileIn').click();
+        else if (a === 'importarExcel') { cargarXLSX().catch(() => {}); $('#xlsIn').click(); }
+        else if (a === 'plantilla') excelFincas(true);
+        else if (a === 'exportarExcel') excelFincas(false);
         else if (a === 'addCultivo') {
           const v = el.querySelector('#nuevoCultivo').value.trim();
           if (!v) return;
@@ -624,25 +944,203 @@
     });
   }
 
-  // ---------- Copias de seguridad ----------
-  async function exportar(compartir) {
-    const fecha = hoyISO();
-    const json = JSON.stringify({ app: 'cuaderno-campo', version: VERSION, exportado: new Date().toISOString(), datos: db }, null, 1);
-    const nombre = `cuaderno-campo-${fecha}.json`;
+  // ---------- Archivos: compartir o descargar ----------
+  async function guardarArchivo(blob, nombre, compartir, titulo) {
     let file;
-    try { file = new File([json], nombre, { type: 'application/json' }); } catch (e) { file = new Blob([json], { type: 'application/json' }); }
-    const marcar = () => { db.ultimaCopia = new Date().toISOString(); guardar(false); render(); toast('Copia hecha'); };
+    try { file = new File([blob], nombre, { type: blob.type }); } catch (e) { file = blob; }
     if (compartir && navigator.canShare && file instanceof File && navigator.canShare({ files: [file] })) {
-      try { await navigator.share({ files: [file], title: 'Copia Cuaderno de Campo', text: `Copia de seguridad del ${fmtFecha(fecha)}` }); marcar(); return; }
-      catch (e) { if (e && e.name === 'AbortError') return; }
+      try { await navigator.share({ files: [file], title: titulo || nombre }); return true; }
+      catch (e) { if (e && e.name === 'AbortError') return false; }
     }
     try {
       const url = URL.createObjectURL(file);
       const a = document.createElement('a'); a.href = url; a.download = nombre; document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 10000);
-      marcar();
-      if (compartir) toast('Este navegador no permite compartir; la copia se ha descargado');
-    } catch (e) { toast('No se ha podido crear la copia en este navegador'); }
+      if (compartir) toast('Este navegador no permite compartir; el archivo se ha descargado');
+      return true;
+    } catch (e) { toast('No se ha podido guardar el archivo en este navegador'); return false; }
+  }
+
+  // ---------- Excel de fincas ----------
+  let xlsxP = null;
+  function cargarXLSX() {
+    if (window.XLSX) return Promise.resolve(window.XLSX);
+    return xlsxP || (xlsxP = new Promise((res, rej) => {
+      const s = document.createElement('script'); s.src = XLSX_SRC;
+      s.onload = () => res(window.XLSX); s.onerror = () => { xlsxP = null; rej(new Error('xlsx')); };
+      document.head.appendChild(s);
+    }));
+  }
+  // Nombres de columna reconocidos (sin tildes ni mayúsculas). El orden importa.
+  const COLS = [
+    ['codMunicipio', ['cod municipio', 'codigo municipio', 'cod mun', 'codigo mun', 'municipio codigo', 'municipio cod', 'n municipio', 'num municipio', 'municipio sigpac']],
+    ['provincia', ['provincia', 'cod provincia', 'codigo provincia', 'prov']],
+    ['municipio', ['municipio', 'termino municipal', 'termino', 'localidad', 'pueblo', 'mun']],
+    ['agregado', ['agregado', 'agr']],
+    ['zona', ['zona']],
+    ['poligono', ['poligono', 'pol']],
+    ['otras', ['otras parcelas', 'otras referencias', 'mas parcelas']],
+    ['parcela', ['parcela', 'parc', 'par']],
+    ['recinto', ['recinto', 'recintos', 'rec']],
+    ['superficie', ['superficie', 'superficie ha', 'sup', 'sup ha', 'hectareas', 'ha', 'has', 'superficie declarada', 'superficie sigpac', 'superficie cultivada', 'sup declarada']],
+    ['cultivo', ['cultivo', 'producto', 'cultivo declarado', 'siembra', 'especie', 'cultivo campana']],
+    ['variedad', ['variedad']],
+    ['campana', ['campana', 'ano', 'cosecha', 'ano campana']],
+    ['notas', ['notas', 'observaciones', 'obs', 'comentarios', 'nota']],
+    ['nombre', ['nombre', 'finca', 'paraje', 'denominacion', 'nombre finca', 'nombre de la finca', 'alias']]
+  ];
+  const ETIQ = { nombre: 'Nombre', superficie: 'Superficie', municipio: 'Municipio', codMunicipio: 'Cód. municipio', provincia: 'Provincia', agregado: 'Agregado', zona: 'Zona', poligono: 'Polígono', parcela: 'Parcela', recinto: 'Recinto', otras: 'Otras parcelas', cultivo: 'Cultivo', variedad: 'Variedad', campana: 'Campaña', notas: 'Notas' };
+  function columna(h) {
+    const n = norm(h); if (!n) return null;
+    for (const [k, syn] of COLS) if (syn.includes(n)) return k;
+    for (const [k, syn] of COLS) if (syn.some(s => s.length > 3 && n.startsWith(s + ' '))) return k;
+    return null;
+  }
+  function campanaTxt(v) {
+    const s = String(v == null ? '' : v).trim(); if (!s) return '';
+    let m = s.match(/^(\d{4})\s*[\/\-]\s*(\d{2}|\d{4})$/);
+    if (m) return m[1] + '/' + String((+m[1] + 1) % 100).padStart(2, '0');
+    m = s.match(/^(\d{4})$/);
+    if (m) { const a = +m[1] - 1; return a + '/' + String((a + 1) % 100).padStart(2, '0'); } // año de cosecha
+    return '';
+  }
+  const cultivoNormal = v => { const n = norm(v); if (!n) return ''; const c = db.cultivos.find(x => norm(x) === n); const t = String(v).trim(); return c || (t.charAt(0).toUpperCase() + t.slice(1).toLowerCase()); };
+
+  function analizarHoja(XLSX, wb) {
+    const nombreHoja = wb.SheetNames.find(n => norm(n) !== 'instrucciones') || wb.SheetNames[0];
+    const filas = XLSX.utils.sheet_to_json(wb.Sheets[nombreHoja], { header: 1, raw: true, defval: '' });
+    let cab = -1, mapa = {};
+    for (let i = 0; i < Math.min(15, filas.length); i++) {
+      const m = {}; filas[i].forEach((h, j) => { const k = columna(h); if (k && !(k in m)) m[k] = j; });
+      if (Object.keys(m).length >= 2) { cab = i; mapa = m; break; }
+    }
+    if (cab < 0) return { error: 'No encuentro la fila de títulos. La primera fila debe tener títulos como Nombre, Superficie, Polígono, Parcela…' };
+    const reconocidas = Object.keys(mapa).map(k => ETIQ[k]);
+    const ignoradas = filas[cab].filter((h, j) => String(h).trim() && !Object.values(mapa).includes(j)).map(String);
+    const val = (fila, k) => (k in mapa ? fila[mapa[k]] : '');
+    const txt = (fila, k) => String(val(fila, k) == null ? '' : val(fila, k)).trim();
+    const ent = (fila, k) => { const v = val(fila, k); if (v === '' || v == null) return null; const n = typeof v === 'number' ? v : parseNum(v, false); return Number.isFinite(n) ? Math.round(n) : null; };
+    const grupos = new Map(); let vacias = 0;
+    for (const fila of filas.slice(cab + 1)) {
+      if (!fila.some(v => String(v).trim())) continue;
+      let pr = provinciaDe(val(fila, 'provincia'));
+      let mu = ent(fila, 'codMunicipio'); let muNombre = txt(fila, 'municipio');
+      if (mu == null && /^\d+$/.test(muNombre)) { mu = +muNombre; muNombre = ''; }
+      const ag = ent(fila, 'agregado') || 0, zo = ent(fila, 'zona') || 0, po = ent(fila, 'poligono'), pa = ent(fila, 'parcela');
+      const recs = listaRecintos(val(fila, 'recinto'));
+      const nombre = txt(fila, 'nombre');
+      const supV = val(fila, 'superficie'); const sup = typeof supV === 'number' ? supV : parseNum(supV, false);
+      if (!nombre && !(po && pa)) { vacias++; continue; }
+      const clave = nombre ? 'n:' + norm(nombre) : `r:${pr}:${mu}:${ag}:${zo}:${po}:${pa}`;
+      let g = grupos.get(clave);
+      if (!g) { g = { nombreAuto: !nombre, nombre: nombre || `Pol. ${po} Parc. ${pa}`, municipio: muNombre, provincia: pr || '', codMunicipio: mu || '', agregado: ag, zona: zo, poligono: po ? String(po) : '', parcela: pa ? String(pa) : '', recs: [], entera: false, otras: [], superficie: 0, cultivos: {}, variedad: txt(fila, 'variedad'), campana: campanaTxt(val(fila, 'campana')), notas: [], filas: 0 }; grupos.set(clave, g); }
+      g.filas++;
+      if (!g.municipio && muNombre) g.municipio = muNombre;
+      if (Number.isFinite(sup) && sup > 0) g.superficie += sup;
+      if (po && pa) {
+        if (!g.poligono) Object.assign(g, { provincia: pr || g.provincia, codMunicipio: mu || g.codMunicipio, agregado: ag, zona: zo, poligono: String(po), parcela: String(pa) });
+        if (+g.poligono === po && +g.parcela === pa && (+g.codMunicipio || 0) === (mu || +g.codMunicipio || 0)) { if (recs.length) g.recs.push(...recs); else g.entera = true; }
+        else if (recs.length) recs.forEach(re => g.otras.push(refTxt({ pr: pr || g.provincia, mu: mu || g.codMunicipio, ag, zo, po, pa, re })));
+        else g.otras.push(refTxt({ pr: pr || g.provincia, mu: mu || g.codMunicipio, ag, zo, po, pa, re: null }));
+      }
+      txt(fila, 'otras').split(/[\n;]+/).map(s => s.trim()).filter(Boolean).forEach(s => g.otras.push(s));
+      const cu = cultivoNormal(txt(fila, 'cultivo'));
+      if (cu) g.cultivos[cu] = (g.cultivos[cu] || 0) + (Number.isFinite(sup) && sup > 0 ? sup : 1);
+      if (!g.variedad) g.variedad = txt(fila, 'variedad');
+      if (!g.campana) g.campana = campanaTxt(val(fila, 'campana'));
+      const nota = txt(fila, 'notas'); if (nota && !g.notas.includes(nota)) g.notas.push(nota);
+    }
+    const plan = [...grupos.values()].map(g => {
+      const cultivo = Object.entries(g.cultivos).sort((a, b) => b[1] - a[1]).map(x => x[0])[0] || '';
+      const datos = { nombre: g.nombre, municipio: g.municipio, provincia: g.provincia, codMunicipio: g.codMunicipio, agregado: g.agregado, zona: g.zona, poligono: g.poligono, parcela: g.parcela,
+        recinto: g.entera ? '' : [...new Set(g.recs)].sort((a, b) => a - b).join(', '), otras: [...new Set(g.otras)].join('\n'), superficie: Math.round(g.superficie * 10000) / 10000 || null, notas: g.notas.join('\n') };
+      const existe = db.fincas.find(f => norm(f.nombre) === norm(g.nombre)) ||
+        (g.poligono ? db.fincas.find(f => +f.provincia === +g.provincia && +f.codMunicipio === +g.codMunicipio && +f.poligono === +g.poligono && +f.parcela === +g.parcela) : null);
+      if (existe && g.nombreAuto) datos.nombre = existe.nombre; // no cambiar el nombre si el Excel no trae
+      return { datos, cultivo, variedad: g.variedad, campana: g.campana || db.campanaActiva, existe };
+    });
+    return { hoja: nombreHoja, plan, reconocidas, ignoradas, vacias, filas: filas.length - cab - 1 };
+  }
+
+  async function importarExcel(file) {
+    let XLSX;
+    try { XLSX = await cargarXLSX(); } catch (e) { toast('No se ha podido cargar el lector de Excel. Abre la app una vez con cobertura.'); return; }
+    let r;
+    try { const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' }); r = analizarHoja(XLSX, wb); }
+    catch (e) { toast('No se ha podido leer ese archivo. Usa un Excel (.xlsx, .xls), .ods o .csv'); return; }
+    if (r.error) { toast(r.error); return; }
+    if (!r.plan.length) { toast('No hay fincas en la hoja: cada fila necesita un nombre o polígono y parcela'); return; }
+    const nuevas = r.plan.filter(p => !p.existe).length, act = r.plan.length - nuevas;
+    const sinSup = r.plan.filter(p => !p.datos.superficie && !(p.existe && p.existe.superficie > 0)).length;
+    const conRef = r.plan.filter(p => p.datos.poligono && p.datos.provincia && p.datos.codMunicipio).length;
+    const filasHTML = r.plan.slice(0, 40).map(p => `<tr><td>${esc(p.datos.nombre)}${p.existe ? ' <span class="tag">actualiza</span>' : ''}</td><td>${p.datos.superficie ? fmtN(p.datos.superficie) : '—'}</td><td>${p.datos.poligono ? `${esc(p.datos.poligono)}-${esc(p.datos.parcela)}${p.datos.recinto ? '-' + esc(p.datos.recinto) : ''}${p.datos.otras ? ' +' + p.datos.otras.split('\n').length : ''}` : '—'}</td><td style="text-align:left">${p.cultivo ? chip(p.cultivo) : ''}</td></tr>`).join('');
+    abrirCapa(`<div class="sheet" role="dialog" aria-modal="true">${cabecera('Importar fincas')}<div class="body">
+      <p style="margin:0">Hoja «${esc(r.hoja)}»: ${r.filas} filas → <b>${r.plan.length} fincas</b> (${nuevas} nuevas${act ? `, ${act} ya existen y se actualizarán` : ''}).</p>
+      <div class="small"><b>Columnas reconocidas:</b> ${r.reconocidas.map(esc).join(', ')}${r.ignoradas.length ? `<br><span class="muted">No usadas: ${r.ignoradas.map(esc).join(', ')}</span>` : ''}</div>
+      ${sinSup ? `<p class="small neg" style="margin:0">${sinSup} sin superficie: se tomará la de SIGPAC si tienen referencia.</p>` : ''}
+      ${r.plan.some(p => p.cultivo) ? `<p class="small muted" style="margin:0">Los cultivos se asignan a la campaña indicada en el Excel o, si no hay, a la ${db.campanaActiva}.</p>` : ''}
+      <div class="tablewrap"><table><thead><tr><th>Finca</th><th>ha</th><th>Pol-Parc-Rec</th><th>Cultivo</th></tr></thead><tbody>${filasHTML}</tbody></table></div>
+      ${r.plan.length > 40 ? `<p class="note">…y ${r.plan.length - 40} más.</p>` : ''}
+      ${conRef ? `<p class="small muted" style="margin:0">${conRef} con referencia SIGPAC completa: se situarán en el mapa automáticamente.</p>` : ''}
+      </div><footer><button class="btn" data-close>Cancelar</button><button class="btn primary" data-ok>Importar ${r.plan.length}</button></footer></div>`, (el, d) => {
+      el.querySelector('[data-ok]').addEventListener('click', () => {
+        for (const p of r.plan) {
+          const f = p.existe || { id: uid() };
+          for (const [k, v] of Object.entries(p.datos)) if (v !== '' && v != null) f[k] = v;
+          if (!p.existe) db.fincas.push(f);
+          if (p.cultivo) {
+            if (!db.cultivos.includes(p.cultivo)) db.cultivos.push(p.cultivo);
+            db.siembras = db.siembras.filter(s => !(s.fincaId === f.id && s.campana === p.campana));
+            db.siembras.push({ id: uid(), fincaId: f.id, campana: p.campana, cultivo: p.cultivo, variedad: p.variedad || '' });
+            if (!db.campanas.includes(p.campana)) db.campanas.push(p.campana);
+          }
+        }
+        db.ejemplo = false;
+        guardar(); volverA(0); ui.tab = 'fincas'; render();
+        toast(`${r.plan.length} fincas importadas`);
+        setTimeout(() => actualizarContornos({}), 400);
+      });
+    });
+  }
+
+  const COLS_EXPORT = ['Nombre', 'Superficie (ha)', 'Municipio', 'Provincia', 'Cód. municipio', 'Agregado', 'Zona', 'Polígono', 'Parcela', 'Recinto', 'Otras parcelas', 'Cultivo', 'Variedad', 'Campaña', 'Notas'];
+  async function excelFincas(plantilla) {
+    let XLSX;
+    try { XLSX = await cargarXLSX(); } catch (e) { toast('No se ha podido cargar el generador de Excel. Abre la app una vez con cobertura.'); return; }
+    const c = db.campanaActiva;
+    const filas = plantilla
+      ? [['El Llano', 12.45, 'Villalón de Campos', 47, 215, 0, 0, 403, 30, '1', '', 'Trigo', 'Marcopolo', c, 'Arrendada'],
+         ['El Llano', 3.2, 'Villalón de Campos', 47, 215, 0, 0, 403, 31, '1, 2', '', 'Trigo', 'Marcopolo', c, ''],
+         ['Carrascal', 8.2, 'Villalón de Campos', 47, 215, 0, 0, 404, 39, '', '', 'Lenteja', 'Castellana', c, '']]
+      : db.fincas.slice().sort(byNombre).map(f => { const s = siembraDe(f.id, c); return [f.nombre, f.superficie, f.municipio || '', f.provincia || '', f.codMunicipio || '', f.agregado || 0, f.zona || 0, f.poligono || '', f.parcela || '', f.recinto || '', f.otras || '', s ? s.cultivo : '', s ? s.variedad || '' : '', c, f.notas || '']; });
+    const ws = XLSX.utils.aoa_to_sheet([COLS_EXPORT, ...filas]);
+    ws['!cols'] = COLS_EXPORT.map((h, i) => ({ wch: [18, 14, 20, 10, 14, 9, 6, 9, 9, 10, 18, 12, 14, 10, 24][i] }));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Fincas');
+    if (plantilla) {
+      const ins = XLSX.utils.aoa_to_sheet([['Cómo rellenar la hoja «Fincas»'], [''],
+        ['• Una fila por finca, o una fila por recinto: las filas con el mismo nombre se juntan en una sola finca y se suman sus superficies.'],
+        ['• Provincia, Cód. municipio, Polígono, Parcela y Recinto son los códigos SIGPAC. Están en tu declaración de la PAC o en el visor SIGPAC.'],
+        ['• Si dejas Recinto vacío se toma la parcela entera. Puedes poner varios: 1, 2, 5-7.'],
+        ['• Agregado y Zona casi siempre son 0.'],
+        ['• Campaña: 2026/27, o el año de cosecha (2027). Si se deja vacía se usa la campaña activa.'],
+        ['• Puedes borrar las filas de ejemplo. Los títulos de la primera fila pueden variar un poco (Ha, Pol., Paraje…).']]);
+      ins['!cols'] = [{ wch: 110 }];
+      XLSX.utils.book_append_sheet(wb, ins, 'Instrucciones');
+    }
+    const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    const blob = new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const ok = await guardarArchivo(blob, plantilla ? 'plantilla-fincas.xlsx' : `fincas-${hoyISO()}.xlsx`, !plantilla, 'Fincas');
+    if (ok) toast(plantilla ? 'Plantilla descargada' : 'Excel de fincas creado');
+  }
+  $('#xlsIn').addEventListener('change', e => { const f = e.target.files[0]; e.target.value = ''; if (f) importarExcel(f); });
+
+  // ---------- Copias de seguridad ----------
+  async function exportar(compartir) {
+    const fecha = hoyISO();
+    const json = JSON.stringify({ app: 'cuaderno-campo', version: VERSION, exportado: new Date().toISOString(), datos: db }, null, 1);
+    const ok = await guardarArchivo(new Blob([json], { type: 'application/json' }), `cuaderno-campo-${fecha}.json`, compartir, `Copia de seguridad del ${fmtFecha(fecha)}`);
+    if (ok) { db.ultimaCopia = new Date().toISOString(); guardar(false); render(); toast('Copia hecha'); }
   }
 
   $('#fileIn').addEventListener('change', async e => {
@@ -664,8 +1162,13 @@
     const actual = d.campanaActiva; const a = parseInt(actual, 10);
     const C = n => (a - n) + '/' + String((a - n + 1) % 100).padStart(2, '0');
     d.campanas = [C(2), C(1), actual];
-    const F = (nombre, superficie, municipio, poligono, parcela) => { const f = { id: uid(), nombre, superficie, municipio, poligono, parcela, recinto: '', notas: '' }; d.fincas.push(f); return f; };
-    const fs = [F('El Llano', 12.4, 'Villanueva', '4', '112'), F('Carrascal', 8.2, 'Villanueva', '6', '35'), F('La Hoya', 5.6, 'Villanueva', '4', '140'), F('Valdecasas', 15, 'Torralba', '2', '18'), F('Los Majuelos', 3.1, 'Torralba', '9', '7')];
+    const F = (nombre, ref) => {
+      const [pr, mu, ag, zo, po, pa, re] = ref.split(':'); const g = EJ_GEO[ref];
+      const f = { id: uid(), nombre, superficie: Math.round(g.ha * 100) / 100, municipio: '', provincia: +pr, codMunicipio: +mu, agregado: +ag, zona: +zo, poligono: po, parcela: pa, recinto: re, otras: '', notas: 'Finca de ejemplo sobre un recinto SIGPAC real.' };
+      f.geo = { k: refsKey(f), c: g.c, ha: Math.round(areaHa(g.c) * 100) / 100, t: hoyISO() };
+      d.fincas.push(f); return f;
+    };
+    const fs = [F('Valdecasas', '47:215:0:0:403:30:1'), F('El Llano', '47:215:0:0:403:69:1'), F('Carrascal', '47:215:0:0:403:36:1'), F('La Hoya', '47:215:0:0:404:39:1'), F('Los Majuelos', '47:215:0:0:403:8:1')];
     const rot = [['Trigo', 'Titarro', 'Cebada'], ['Cebada', 'Trigo', 'Lenteja'], ['Esparceta', 'Esparceta', 'Esparceta'], ['Lenteja', 'Cebada', 'Trigo'], ['Barbecho', 'Anís dulce', 'Cilantro']];
     const rinde = { Trigo: [3400, 3900], Cebada: [3100, 3600], Titarro: [900, 1300], Lenteja: [800, 1100], 'Anís dulce': [500, 700], Cilantro: [700, 1000], Esparceta: [0, 0] };
     const precio = { Trigo: .23, Cebada: .2, Titarro: .32, Lenteja: .7, 'Anís dulce': 2.4, Cilantro: .9 };
@@ -704,7 +1207,7 @@
       d.movimientos.push({ id: uid(), tipo: 'ingreso', fecha: `${y0 + 1}-12-01`, fincaId: '', campana: camp, categoria: 'Subvención PAC', concepto: 'Pago básico', importe: 5200 });
     });
     d.movimientos.push({ id: uid(), tipo: 'gasto', fecha: hoyISO(), fincaId: '', campana: actual, categoria: 'Seguro', concepto: 'Seguro agrario', importe: 840 });
-    db = d; guardar(false); ui.tab = 'fincas'; render(); toast('Datos de ejemplo cargados');
+    db = d; guardar(false); ui.tab = 'fincas'; ui.mapaAjustado = false; render(); toast('Datos de ejemplo cargados');
   }
 
   // ---------- Eventos ----------
@@ -721,6 +1224,12 @@
     nuevaCosecha: b => formCosecha(null, b.dataset.finca),
     editCosecha: b => formCosecha(b.dataset.id),
     filtroMov: b => { ui.filtroMov = b.dataset.k; render(); },
+    vistaFincas: b => { ui.vistaFincas = b.dataset.k; try { localStorage.setItem(KEY + '.vista', ui.vistaFincas); } catch (e) { /* ignorar */ } render(); },
+    verMapa: b => { if (ui.fincaId) volverA(0); ui.fincaId = null; ui.tab = 'fincas'; ui.vistaFincas = 'mapa'; ui.enfocar = b.dataset.id; render(); window.scrollTo(0, 0); },
+    contornos: () => actualizarContornos({ forzar: true }),
+    importarExcel: () => { cargarXLSX().catch(() => {}); $('#xlsIn').click(); },
+    fincaDesdeRecinto: () => { const x = ui.recSel; if (!x) return; mapa.closePopup(); formFinca(null, { provincia: x.provincia, codMunicipio: x.municipio, agregado: x.agregado, zona: x.zona, poligono: String(x.poligono), parcela: String(x.parcela), recinto: String(x.recinto), superficie: x.superficie }); },
+    anadirRecinto: () => { const x = ui.recSel; if (!x) return; mapa.closePopup(); formAnadirRecinto(x); },
     irTab: b => irTab(b.dataset.tab),
     ejemplo: () => cargarEjemplo(),
     compartirCopia: () => exportar(true),
@@ -754,5 +1263,6 @@
   if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
     window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => {}); });
   }
+  try { const v = localStorage.getItem(KEY + '.vista'); if (v === 'mapa' || v === 'lista') ui.vistaFincas = v; } catch (e) { /* ignorar */ }
   render();
 })();
