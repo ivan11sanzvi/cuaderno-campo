@@ -18,7 +18,7 @@
   const HUES = { Trigo: 40, Cebada: 55, Titarro: 150, Lenteja: 18, 'Anís dulce': 85, Cilantro: 120, Esparceta: 320, Barbecho: 30 };
   const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
   const MESES_L = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
-  const TITULOS = { fincas: 'Fincas', cuaderno: 'Cuaderno de campo', cuentas: 'Cuentas', cosechas: 'Cosechas', resumen: 'Resumen' };
+  const TITULOS = { fincas: 'Fincas', cuaderno: 'Cuaderno de campo', cuentas: 'Cuentas', cosechas: 'Cosechas', almacen: 'Almacén', resumen: 'Resumen' };
   // Servicios públicos: SIGPAC (FEGA) y ortofoto PNOA (IGN).
   const SIGPAC = 'https://sigpac-hubcloud.es';
   const PNOA = 'https://tms-pnoa-ma.idee.es/1.0.0/pnoa-ma/{z}/{x}/{y}.jpeg';
@@ -61,12 +61,12 @@
   // ---------- Datos ----------
   function nuevoDB() {
     const c = campanaDe(hoyISO());
-    return { v: 1, campanaActiva: c, campanas: [c], cultivos: CULTIVOS_BASE.slice(), fincas: [], siembras: [], labores: [], movimientos: [], cosechas: [], ultimaCopia: null, ultimoCambio: null, ejemplo: false };
+    return { v: 1, campanaActiva: c, campanas: [c], cultivos: CULTIVOS_BASE.slice(), fincas: [], siembras: [], labores: [], movimientos: [], cosechas: [], productos: [], documentos: [], ajustes: [], ultimaCopia: null, ultimoCambio: null, ejemplo: false };
   }
   function normalizar(d) {
     const base = nuevoDB();
     const o = Object.assign(base, d && typeof d === 'object' ? d : {});
-    for (const k of ['campanas', 'fincas', 'siembras', 'labores', 'movimientos', 'cosechas']) if (!Array.isArray(o[k])) o[k] = [];
+    for (const k of ['campanas', 'fincas', 'siembras', 'labores', 'movimientos', 'cosechas', 'productos', 'documentos', 'ajustes']) if (!Array.isArray(o[k])) o[k] = [];
     if (!Array.isArray(o.cultivos) || !o.cultivos.length) o.cultivos = CULTIVOS_BASE.slice();
     if (!o.campanaActiva) o.campanaActiva = campanaDe(hoyISO());
     if (!o.campanas.includes(o.campanaActiva)) o.campanas.push(o.campanaActiva);
@@ -333,7 +333,7 @@
   }
 
   // ---------- Estado de la interfaz y navegación (botón atrás de Android) ----------
-  const ui = { tab: 'fincas', fincaId: null, grupo: null, buscar: '', titular: '', abiertos: new Set(), filtroLabor: { finca: '', tipo: '' }, filtroMov: 'todos', vistaFincas: 'lista', enfocar: null, enfocarGrupo: null, mapaAjustado: false };
+  const ui = { tab: 'fincas', fincaId: null, grupo: null, buscar: '', titular: '', abiertos: new Set(), filtroLabor: { finca: '', tipo: '' }, filtroMov: 'todos', alm: { vista: 'inventario', titular: '' }, resumenVista: 'campana', vistaFincas: 'lista', enfocar: null, enfocarGrupo: null, mapaAjustado: false };
   const capas = [];
   const profundidad = () => capas.length + (ui.grupo ? 1 : 0) + (ui.fincaId ? 1 : 0);
   function empujar() { try { history.pushState({ d: profundidad() }, ''); } catch (e) { /* ignorar */ } }
@@ -362,6 +362,9 @@
     plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
     x: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
     back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>',
+    carpeta: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M3 6h6l2 2h10v11H3z"/></svg>',
+    camara: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 7h3l2-3h6l2 3h3v12H4z"/><circle cx="12" cy="13" r="3.5"/></svg>',
+    clip: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 11l-8 8a5 5 0 0 1-7-7l8-8a3.5 3.5 0 0 1 5 5l-8 8a2 2 0 0 1-3-3l7-7"/></svg>',
     chev: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>',
     edit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg>'
   };
@@ -378,7 +381,8 @@
   function filaLabor(l, conFinca = true, n = [l]) {
     const det = [l.producto, l.dosis != null ? `${fmtN(l.dosis)} ${l.unidad || ''}` : '', l.motivo].filter(Boolean).join(' · ');
     const coste = sum(n, x => x.coste);
-    return `<button class="row" data-act="editLabor" data-id="${l.id}">${fechaBox(l.fecha)}<div class="main"><div class="t">${esc(l.tipo)}${conFinca ? ' · ' + esc(nombreLote(n)) : ''}</div>${det ? `<div class="s">${esc(det)}</div>` : ''}</div>${coste ? `<div class="end small muted">${eur(coste)}</div>` : ''}</button>`;
+    const aviso = n.some(x => x.avisos && x.avisos.length);
+    return `<button class="row" data-act="editLabor" data-id="${l.id}">${fechaBox(l.fecha)}<div class="main"><div class="t">${esc(l.tipo)}${conFinca ? ' · ' + esc(nombreLote(n)) : ''}</div>${det ? `<div class="s">${esc(det)}</div>` : ''}${aviso ? '<span class="pill neg">⚠ Revisar normativa</span>' : ''}</div>${coste ? `<div class="end small muted">${eur(coste)}</div>` : ''}</button>`;
   }
   function filaMov(m, conFinca = true, n = [m]) {
     const sub = [m.categoria, conFinca ? (finca(m.fincaId) ? nombreLote(n) : 'General') : '', m.laborId ? 'desde el cuaderno' : ''].filter(Boolean).join(' · ');
@@ -583,6 +587,12 @@
   }
 
   function vResumen() {
+    const segsR = `<div class="segs" role="group" aria-label="Apartado">${[['campana', 'Campaña'], ['titulares', 'Titulares'], ['pac', 'PAC']].map(([k, t]) => `<button data-act="resumenVista" data-k="${k}" aria-pressed="${ui.resumenVista === k}">${t}</button>`).join('')}</div>`;
+    if (db.fincas.length && ui.resumenVista === 'titulares') return segsR + vTitulares();
+    if (db.fincas.length && ui.resumenVista === 'pac') return segsR + vPAC();
+    return (db.fincas.length ? segsR : '') + vResumenCampana();
+  }
+  function vResumenCampana() {
     const c = db.campanaActiva; const st = statsCampana(c);
     if (!db.fincas.length) return vacio('Sin datos todavía', 'El resumen compara rendimientos y rentabilidad por cultivo, por finca y entre campañas.', '<button class="btn primary" data-act="nuevaFinca">Añadir finca</button><button class="btn" data-act="ejemplo">Ver con datos de ejemplo</button>');
     let h = `<div class="stats">${stat('Sembrado', fmtN(st.haSemb) + ' ha')}${stat('Producción', fmtKg(st.kg))}${stat('Resultado', eur(st.resultado), signo(st.resultado))}</div>`;
@@ -750,9 +760,9 @@
     $('#title').textContent = ui.fincaId ? 'Parcela' : ui.grupo ? 'Finca agrupada' : TITULOS[ui.tab];
     document.querySelectorAll('.tabs button').forEach(b => b.setAttribute('aria-current', b.dataset.tab === ui.tab ? 'page' : 'false'));
     const main = $('#main');
-    main.innerHTML = ui.fincaId ? vDetalle(ui.fincaId) : ui.grupo ? vGrupo(ui.grupo) : ({ fincas: vFincas, cuaderno: vCuaderno, cuentas: vCuentas, cosechas: vCosechas, resumen: vResumen }[ui.tab])();
-    const fab = { fincas: ['nuevaFinca', 'Finca'], cuaderno: ['nuevaLabor', 'Labor'], cuentas: ['nuevoMov', 'Apunte'], cosechas: ['nuevaCosecha', 'Cosecha'] }[ui.tab];
-    const mostrarFab = fab && !ui.fincaId && !ui.grupo && db.fincas.length && !(ui.tab === 'fincas' && ui.vistaFincas === 'mapa');
+    main.innerHTML = ui.fincaId ? vDetalle(ui.fincaId) : ui.grupo ? vGrupo(ui.grupo) : ({ fincas: vFincas, cuaderno: vCuaderno, cuentas: vCuentas, cosechas: vCosechas, almacen: vAlmacen, resumen: vResumen }[ui.tab])();
+    const fab = { fincas: ['nuevaFinca', 'Finca'], cuaderno: ['nuevaLabor', 'Labor'], cuentas: ['nuevoMov', 'Apunte'], cosechas: ['nuevaCosecha', 'Cosecha'], almacen: ui.alm.vista === 'factura' ? ['nuevoDoc" data-k="factura', 'Factura'] : ['nuevoDoc" data-k="albaran', 'Albarán'] }[ui.tab];
+    const mostrarFab = fab && !ui.fincaId && !ui.grupo && (db.fincas.length || ui.tab === 'almacen') && !(ui.tab === 'fincas' && ui.vistaFincas === 'mapa');
     $('#fabSlot').innerHTML = mostrarFab ? `<button class="fab" data-act="${fab[0]}">${ico.plus}${fab[1]}</button>` : '';
     montarMapa();
   }
@@ -876,11 +886,16 @@
           }
         }
         form.querySelectorAll('.grid2').forEach(g => { g.hidden = [...g.children].every(c => c.hidden); });
+        if (spec.alCambiar) spec.alCambiar(vals, form, origen);
       };
       form.addEventListener('change', e => refrescar(e.target.name));
-      form.addEventListener('input', e => { if (spec.alEscribir) spec.alEscribir(e.target.name, leer(), (k, v) => { form.elements[k].value = v; }); });
+      form.addEventListener('input', e => {
+        if (spec.alEscribir) spec.alEscribir(e.target.name, leer(), (k, v) => { form.elements[k].value = v; });
+        if (spec.alCambiar && e.target.name) spec.alCambiar(leer(), form, e.target.name);
+      });
+      if (spec.alMontar) spec.alMontar(() => refrescar());
       refrescar();
-      form.addEventListener('submit', e => {
+      form.addEventListener('submit', async e => {
         e.preventDefault(); leer();
         const out = {}; let ok = true;
         for (const f of cs) {
@@ -899,6 +914,7 @@
           out[f.k] = v;
         }
         if (!ok) { const first = form.querySelector('.err:not([hidden])'); if (first) first.parentElement.scrollIntoView({ block: 'center', behavior: 'smooth' }); return; }
+        if (spec.antesDeGuardar && !(await spec.antesDeGuardar(out))) return;
         const r = spec.guardar(out);
         if (typeof r === 'string') { toast(r); return; }
         guardar(); volverA(d - 1); render(); toast('Guardado');
@@ -1000,6 +1016,65 @@
     });
   }
 
+  // Productos del almacén que se pueden usar en una labor (según el titular de cada parcela)
+  function opcionesAlmacen(v, actual) {
+    const tipoP = TIPO_DE_LABOR[v.tipo]; if (!tipoP) return [['', '—']];
+    const tits = [...new Set((v.fincas || []).map(titularDe))];
+    const ps = db.productos.filter(p => p.tipo === tipoP).map(p => ({ p, ex: tits.map(t => existencias(p.id, t)) }))
+      .filter(x => x.ex.some(e => e > 0) || x.p.id === actual);
+    const prim = v.tipo === 'Tratamiento' ? ['', ps.length ? 'Elige el producto' : 'No hay fitosanitarios en el almacén'] : ['', 'No descontar del almacén'];
+    return [prim, ...ps.sort((a, b) => a.p.nombre.localeCompare(b.p.nombre, 'es')).map(x => [x.p.id, `${x.p.nombre} · quedan ${tits.length > 1 ? tits.map((t, i) => `${t || '¿?'} ${fmtN(x.ex[i], 3)}`).join(', ') : fmtN(x.ex[0] || 0, 3)} ${x.p.unidad}`])];
+  }
+  // Cantidad de producto que gasta una labor en una parcela
+  function gastoEnParcela(p, f, v, fs) {
+    const u = String(v.unidad || '').toLowerCase();
+    if (!(v.dosis > 0)) return null;
+    let q, uq;
+    if (u === 'kg' || u === 'l') { const T = sum(fs, x => +x.superficie || 0); q = v.dosis * (T ? (+f.superficie || 0) / T : 1 / fs.length); uq = u === 'kg' ? 'kg' : 'L'; }
+    else { const b = baseHa(v.dosis, v.unidad); if (!b) return null; const ha = fs.length === 1 && v.superficie > 0 ? v.superficie : (+f.superficie || 0); q = b.v * ha; uq = b.u; }
+    if (p.unidad === uq) return q;
+    if (p.unidad === 't' && uq === 'kg') return q / 1000;
+    return null;
+  }
+  function revisarLabor(v) {
+    const p = producto(v.prodAlm); const fs = (v.fincas || []).map(finca).filter(Boolean);
+    const out = { porCultivo: [], graves: [], notas: [], consumo: [], sinCalculo: false };
+    if (!p) return out;
+    const reg = regProducto(p);
+    const grupos = new Map();
+    fs.forEach(f => { const cu = cultivoDe(f.id, v.campana || db.campanaActiva) || ''; if (!grupos.has(cu)) grupos.set(cu, []); grupos.get(cu).push(f); });
+    if (p.tipo === 'Fitosanitario') {
+      if (!reg) out.notas.push(p.registro ? `No encuentro el nº ${p.registro} en el Registro incluido en la app: compruébalo en la ficha oficial.` : 'Este producto no está enlazado con el Registro oficial: la app no puede comprobar cultivos ni dosis.');
+      grupos.forEach((ff, cu) => {
+        const r = revisarFito(reg, cu, v.dosis, v.unidad);
+        out.porCultivo.push({ cu, fs: ff, r });
+        r.graves.forEach(g => { if (!out.graves.includes(g)) out.graves.push(g); });
+        r.notas.forEach(g => { if (!out.notas.includes(g)) out.notas.push(g); });
+      });
+    }
+    const porTit = new Map();
+    fs.forEach(f => { const q = gastoEnParcela(p, f, v, fs); if (q == null) { out.sinCalculo = true; return; } const t = titularDe(f.id); porTit.set(t, (porTit.get(t) || 0) + q); });
+    porTit.forEach((q, t) => { const ex = existencias(p.id, t) + (v._propio && v._propio[t] || 0); out.consumo.push({ t, q, ex }); if (q > ex + 1e-9) out.graves.push(`${t || 'El titular'} solo tiene ${fmtCant(ex, p.unidad)} de «${p.nombre}» y la labor gasta ${fmtCant(q, p.unidad)}.`); });
+    if (out.sinCalculo && v.dosis > 0) out.notas.push(`No puedo calcular cuánto se gasta: la dosis va en ${v.unidad} y el producto se mide en ${p.unidad}.`);
+    return out;
+  }
+  function infoLaborHTML(v) {
+    const p = producto(v.prodAlm);
+    if (!p) return TIPO_DE_LABOR[v.tipo] === 'Fitosanitario' ? '<p class="small muted" style="margin:0">Solo puedes elegir fitosanitarios que estén en el almacén del titular. Si falta alguno, sube primero su albarán en la pestaña Almacén.</p>' : '';
+    const reg = regProducto(p); const r = revisarLabor(v);
+    let h = `<div class="tag">${esc(p.nombre)}${p.registro ? ' · Nº reg. ' + esc(p.registro) : ''}${reg ? ` · <span class="${reg.e === 'Vigente' ? 'pos' : 'neg'}">${esc(reg.e)}</span>` : ''}</div>`;
+    if (p.tipo === 'Fitosanitario' && !FITOS) h += '<p class="small muted">Cargando el Registro oficial…</p>';
+    r.porCultivo.forEach(({ cu, fs, r: rr }) => {
+      const ok = rr.autorizado; const n = `${fs.length} parcela${fs.length === 1 ? '' : 's'}`;
+      h += `<div class="fito-cu ${ok === false ? 'mal' : ok ? 'bien' : ''}"><b>${ok === false ? '✗' : ok ? '✓' : '?'} ${esc(cu || 'Sin cultivo')}</b> <span class="small muted">(${n})</span>${ok ? `<div class="small">Dosis autorizada: ${esc(textoUsos(rr.usos)) || 'ver ficha'}</div>` : ok === false ? '<div class="small">No autorizado en este cultivo</div>' : ''}</div>`;
+    });
+    if (r.consumo.length) h += `<div class="small">Se gastan: ${r.consumo.map(x => `<b>${fmtCant(x.q, p.unidad)}</b>${x.t ? ' de ' + esc(x.t) : ''} (tiene ${fmtCant(x.ex, p.unidad)})`).join(' · ')}</div>`;
+    if (r.graves.length) h += `<div class="aviso-norma"><b>⚠ Puedes estar incumpliendo la normativa</b><ul>${r.graves.map(g => `<li>${esc(g)}</li>`).join('')}</ul></div>`;
+    if (r.notas.length) h += `<ul class="small muted notas">${r.notas.map(g => `<li>${esc(g)}</li>`).join('')}</ul>`;
+    if (reg) h += `<a class="small" href="${urlFicha(reg.id)}" target="_blank" rel="noopener">Ver ficha oficial del Ministerio</a>`;
+    return h;
+  }
+
   function formLabor(id, pre = {}) {
     const l = id ? db.labores.find(x => x.id === id) : null;
     if (!db.fincas.length) { toast('Primero añade una finca'); return; }
@@ -1007,9 +1082,15 @@
     const conDosis = v => CON_DOSIS.includes(v.tipo);
     const trat = v => v.tipo === 'Tratamiento';
     const una = v => (v.fincas || []).length <= 1;
+    const viejo = l && l.tipo === 'Tratamiento' && !l.productoId; // labor antigua sin producto del almacén
+    // lo que ya gastaba esta labor vuelve a estar disponible al editarla
+    const propio = {}; miembros.forEach(x => { if (x.consumo) propio[x.consumo.titular] = (propio[x.consumo.titular] || 0) + (+x.consumo.cantidad || 0); });
     const ini = l
-      ? Object.assign({}, l, { fincas: miembros.map(x => x.fincaId), coste: miembros.some(x => x.coste) ? Math.round(sum(miembros, x => x.coste) * 100) / 100 : null })
-      : { fecha: hoyISO(), tipo: 'Labrado', fincas: idsIniciales(pre), unidad: 'kg/ha', campana: db.campanaActiva };
+      ? Object.assign({}, l, { fincas: miembros.map(x => x.fincaId), prodAlm: l.productoId || '', coste: miembros.some(x => x.coste) ? Math.round(sum(miembros, x => x.coste) * 100) / 100 : null })
+      : { fecha: hoyISO(), tipo: 'Labrado', fincas: idsIniciales(pre), unidad: 'kg/ha', campana: db.campanaActiva, prodAlm: '' };
+    let ultimoProd = ini.prodAlm;
+    cargarFitos().then(d => { FITOS = d; if (refrescarInfo) refrescarInfo(); }).catch(() => {});
+    let refrescarInfo = null;
     formulario({
       titulo: l ? (miembros.length > 1 ? `Editar labor (${miembros.length} parcelas)` : 'Editar labor') : 'Nueva labor',
       valores: ini,
@@ -1017,18 +1098,41 @@
         { k: 'fecha', label: 'Fecha', type: 'date', req: 1, half: 1 },
         { k: 'tipo', label: 'Labor', type: 'select', req: 1, half: 1, opts: () => TIPOS_LABOR.map(t => [t, t]) },
         { k: 'fincas', label: 'Fincas', type: 'fincas', req: 1, hint: 'Marca una o varias. Al marcar una finca agrupada se marcan todas sus parcelas.' },
-        { k: 'producto', label: 'Producto, variedad o apero', placeholder: 'Ej.: Urea 46 %, cultivador, cebada Pedrezuela' },
+        { k: 'prodAlm', label: 'Producto del almacén', type: 'select', dyn: 1, opts: v => opcionesAlmacen(v, l && l.productoId), show: v => !!TIPO_DE_LABOR[v.tipo] && !(viejo && !v.prodAlm && v.tipo === 'Tratamiento' && l.producto) },
+        { k: 'producto', label: 'Producto, variedad o apero', placeholder: 'Ej.: cultivador, vertedera', show: v => !(TIPO_DE_LABOR[v.tipo] && v.prodAlm) && (v.tipo !== 'Tratamiento' || viejo) },
         { k: 'dosis', label: 'Dosis', type: 'num', half: 1, show: conDosis },
         { k: 'unidad', label: 'Unidad', type: 'select', half: 1, opts: () => UNIDADES.map(u => [u, u]), show: conDosis },
-        { k: 'registro', label: 'Nº de registro', half: 1, show: trat, placeholder: 'Registro del producto' },
+        { k: 'registro', label: 'Nº de registro', half: 1, show: v => trat(v) && !v.prodAlm, placeholder: 'Registro del producto' },
         { k: 'motivo', label: 'Plaga o mala hierba', half: 1, show: trat, placeholder: 'Ej.: avena loca' },
         { k: 'superficie', label: 'Superficie trabajada (ha)', type: 'num', placeholder: 'Vacío = toda la finca', show: una },
         { k: 'coste', label: 'Coste total (€)', type: 'num', miles: 1, hint: 'Se apunta también como gasto. Con varias fincas se reparte según la superficie de cada una.' },
         campoCampana,
         { k: 'notas', label: 'Notas', type: 'textarea', placeholder: 'Maquinaria, condiciones del tiempo, quién la hizo…' }
       ],
+      extra: '<div id="fitoInfo" class="fito-info" hidden></div>',
+      alCambiar(v, form, origen) {
+        refrescarInfo = () => alCambiarReal(v, form);
+        if (origen === 'prodAlm' || (v.prodAlm && v.prodAlm !== ultimoProd)) {
+          ultimoProd = v.prodAlm;
+          const p = producto(v.prodAlm); const reg = regProducto(p);
+          if (reg && !(parseNum(v.dosis) > 0)) {
+            const u0 = Object.values(reg.u || {}).flat().map(x => UNI_REG[x[3]]).find(Boolean);
+            if (u0 && form.elements.unidad) { form.elements.unidad.value = u0; v.unidad = u0; }
+          } else if (p && p.tipo !== 'Fitosanitario' && !(parseNum(v.dosis) > 0) && form.elements.unidad) { const u0 = p.unidad === 'L' ? 'L/ha' : 'kg/ha'; form.elements.unidad.value = u0; v.unidad = u0; }
+        }
+        alCambiarReal(v, form);
+      },
+      antesDeGuardar(v) {
+        if (v.tipo === 'Tratamiento' && !v.prodAlm && !viejo) { toast('Elige el fitosanitario del almacén. Si no aparece, sube primero su albarán.'); return Promise.resolve(false); }
+        if (!v.prodAlm) return Promise.resolve(true);
+        const r = revisarLabor(Object.assign({}, v, { _propio: propio }));
+        if (!r.graves.length) return Promise.resolve(true);
+        return confirmar('⚠ Revisa antes de guardar', `<ul class="avisos-lista">${r.graves.map(g => `<li>${esc(g)}</li>`).join('')}</ul>Si lo guardas, la labor quedará marcada para revisar en el cuaderno.`, 'Guardar igualmente').then(x => x.ok);
+      },
       guardar(v) {
         const fs = v.fincas.map(finca).filter(Boolean);
+        const p = producto(v.prodAlm);
+        const r = p ? revisarLabor(Object.assign({}, v, { _propio: propio })) : null;
         const ids = new Set(miembros.map(x => x.id));
         db.labores = db.labores.filter(x => !ids.has(x.id));
         db.movimientos = db.movimientos.filter(m => !ids.has(m.laborId));
@@ -1036,7 +1140,17 @@
         const costes = repartir(v.coste, fs);
         fs.forEach((f, i) => {
           const x = Object.assign({}, v, { id: i === 0 && l ? l.id : uid(), fincaId: f.id, coste: costes[i], superficie: fs.length > 1 ? null : v.superficie });
-          delete x.fincas; if (lote) x.lote = lote;
+          delete x.fincas; delete x.prodAlm; delete x._propio; if (lote) x.lote = lote; else delete x.lote;
+          delete x.consumo; delete x.avisos; delete x.productoId;
+          if (p) {
+            x.productoId = p.id; x.producto = p.nombre; if (p.registro) x.registro = p.registro;
+            const q = gastoEnParcela(p, f, v, fs);
+            if (q != null) x.consumo = { productoId: p.id, cantidad: Math.round(q * 1000) / 1000, unidad: p.unidad, titular: titularDe(f.id) };
+            const cu = cultivoDe(f.id, x.campana) || '';
+            const pc = r && r.porCultivo.find(z => z.cu === cu);
+            const av = [...(pc ? pc.r.graves : []), ...(r ? r.graves.filter(g => / solo tiene /.test(g) && g.startsWith(titularDe(f.id) || 'El titular')) : [])];
+            if (av.length) x.avisos = av;
+          }
           db.labores.push(x);
           if (x.coste > 0) db.movimientos.push({ id: uid(), laborId: x.id, tipo: 'gasto', fecha: x.fecha, fincaId: x.fincaId, campana: x.campana, categoria: CAT_LABOR[x.tipo] || 'Servicios contratados', concepto: x.tipo + (x.producto ? ' · ' + x.producto : ''), importe: x.coste, lote: lote || undefined });
           if (x.tipo === 'Siembra' && !siembraDe(x.fincaId, x.campana)) {
@@ -1045,9 +1159,16 @@
           }
         });
       },
-      textoBorrar: miembros.length > 1 ? `Se borrará esta labor en las ${miembros.length} parcelas y, si tenía coste, también sus gastos.` : 'Se borrará la labor y, si tenía coste, también su gasto.',
+      textoBorrar: miembros.length > 1 ? `Se borrará esta labor en las ${miembros.length} parcelas y, si tenía coste, también sus gastos. Lo gastado del almacén vuelve al inventario.` : 'Se borrará la labor y, si tenía coste, también su gasto. Lo gastado del almacén vuelve al inventario.',
       borrar: l && (() => { const ids = new Set(miembros.map(x => x.id)); db.labores = db.labores.filter(x => !ids.has(x.id)); db.movimientos = db.movimientos.filter(m => !ids.has(m.laborId)); })
     });
+    function alCambiarReal(v, form) {
+      const box = form.querySelector('#fitoInfo'); if (!box) return;
+      const anc = form.querySelector('[data-pair="dosis"]') || form.querySelector('.field[data-k="prodAlm"]');
+      if (anc && box.previousElementSibling !== anc) anc.after(box);
+      const html = TIPO_DE_LABOR[v.tipo] ? infoLaborHTML(Object.assign({}, v, { dosis: parseNum(v.dosis), superficie: parseNum(v.superficie), _propio: propio })) : '';
+      box.hidden = !html; box.innerHTML = html;
+    }
   }
 
   function formMov(id, pre = {}) {
@@ -1244,7 +1365,7 @@
         else if (a === 'borrarTodo') {
           const r = await confirmar('¿Borrar todos los datos?', 'Se borrarán todas las fincas, labores, cuentas y cosechas de este teléfono. Si no tienes copia de seguridad, no podrás recuperarlas.', 'Borrar todo');
           if (!r.ok) return;
-          db = nuevoDB(); guardar(false); ui.fincaId = null; ui.grupo = null; volverA(0); render(); toast('Datos borrados');
+          db = nuevoDB(); guardar(false); archivosVaciar().catch(() => {}); ui.fincaId = null; ui.grupo = null; volverA(0); render(); toast('Datos borrados');
         }
       });
     });
@@ -1538,7 +1659,9 @@
   // ---------- Copias de seguridad ----------
   async function exportar(compartir) {
     const fecha = hoyISO();
-    const json = JSON.stringify({ app: 'cuaderno-campo', version: VERSION, exportado: new Date().toISOString(), datos: db }, null, 1);
+    let archivos = [];
+    try { archivos = await Promise.all((await archivosTodos()).map(async a => ({ id: a.id, nombre: a.nombre, tipo: a.tipo, fecha: a.fecha, data: await blobADataURL(a.blob) }))); } catch (e) { /* sin archivos */ }
+    const json = JSON.stringify({ app: 'cuaderno-campo', version: VERSION, exportado: new Date().toISOString(), datos: db, archivos }, null, 1);
     const ok = await guardarArchivo(new Blob([json], { type: 'application/json' }), `cuaderno-campo-${fecha}.json`, compartir, `Copia de seguridad del ${fmtFecha(fecha)}`);
     if (ok) { db.ultimaCopia = new Date().toISOString(); guardar(false); render(); toast('Copia hecha'); }
   }
@@ -1546,13 +1669,18 @@
   $('#fileIn').addEventListener('change', async e => {
     const file = e.target.files[0]; e.target.value = '';
     if (!file) return;
-    let datos;
-    try { const o = JSON.parse(await file.text()); datos = o && o.datos ? o.datos : o; if (!datos || !Array.isArray(datos.fincas)) throw new Error(); }
+    let datos, o;
+    try { o = JSON.parse(await file.text()); datos = o && o.datos ? o.datos : o; if (!datos || !Array.isArray(datos.fincas)) throw new Error(); }
     catch (err) { toast('Ese archivo no es una copia de Cuaderno de Campo'); return; }
     const r = await confirmar('¿Importar esta copia?',
       `La copia tiene <b>${datos.fincas.length} fincas</b>, ${(datos.labores || []).length} labores, ${(datos.movimientos || []).length} apuntes y ${(datos.cosechas || []).length} cosechas.<br><br>Sustituirá a los datos que hay ahora en este teléfono (${db.fincas.length} fincas).`, 'Importar');
     if (!r.ok) return;
     db = normalizar(datos); db.ultimaCopia = new Date().toISOString(); db.ejemplo = false; guardar(false);
+    if (o && Array.isArray(o.archivos)) {
+      let n = 0;
+      for (const a of o.archivos) { try { const blob = await (await fetch(a.data)).blob(); await archivoGuardar({ id: a.id, nombre: a.nombre, tipo: a.tipo, fecha: a.fecha, blob }); n++; } catch (e) { /* sigue */ } }
+      if (n) toast(`${n} fotos y PDF recuperados`);
+    }
     ui.fincaId = null; ui.grupo = null; volverA(0); render(); toast('Copia importada');
   });
 
@@ -1610,6 +1738,490 @@
     db = d; guardar(false); ui.tab = 'fincas'; ui.mapaAjustado = false; render(); toast('Datos de ejemplo cargados');
   }
 
+  // ---------- Archivos (fotos y PDF de albaranes y facturas): se guardan en el teléfono (IndexedDB) ----------
+  let idbP = null;
+  function idb() {
+    return idbP || (idbP = new Promise((res, rej) => {
+      const r = indexedDB.open('cuadernoCampoArchivos', 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('archivos', { keyPath: 'id' });
+      r.onsuccess = () => res(r.result); r.onerror = () => { idbP = null; rej(r.error); };
+    }));
+  }
+  async function idbOp(modo, fn) {
+    const d = await idb();
+    return new Promise((res, rej) => { const t = d.transaction('archivos', modo); const r = fn(t.objectStore('archivos')); t.oncomplete = () => res(r && r.result); t.onerror = () => rej(t.error); });
+  }
+  const archivoGuardar = rec => idbOp('readwrite', s => s.put(rec));
+  const archivoLeer = id => idbOp('readonly', s => s.get(id));
+  const archivoBorrar = id => idbOp('readwrite', s => s.delete(id));
+  const archivosTodos = () => idbOp('readonly', s => s.getAll());
+  const archivosVaciar = () => idbOp('readwrite', s => s.clear());
+  // Las fotos se reducen (máx. 1800 px) para que quepan muchas en el teléfono
+  async function prepararArchivo(file) {
+    if (file.type && file.type.startsWith('image/')) {
+      try {
+        const bmp = await createImageBitmap(file);
+        const k = Math.min(1, 1800 / Math.max(bmp.width, bmp.height));
+        const c = document.createElement('canvas'); c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+        c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+        const blob = await new Promise(r => c.toBlob(r, 'image/jpeg', 0.82));
+        if (blob) return { blob, tipo: 'image/jpeg', nombre: (file.name || 'foto').replace(/\.\w+$/, '') + '.jpg' };
+      } catch (e) { /* se guarda tal cual */ }
+    }
+    return { blob: file, tipo: file.type || 'application/octet-stream', nombre: file.name || 'documento' };
+  }
+  async function verArchivo(id) {
+    let a; try { a = await archivoLeer(id); } catch (e) { a = null; }
+    if (!a) { toast('Ese archivo no está en este teléfono'); return; }
+    const url = URL.createObjectURL(a.blob);
+    if (a.tipo.startsWith('image/')) {
+      abrirCapa(`<div class="sheet" role="dialog" aria-modal="true">${cabecera(esc(a.nombre))}<div class="body"><img src="${url}" alt="${esc(a.nombre)}" class="visor-img"></div></div>`);
+    } else {
+      const w = window.open(url, '_blank');
+      if (!w) { const l = document.createElement('a'); l.href = url; l.download = a.nombre; document.body.appendChild(l); l.click(); l.remove(); }
+    }
+  }
+  const blobADataURL = b => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error); r.readAsDataURL(b); });
+
+  // ---------- Registro oficial de fitosanitarios (MAPA), incluido en la app ----------
+  let fitosP = null;
+  function cargarFitos() {
+    return fitosP || (fitosP = fetch('fitos.json').then(r => { if (!r.ok) throw new Error('fitos'); return r.json(); })
+      .then(d => { d.porId = new Map(d.productos.map(p => [p.id, p])); return d; })
+      .catch(e => { fitosP = null; throw e; }));
+  }
+  let FITOS = null; // se rellena al cargar
+  const regProducto = p => (p && p.regId && FITOS) ? FITOS.porId.get(p.regId) : null;
+  // Con qué cultivos del Registro se compara cada cultivo de la app
+  const CULTIVO_REG = {
+    trigo: ['Trigo', 'Cereales de invierno / primavera'], cebada: ['Cebada', 'Cereales de invierno / primavera'],
+    avena: ['Avena', 'Cereales de invierno / primavera'], 'avena forrajera': ['Avena', 'Cereales de invierno / primavera'],
+    centeno: ['Centeno', 'Cereales de invierno / primavera'], triticale: ['Triticale', 'Cereales de invierno / primavera'],
+    lenteja: ['Lenteja', 'Leguminosas de grano'], garbanzo: ['Garbanzo', 'Leguminosas de grano'], guisante: ['Guisante para grano', 'Leguminosas de grano'],
+    titarro: ['Almorta', 'Leguminosas de grano'], yeros: ['Yeros', 'Leguminosas forrajeras'], veza: ['Veza', 'Leguminosas forrajeras'],
+    esparceta: ['Esparceta', 'Leguminosas forrajeras'], alfalfa: ['Alfalfa', 'Leguminosas forrajeras'],
+    'anis dulce': ['Anís, matalauva'], anis: ['Anís, matalauva'], cilantro: ['Cilantro'], girasol: ['Girasol'], colza: ['Colza'], camelina: ['Camelina'],
+    barbecho: ['Barbechos'], chopo: ['Chopos y álamos']
+  };
+  const regDeCultivo = cu => CULTIVO_REG[norm(cu)] || null;
+  const fechaDMY = s => { const m = String(s || '').match(/^(\d{2})-(\d{2})-(\d{4})$/); return m ? `${m[3]}-${m[2]}-${m[1]}` : ''; };
+  // Dosis por hectárea pasada a L/ha o kg/ha
+  function baseHa(v, u) {
+    u = String(u || '').toLowerCase().replace(/\s/g, '');
+    if (v == null || Number.isNaN(+v)) return null;
+    if (u === 'cc/ha' || u === 'ml/ha') return { v: v / 1000, u: 'L' };
+    if (u === 'l/ha') return { v: +v, u: 'L' };
+    if (u === 'g/ha') return { v: v / 1000, u: 'kg' };
+    if (u === 'kg/ha') return { v: +v, u: 'kg' };
+    return null;
+  }
+  const UNI_REG = { 'cc/ha': 'cc/ha', 'ml/ha': 'cc/ha', 'l/ha': 'L/ha', 'g/ha': 'g/ha', 'kg/ha': 'kg/ha' };
+  // Comprueba un fitosanitario en un cultivo: autorización, dosis y estado
+  function revisarFito(reg, cultivo, dosis, unidad) {
+    const r = { graves: [], notas: [], usos: [], rango: null, autorizado: null };
+    if (!reg) return r;
+    if (reg.e && reg.e !== 'Vigente') r.graves.push(`«${reg.n}» figura como «${reg.e}» en el Registro.`);
+    const cad = fechaDMY(reg.cad); if (cad && cad < hoyISO()) r.graves.push(`La autorización de «${reg.n}» caducó el ${reg.cad}.`);
+    const lim = fechaDMY(reg.lv); if (lim && lim < hoyISO()) r.notas.push(`Fecha límite de venta: ${reg.lv}. Revisa hasta cuándo se puede usar.`);
+    if (!cultivo) { r.notas.push('La parcela no tiene cultivo asignado en esta campaña: no se puede comprobar si el producto está autorizado.'); return r; }
+    const cs = regDeCultivo(cultivo);
+    if (!cs) { r.notas.push(`«${cultivo}» no está en el Registro: compruébalo en la ficha oficial.`); return r; }
+    const aut = cs.filter(c => (reg.c || []).includes(c) || (reg.u && reg.u[c]));
+    r.autorizado = aut.length > 0;
+    if (!aut.length) { r.graves.push(`«${reg.n}» no está autorizado en ${cultivo}.`); return r; }
+    if (norm(cultivo) === 'titarro') r.notas.push('El titarro no figura en el Registro; se compara con almorta y leguminosas de grano. Confírmalo con tu técnico.');
+    r.usos = aut.flatMap(c => ((reg.u && reg.u[c]) || []).map(x => ({ c, ag: x[0], min: x[1], max: x[2], u: x[3] })));
+    const bs = r.usos.map(x => ({ a: baseHa(x.min, x.u), b: baseHa(x.max, x.u) })).filter(x => x.a && x.b);
+    if (bs.length) {
+      const u0 = bs[0].a.u; const mm = bs.filter(x => x.a.u === u0);
+      r.rango = { min: Math.min(...mm.map(x => x.a.v)), max: Math.max(...mm.map(x => x.b.v)), u: u0 };
+      const d = baseHa(dosis, unidad);
+      if (d && d.u === r.rango.u) {
+        if (d.v > r.rango.max * 1.0001) r.graves.push(`La dosis (${fmtN(dosis, 4)} ${unidad}) supera la máxima autorizada en ${cultivo} (${fmtN(r.rango.max, 4)} ${r.rango.u}/ha).`);
+        else if (d.v < r.rango.min * 0.9999) r.notas.push(`La dosis está por debajo de la mínima de la etiqueta en ${cultivo} (${fmtN(r.rango.min, 4)} ${r.rango.u}/ha).`);
+      } else if (d && d.u !== r.rango.u) r.notas.push(`La dosis autorizada va en ${r.rango.u}/ha y has puesto ${unidad}.`);
+    }
+    return r;
+  }
+  const textoUsos = usos => [...new Set(usos.map(x => `${x.ag ? x.ag.replace(/,.*$/, '') + ': ' : ''}${fmtN(x.min, 4)}${x.max !== x.min ? '-' + fmtN(x.max, 4) : ''} ${x.u}`))].slice(0, 8).join(' · ');
+  const urlFicha = id => `https://servicio.mapa.gob.es/regfiweb/Productos/ExportFichaProductoPdfGet?idProducto=${id}`;
+  const LIQUIDOS = /\[(EC|SC|SL|OD|EW|SE|ME|CS|DC|EO|OL|AL|UL|ZC|SU|FS|LS|ES|CF|OF)\]/i;
+  const unidadDeFormulado = f => LIQUIDOS.test(f || '') ? 'L' : 'kg';
+
+  // ---------- Almacén: productos, existencias por titular, albaranes y facturas ----------
+  const TIPOS_PROD = ['Fitosanitario', 'Abono', 'Semilla', 'Otro'];
+  const UNI_PROD = ['L', 'kg', 't', 'ud'];
+  const TIPO_DE_LABOR = { Tratamiento: 'Fitosanitario', Abonado: 'Abono', Siembra: 'Semilla' };
+  const producto = id => db.productos.find(p => p.id === id);
+  const titularesTodos = () => [...new Set([...titulares(), ...db.documentos.map(d => d.titular), ...db.ajustes.map(a => a.titular)].map(t => String(t || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
+  const titularDe = fid => String((finca(fid) || {}).titular || '').trim();
+  function movimientosProducto(pid, tit) {
+    const out = [];
+    db.documentos.filter(d => d.tipo === 'albaran' && (tit == null || d.titular === tit)).forEach(d => (d.lineas || []).forEach(l => { if (l.productoId === pid) out.push({ fecha: d.fecha, cant: +l.cantidad || 0, txt: `Albarán ${d.numero || ''} · ${d.proveedor || ''}`.trim(), titular: d.titular, doc: d.id }); }));
+    db.labores.filter(l => l.consumo && l.consumo.productoId === pid && (tit == null || l.consumo.titular === tit)).forEach(l => out.push({ fecha: l.fecha, cant: -(+l.consumo.cantidad || 0), txt: `${l.tipo} · ${(finca(l.fincaId) || {}).nombre || ''}`, titular: l.consumo.titular, labor: l.id }));
+    db.ajustes.filter(a => a.productoId === pid && (tit == null || a.titular === tit)).forEach(a => out.push({ fecha: a.fecha, cant: +a.cantidad || 0, txt: `Ajuste${a.motivo ? ' · ' + a.motivo : ''}`, titular: a.titular, ajuste: a.id }));
+    return out.sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
+  }
+  const existencias = (pid, tit) => Math.round(sum(movimientosProducto(pid, tit), m => m.cant) * 1000) / 1000;
+  const fmtCant = (v, u) => `${fmtN(v, 3)} ${u || ''}`.trim();
+  function productosConMovimiento(tit) {
+    const ids = new Set();
+    db.documentos.filter(d => d.tipo === 'albaran' && (tit == null || d.titular === tit)).forEach(d => (d.lineas || []).forEach(l => ids.add(l.productoId)));
+    db.labores.forEach(l => { if (l.consumo && (tit == null || l.consumo.titular === tit)) ids.add(l.consumo.productoId); });
+    db.ajustes.forEach(a => { if (tit == null || a.titular === tit) ids.add(a.productoId); });
+    return [...ids].map(producto).filter(Boolean).sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
+  }
+  const totalDoc = d => Math.round(sum(d.lineas || [], l => l.importe) * 100) / 100;
+  function cotejo(f) {
+    const albs = db.documentos.filter(d => (f.albaranes || []).includes(d.id));
+    const sumAlb = Math.round(sum(albs, totalDoc) * 100) / 100;
+    const base = f.base != null && f.base !== '' ? +f.base : (f.total ? Math.round(f.total / (1 + (+f.iva || 0) / 100) * 100) / 100 : null);
+    const prods = new Map();
+    albs.forEach(a => (a.lineas || []).forEach(l => { const p = prods.get(l.productoId) || { alb: 0, fac: 0 }; p.alb += +l.cantidad || 0; prods.set(l.productoId, p); }));
+    (f.lineas || []).forEach(l => { const p = prods.get(l.productoId) || { alb: 0, fac: 0 }; p.fac += +l.cantidad || 0; prods.set(l.productoId, p); });
+    const difProd = (f.lineas || []).length ? [...prods].filter(([, p]) => Math.abs(p.alb - p.fac) > 0.001).map(([pid, p]) => ({ pid, ...p })) : [];
+    const dif = base != null && albs.length ? Math.round((base - sumAlb) * 100) / 100 : null;
+    const estado = !albs.length ? 'sin' : (dif != null && Math.abs(dif) <= 0.5 && !difProd.length) ? 'ok' : 'mal';
+    return { albs, sumAlb, base, dif, difProd, estado };
+  }
+  const ESTADO_COT = { ok: ['Cuadra', 'pos'], mal: ['No cuadra', 'neg'], sin: ['Sin cotejar', 'muted'] };
+
+  function vAlmacen() {
+    const a = ui.alm; const tits = titularesTodos();
+    let h = `<div class="segs" role="group" aria-label="Apartado">${[['inventario', 'Inventario'], ['albaran', 'Albaranes'], ['factura', 'Facturas']].map(([k, t]) => `<button data-act="almVista" data-k="${k}" aria-pressed="${a.vista === k}">${t}</button>`).join('')}</div>`;
+    if (tits.length) h += `<div class="carpetas" role="group" aria-label="Carpeta del titular">${[['', 'Todos'], ...tits.map(t => [t, t])].map(([k, t]) => `<button data-act="almTitular" data-k="${esc(k)}" aria-pressed="${a.titular === k}">${k ? ico.carpeta : ''}${esc(t)}</button>`).join('')}</div>`;
+    const tit = a.titular;
+    if (a.vista === 'inventario') {
+      const grupos = tit ? [tit] : (tits.length ? tits : ['']);
+      let algo = false;
+      for (const t of grupos) {
+        const ps = productosConMovimiento(t || null); if (!ps.length) continue; algo = true;
+        h += `${grupos.length > 1 ? `<h2 class="sec">${esc(t)}</h2>` : ''}<div class="list">${ps.map(p => { const ex = existencias(p.id, t || null); const reg = regProducto(p);
+          return `<button class="row" data-act="verProducto" data-id="${p.id}" data-t="${esc(t)}"><div class="main"><div class="t">${esc(p.nombre)}</div><div class="s">${esc([p.tipo, p.registro ? 'Nº reg. ' + p.registro : '', reg && reg.e !== 'Vigente' ? reg.e : ''].filter(Boolean).join(' · '))}</div></div><div class="end big ${ex < 0 ? 'neg' : ex === 0 ? 'muted' : ''}">${fmtCant(ex, p.unidad)}</div></button>`; }).join('')}</div>`;
+      }
+      if (!algo) h += vacio('El almacén está vacío', 'Sube el albarán de lo que compras (fitosanitarios, abono, semilla) y aquí verás lo que le queda a cada titular. Al apuntar un tratamiento se descuenta solo.', '<button class="btn primary" data-act="nuevoDoc" data-k="albaran">Subir albarán</button>');
+      return h;
+    }
+    const docs = db.documentos.filter(d => d.tipo === a.vista && (!tit || d.titular === tit)).sort(byFechaDesc);
+    if (!docs.length) return h + vacio(a.vista === 'albaran' ? 'No hay albaranes' : 'No hay facturas', a.vista === 'albaran' ? 'Haz una foto al albarán o sube el PDF, y apunta los productos y cantidades. Se guardan en la carpeta de cada titular.' : 'Sube la factura y marca los albaranes que incluye: la app comprueba si cuadran.', `<button class="btn primary" data-act="nuevoDoc" data-k="${a.vista}">${a.vista === 'albaran' ? 'Subir albarán' : 'Subir factura'}</button>`);
+    let mes = ''; let lista = '';
+    for (const d of docs) {
+      const m = (d.fecha || '').slice(0, 7);
+      if (m !== mes) { if (mes) lista += '</div>'; mes = m; lista += `<h2 class="sec">${m ? MESES_L[+m.slice(5) - 1] + ' ' + m.slice(0, 4) : 'Sin fecha'}</h2><div class="list">`; }
+      let estado = '';
+      if (d.tipo === 'albaran') { const fac = db.documentos.find(f => f.tipo === 'factura' && (f.albaranes || []).includes(d.id)); estado = fac ? `<span class="pill pos">Facturado</span>` : '<span class="pill warn">Sin factura</span>'; }
+      else { const c = cotejo(d); estado = `<span class="pill ${ESTADO_COT[c.estado][1]}">${ESTADO_COT[c.estado][0]}</span>`; }
+      const importe = d.tipo === 'factura' ? (d.total || totalDoc(d)) : totalDoc(d);
+      lista += `<button class="row" data-act="editDoc" data-id="${d.id}">${fechaBox(d.fecha)}<div class="main"><div class="t">${esc(d.proveedor || 'Sin proveedor')}${d.numero ? ' · nº ' + esc(d.numero) : ''}</div><div class="s">${esc([tit ? '' : d.titular, `${(d.lineas || []).length} producto${(d.lineas || []).length === 1 ? '' : 's'}`, (d.archivos || []).length ? `${d.archivos.length} archivo${d.archivos.length === 1 ? '' : 's'}` : 'sin archivo'].filter(Boolean).join(' · '))}</div>${estado}</div><div class="end big">${importe ? eur(importe, 2) : ''}</div></button>`;
+    }
+    return h + lista + '</div>';
+  }
+
+  // Elegir producto: los del almacén, buscar en el Registro oficial o crear uno nuevo
+  function hojaElegirProducto(tipoPref, alElegir) {
+    cargarFitos().then(d => { FITOS = d; }).catch(() => {});
+    abrirCapa(`<div class="sheet" role="dialog" aria-modal="true">${cabecera('Elegir producto')}<div class="body">
+      <div class="field"><input id="epBuscar" type="search" placeholder="Nombre o nº de registro (p. ej. Accresto, 19549)" autocomplete="off" aria-label="Buscar producto"></div>
+      <div id="epRes"></div></div></div>`, (el, d) => {
+      const inp = el.querySelector('#epBuscar'), res = el.querySelector('#epRes');
+      const pintar = () => {
+        const q = norm(inp.value);
+        const mios = db.productos.filter(p => !q || norm(p.nombre + ' ' + (p.registro || '')).includes(q)).slice(0, 30);
+        let h = mios.length ? `<h2 class="sec">En tu almacén</h2><div class="list">${mios.map(p => `<button class="row" data-ep="mio" data-id="${p.id}"><div class="main"><div class="t">${esc(p.nombre)}</div><div class="s">${esc([p.tipo, p.registro ? 'Nº reg. ' + p.registro : '', p.unidad].filter(Boolean).join(' · '))}</div></div></button>`).join('')}</div>` : '';
+        if (q.length >= 2 && FITOS) {
+          const yaReg = new Set(db.productos.map(p => p.regId));
+          const hits = FITOS.productos.filter(p => !yaReg.has(p.id) && norm(p.n + ' ' + p.r).includes(q)).slice(0, 25);
+          h += `<h2 class="sec">Registro oficial de fitosanitarios</h2>${hits.length ? `<div class="list">${hits.map(p => `<button class="row" data-ep="reg" data-id="${p.id}"><div class="main"><div class="t">${esc(p.n)}</div><div class="s">${esc(['Nº reg. ' + p.r, p.f, p.e].filter(Boolean).join(' · '))}</div></div><span class="pill ${p.e === 'Vigente' ? 'pos' : 'neg'}">${esc(p.e)}</span></button>`).join('')}</div>` : '<p class="note">Ningún fitosanitario autorizado en tus cultivos coincide.</p>'}`;
+        } else if (q.length >= 2 && !FITOS) h += '<p class="note">Cargando el Registro de fitosanitarios…</p>';
+        if (q.length >= 2) h += `<div class="card pad nuevo-prod"><div class="tag">Crear producto nuevo</div><b>${esc(inp.value.trim())}</b>
+          <div class="grid2"><div class="field"><label for="epTipo">Tipo</label><select id="epTipo">${TIPOS_PROD.map(t => `<option${t === (tipoPref && tipoPref !== 'Fitosanitario' ? tipoPref : 'Abono') ? ' selected' : ''}>${t}</option>`).join('')}</select></div>
+          <div class="field"><label for="epUni">Se mide en</label><select id="epUni">${UNI_PROD.map(u => `<option>${u}</option>`).join('')}</select></div></div>
+          <button class="btn block" data-ep="nuevo" type="button">Crear «${esc(inp.value.trim())}»</button><p class="small muted" style="margin:0">Para fitosanitarios usa mejor el Registro de arriba: así la app comprueba cultivos y dosis.</p></div>`;
+        res.innerHTML = h || '<p class="note">Escribe el nombre del producto.</p>';
+      };
+      inp.addEventListener('input', pintar);
+      cargarFitos().then(dd => { FITOS = dd; pintar(); }).catch(() => {});
+      pintar(); setTimeout(() => inp.focus(), 50);
+      res.addEventListener('click', e => {
+        const b = e.target.closest('[data-ep]'); if (!b) return;
+        let p;
+        if (b.dataset.ep === 'mio') p = producto(b.dataset.id);
+        else if (b.dataset.ep === 'reg') {
+          const r = FITOS.porId.get(+b.dataset.id);
+          p = { id: uid(), nombre: r.n, tipo: 'Fitosanitario', unidad: unidadDeFormulado(r.f), regId: r.id, registro: r.r, formulado: r.f };
+          db.productos.push(p);
+        } else {
+          const nombre = inp.value.trim(); if (!nombre) return;
+          p = { id: uid(), nombre, tipo: el.querySelector('#epTipo').value, unidad: el.querySelector('#epUni').value };
+          db.productos.push(p);
+        }
+        guardar(); volverA(d - 1); alElegir(p);
+      });
+    });
+  }
+
+  // Albarán o factura
+  function formDocumento(tipo, id) {
+    const doc = id ? db.documentos.find(x => x.id === id) : null;
+    if (doc) tipo = doc.tipo;
+    const tits = titularesTodos();
+    const v = doc ? JSON.parse(JSON.stringify(doc)) : { tipo, titular: ui.alm.titular || (tits.length === 1 ? tits[0] : ''), fecha: hoyISO(), proveedor: '', numero: '', lineas: [], archivos: [], albaranes: [], iva: tipo === 'factura' ? 10 : null, notas: '' };
+    const nuevosArch = []; const quitarArch = [];
+    const esFac = tipo === 'factura';
+    const proveedores = [...new Set(db.documentos.map(x => x.proveedor).filter(Boolean))];
+    cargarFitos().then(dd => { FITOS = dd; }).catch(() => {});
+    abrirCapa(`<div class="sheet" role="dialog" aria-modal="true">${cabecera(doc ? (esFac ? 'Factura' : 'Albarán') : (esFac ? 'Nueva factura' : 'Nuevo albarán'))}<form class="body" id="frmDoc" novalidate>
+      <div class="grid2"><div class="field"><label for="dTit">Titular (carpeta)</label><input id="dTit" value="${esc(v.titular)}" list="dl_tit" autocomplete="off" placeholder="Ej.: Ivan"><datalist id="dl_tit">${tits.map(t => `<option value="${esc(t)}">`).join('')}</datalist></div>
+      <div class="field"><label for="dFecha">Fecha</label><input id="dFecha" type="date" value="${esc(v.fecha)}"></div></div>
+      <div class="grid2"><div class="field"><label for="dProv">Proveedor</label><input id="dProv" value="${esc(v.proveedor)}" list="dl_prov" autocomplete="off" placeholder="Ej.: Cooperativa"><datalist id="dl_prov">${proveedores.map(t => `<option value="${esc(t)}">`).join('')}</datalist></div>
+      <div class="field"><label for="dNum">Nº de ${esFac ? 'factura' : 'albarán'}</label><input id="dNum" value="${esc(v.numero)}" autocomplete="off"></div></div>
+      <div class="field"><label>Foto o PDF</label><div id="dArch" class="archivos"></div>
+        <div class="btns" style="justify-content:flex-start"><label class="btn sm">${ico.camara} Hacer foto<input type="file" accept="image/*" capture="environment" hidden data-sube></label><label class="btn sm">${ico.clip} Subir foto o PDF<input type="file" accept="image/*,application/pdf" multiple hidden data-sube></label></div></div>
+      ${esFac ? `<div class="field"><label>Albaranes que incluye</label><div id="dAlbs"></div></div>` : ''}
+      <div class="field"><label>${esFac ? 'Productos de la factura (opcional, para comparar cantidades)' : 'Productos'}</label><div id="dLineas"></div><button type="button" class="btn sm" data-addl>${ico.plus} Añadir producto</button></div>
+      ${esFac ? `<div class="grid3"><div class="field"><label for="dBase">Base (sin IVA)</label><input id="dBase" inputmode="decimal" value="${esc(numStr(v.base))}" autocomplete="off"></div><div class="field"><label for="dIva">IVA %</label><input id="dIva" inputmode="decimal" value="${esc(numStr(v.iva))}" autocomplete="off"></div><div class="field"><label for="dTotal">Total</label><input id="dTotal" inputmode="decimal" value="${esc(numStr(v.total))}" autocomplete="off"></div></div>
+        <div id="dCot" class="card pad cotejo"></div>
+        <label class="chk"><input type="checkbox" id="dGasto"${doc && db.movimientos.some(m => m.docId === doc.id) ? ' checked' : ''}> Apuntar el total en Cuentas como gasto</label>` : ''}
+      <div class="field"><label for="dNotas">Notas</label><textarea id="dNotas" rows="2">${esc(v.notas)}</textarea></div>
+      </form><footer>${doc ? '<button class="btn danger" type="button" data-del>Borrar</button>' : ''}<button class="btn primary" type="submit" form="frmDoc">Guardar</button></footer></div>`, (el, d) => {
+      const form = el.querySelector('form');
+      const leer = () => {
+        v.titular = el.querySelector('#dTit').value.trim(); v.fecha = el.querySelector('#dFecha').value; v.proveedor = el.querySelector('#dProv').value.trim(); v.numero = el.querySelector('#dNum').value.trim(); v.notas = el.querySelector('#dNotas').value.trim();
+        el.querySelectorAll('.linea').forEach((row, i) => {
+          const l = v.lineas[i]; if (!l) return;
+          l.cantidad = parseNum(row.querySelector('[data-c]').value, true); l.precio = parseNum(row.querySelector('[data-p]').value); const imp = parseNum(row.querySelector('[data-i]').value, true);
+          l.importe = Number.isFinite(imp) && imp !== null ? imp : null;
+        });
+        if (esFac) { v.base = parseNum(el.querySelector('#dBase').value, true); v.iva = parseNum(el.querySelector('#dIva').value); v.total = parseNum(el.querySelector('#dTotal').value, true); v.albaranes = [...el.querySelectorAll('[data-alb]:checked')].map(i => i.value); }
+      };
+      const pintarArch = async () => {
+        const cont = el.querySelector('#dArch');
+        const items = [];
+        for (const aid of v.archivos) { let a = nuevosArch.find(x => x.id === aid); if (!a) { try { a = await archivoLeer(aid); } catch (e) { a = null; } } items.push({ id: aid, a }); }
+        cont.innerHTML = items.length ? items.map(({ id: aid, a }) => `<div class="arch">${a && a.tipo.startsWith('image/') ? `<img src="${URL.createObjectURL(a.blob)}" alt="">` : `<span class="arch-pdf">${a ? 'PDF' : '?'}</span>`}<span class="arch-n">${esc(a ? a.nombre : 'No está en este teléfono')}</span><button type="button" class="btn sm" data-ver="${aid}">Ver</button><button type="button" class="iconbtn" data-quitar="${aid}" aria-label="Quitar archivo">${ico.x}</button></div>`).join('') : '<p class="note" style="margin:0">Sin foto ni PDF todavía.</p>';
+      };
+      const pintarLineas = () => {
+        el.querySelector('#dLineas').innerHTML = v.lineas.length ? v.lineas.map((l, i) => { const p = producto(l.productoId) || { nombre: '¿?', unidad: '' };
+          return `<div class="linea"><div class="linea-top"><b>${esc(p.nombre)}</b><span class="small muted">${esc([p.tipo, p.registro ? 'Nº reg. ' + p.registro : ''].filter(Boolean).join(' · '))}</span><button type="button" class="iconbtn" data-dell="${i}" aria-label="Quitar producto">${ico.x}</button></div>
+            <div class="grid3"><label class="mini">Cantidad (${esc(p.unidad)})<input data-c inputmode="decimal" value="${esc(numStr(l.cantidad))}" autocomplete="off"></label><label class="mini">Precio €/${esc(p.unidad)}<input data-p inputmode="decimal" value="${esc(numStr(l.precio))}" autocomplete="off"></label><label class="mini">Importe €<input data-i inputmode="decimal" value="${esc(numStr(l.importe))}" autocomplete="off"></label></div></div>`; }).join('')
+          + `<p class="small" style="margin:6px 2px 0"><b>Total productos: ${eur(totalDoc(v), 2)}</b>${esFac ? '' : ' (sin IVA)'}</p>` : '<p class="note" style="margin:0">Añade cada producto con su cantidad.</p>';
+      };
+      const pintarAlbs = () => {
+        if (!esFac) return;
+        const cont = el.querySelector('#dAlbs');
+        const otros = new Set(db.documentos.filter(f => f.tipo === 'factura' && f.id !== (doc && doc.id)).flatMap(f => f.albaranes || []));
+        const albs = db.documentos.filter(a => a.tipo === 'albaran' && !otros.has(a.id) && (!v.titular || a.titular === v.titular)).sort(byFechaDesc);
+        const mismos = albs.filter(a => !v.proveedor || norm(a.proveedor) === norm(v.proveedor) || v.albaranes.includes(a.id));
+        cont.innerHTML = mismos.length ? `<div class="picker"><div class="pk-list">${mismos.map(a => `<label class="pk-f"><input type="checkbox" data-alb value="${a.id}"${v.albaranes.includes(a.id) ? ' checked' : ''}><span class="pk-n">${fmtFecha(a.fecha)} · ${esc(a.proveedor || '')}${a.numero ? ' nº ' + esc(a.numero) : ''}</span><span class="small muted">${eur(totalDoc(a), 2)}</span></label>`).join('')}</div></div>` : `<p class="note" style="margin:0">No hay albaranes sin facturar${v.proveedor ? ' de este proveedor' : ''}${v.titular ? ' en la carpeta de ' + esc(v.titular) : ''}.</p>`;
+      };
+      const pintarCot = () => {
+        if (!esFac) return;
+        const c = cotejo(v); const cont = el.querySelector('#dCot');
+        if (!c.albs.length) { cont.innerHTML = '<span class="muted small">Marca los albaranes de esta factura para comprobar que cuadra.</span>'; return; }
+        cont.innerHTML = `<div class="sp"><b>Comprobación</b><span class="pill ${ESTADO_COT[c.estado][1]}">${ESTADO_COT[c.estado][0]}</span></div>
+          <div class="kv small"><dt>Suma de ${c.albs.length} albarán${c.albs.length === 1 ? '' : 'es'}</dt><dd>${eur(c.sumAlb, 2)}</dd><dt>Base de la factura</dt><dd>${c.base != null ? eur(c.base, 2) : '—'}</dd>${c.dif != null ? `<dt>Diferencia</dt><dd class="${Math.abs(c.dif) > 0.5 ? 'neg' : 'pos'}">${c.dif > 0 ? '+' : ''}${eur(c.dif, 2)}</dd>` : ''}</div>
+          ${c.difProd.length ? `<p class="small neg" style="margin:6px 0 0">Cantidades distintas: ${c.difProd.map(x => { const p = producto(x.pid) || {}; return `${esc(p.nombre || '¿?')} (albaranes ${fmtN(x.alb, 3)} · factura ${fmtN(x.fac, 3)} ${esc(p.unidad || '')})`; }).join('; ')}</p>` : ''}
+          ${c.base == null ? '<p class="small muted" style="margin:6px 0 0">Escribe la base o el total con IVA para comparar.</p>' : ''}`;
+      };
+      const todo = () => { leer(); pintarCot(); };
+      pintarArch(); pintarLineas(); pintarAlbs(); pintarCot();
+      form.addEventListener('input', e => {
+        const row = e.target.closest('.linea');
+        if (row && (e.target.matches('[data-c]') || e.target.matches('[data-p]'))) {
+          const c = parseNum(row.querySelector('[data-c]').value, true), p = parseNum(row.querySelector('[data-p]').value);
+          if (c > 0 && p > 0) row.querySelector('[data-i]').value = numStr(Math.round(c * p * 100) / 100);
+        }
+        if (esFac && (e.target.id === 'dBase' || e.target.id === 'dIva')) {
+          const b = parseNum(el.querySelector('#dBase').value, true), iv = parseNum(el.querySelector('#dIva').value);
+          if (b > 0 && iv >= 0) el.querySelector('#dTotal').value = numStr(Math.round(b * (1 + iv / 100) * 100) / 100);
+        }
+        todo();
+      });
+      form.addEventListener('change', e => {
+        if (e.target.matches('[data-sube]')) {
+          const files = [...e.target.files]; e.target.value = '';
+          Promise.all(files.map(async f => { const pr = await prepararArchivo(f); const a = { id: uid(), nombre: pr.nombre, tipo: pr.tipo, blob: pr.blob, fecha: new Date().toISOString() }; nuevosArch.push(a); v.archivos.push(a.id); })).then(pintarArch);
+          return;
+        }
+        if (e.target.id === 'dTit' || e.target.id === 'dProv') { leer(); pintarAlbs(); }
+        todo(); if (e.target.matches('[data-alb]')) pintarCot();
+        if (e.target.closest('.linea')) pintarLineas();
+      });
+      form.addEventListener('click', e => {
+        const ver = e.target.closest('[data-ver]'); if (ver) { const a = nuevosArch.find(x => x.id === ver.dataset.ver); if (a) { const u = URL.createObjectURL(a.blob); window.open(u, '_blank'); } else verArchivo(ver.dataset.ver); return; }
+        const q = e.target.closest('[data-quitar]'); if (q) { v.archivos = v.archivos.filter(x => x !== q.dataset.quitar); quitarArch.push(q.dataset.quitar); pintarArch(); return; }
+        const dl = e.target.closest('[data-dell]'); if (dl) { leer(); v.lineas.splice(+dl.dataset.dell, 1); pintarLineas(); pintarCot(); return; }
+        if (e.target.closest('[data-addl]')) { leer(); hojaElegirProducto(null, p => { v.lineas.push({ productoId: p.id, cantidad: null, precio: null, importe: null }); pintarLineas(); }); }
+      });
+      form.addEventListener('submit', async e => {
+        e.preventDefault(); leer();
+        if (!v.titular) { toast('Escribe el titular: es la carpeta donde se guarda'); return; }
+        if (!esFac && !v.lineas.length) { toast('Añade al menos un producto al albarán'); return; }
+        if (v.lineas.some(l => !(l.cantidad > 0))) { toast('Pon la cantidad de cada producto'); return; }
+        try { for (const a of nuevosArch) if (v.archivos.includes(a.id)) await archivoGuardar(a); for (const x of quitarArch) await archivoBorrar(x); }
+        catch (err) { toast('No se ha podido guardar el archivo en el teléfono'); return; }
+        v.lineas.forEach(l => { if (l.importe == null && l.cantidad > 0 && l.precio > 0) l.importe = Math.round(l.cantidad * l.precio * 100) / 100; });
+        const x = doc || { id: uid() };
+        Object.assign(x, v);
+        if (!doc) db.documentos.push(x);
+        if (esFac) {
+          db.movimientos = db.movimientos.filter(m => m.docId !== x.id);
+          if (el.querySelector('#dGasto').checked && (x.total || x.base)) {
+            const tipos = (x.lineas.length ? x.lineas : db.documentos.filter(a => x.albaranes.includes(a.id)).flatMap(a => a.lineas)).map(l => (producto(l.productoId) || {}).tipo);
+            const cat = { Fitosanitario: 'Fitosanitarios', Abono: 'Abono', Semilla: 'Semilla' }[tipos.sort((a, b) => tipos.filter(t => t === b).length - tipos.filter(t => t === a).length)[0]] || 'Otros gastos';
+            db.movimientos.push({ id: uid(), docId: x.id, tipo: 'gasto', fecha: x.fecha, fincaId: '', campana: campanaDe(x.fecha || hoyISO()), categoria: cat, concepto: `Factura ${x.numero || ''} · ${x.proveedor || ''} (${x.titular})`.replace(/\s+/g, ' '), importe: x.total || x.base });
+          }
+        }
+        guardar(); volverA(d - 1); ui.alm.titular = ui.alm.titular && ui.alm.titular !== x.titular ? x.titular : ui.alm.titular; render(); toast(esFac ? 'Factura guardada' : 'Albarán guardado');
+      });
+      const del = el.querySelector('[data-del]');
+      if (del) del.addEventListener('click', async () => {
+        const r = await confirmar('¿Borrar?', esFac ? 'Se borrará la factura y su foto o PDF. Los albaranes no se tocan.' : 'Se borrará el albarán con su foto o PDF, y sus productos dejarán de contar en el inventario.');
+        if (!r.ok) return;
+        for (const a of doc.archivos || []) { try { await archivoBorrar(a); } catch (er) { /* ignorar */ } }
+        db.documentos = db.documentos.filter(x => x !== doc);
+        db.documentos.forEach(f => { if (f.albaranes) f.albaranes = f.albaranes.filter(a => a !== doc.id); });
+        db.movimientos = db.movimientos.filter(m => m.docId !== doc.id);
+        guardar(); volverA(d - 1); render(); toast('Borrado');
+      });
+    });
+  }
+
+  // Ficha de un producto del almacén
+  function hojaProducto(pid, tit) {
+    const p = producto(pid); if (!p) return;
+    cargarFitos().then(dd => { FITOS = dd; }).catch(() => {});
+    const pintar = () => {
+      const reg = regProducto(p);
+      const tits = [...new Set(movimientosProducto(pid).map(m => m.titular).filter(Boolean))].sort();
+      const movs = movimientosProducto(pid, tit || null);
+      const misCult = [...new Set(db.fincas.map(f => cultivoDe(f.id, db.campanaActiva)).filter(Boolean))];
+      const autoriz = reg ? misCult.map(cu => { const r = revisarFito(reg, cu); return r.autorizado === null ? null : `<span class="pill ${r.autorizado ? 'pos' : 'neg'}">${r.autorizado ? '✓' : '✗'} ${esc(cu)}</span>`; }).filter(Boolean).join(' ') : '';
+      return `<div class="kv"><dt>Tipo</dt><dd>${esc(p.tipo)}</dd><dt>Se mide en</dt><dd>${esc(p.unidad)}</dd>${p.registro ? `<dt>Nº de registro</dt><dd>${esc(p.registro)}</dd>` : ''}${reg ? `<dt>Estado</dt><dd class="${reg.e === 'Vigente' ? 'pos' : 'neg'}">${esc(reg.e)}</dd><dt>Caduca</dt><dd>${esc(reg.cad || '—')}</dd>` : ''}</div>
+        ${reg ? `<p class="small" style="margin:0">${esc(reg.f)}</p><div><div class="tag">En tus cultivos de ${db.campanaActiva}</div><div class="chips">${autoriz || '<span class="small muted">Sin cultivos asignados</span>'}</div></div><a class="btn sm" href="${urlFicha(reg.id)}" target="_blank" rel="noopener">Ver ficha oficial (PDF del Ministerio)</a>` : ''}
+        <h2 class="sec">Existencias</h2><div class="list">${(tits.length ? tits : [tit || '']).map(t => `<div class="row"><div class="main"><div class="t">${esc(t || 'Sin titular')}</div></div><div class="end big ${existencias(pid, t) < 0 ? 'neg' : ''}">${fmtCant(existencias(pid, t), p.unidad)}</div></div>`).join('')}</div>
+        <div class="btns" style="justify-content:flex-start"><button type="button" class="btn sm" data-ajuste>Ajustar existencias</button><button type="button" class="btn sm" data-editp>Cambiar nombre o unidad</button></div>
+        <h2 class="sec">Movimientos${tit ? ' · ' + esc(tit) : ''}</h2>${movs.length ? `<div class="list">${movs.map(m => `<div class="row">${fechaBox(m.fecha)}<div class="main"><div class="t">${esc(m.txt)}</div><div class="s">${esc(m.titular || '')}</div></div><div class="end big ${m.cant < 0 ? 'neg' : 'pos'}">${m.cant > 0 ? '+' : ''}${fmtCant(m.cant, p.unidad)}</div></div>`).join('')}</div>` : '<p class="note">Sin movimientos.</p>'}`;
+    };
+    abrirCapa(`<div class="sheet" role="dialog" aria-modal="true">${cabecera(esc(p.nombre))}<div class="body" id="phBody">${pintar()}</div></div>`, (el, d) => {
+      const body = el.querySelector('#phBody');
+      cargarFitos().then(() => { body.innerHTML = pintar(); }).catch(() => {});
+      el.addEventListener('click', e => {
+        if (e.target.closest('[data-ajuste]')) {
+          const ts = titularesTodos();
+          formulario({
+            titulo: `Ajustar ${esc(p.nombre)}`,
+            valores: { titular: tit || ts[0] || '', real: null, fecha: hoyISO(), motivo: 'Recuento en la nave' },
+            campos: [
+              { k: 'titular', label: 'Titular', req: 1, lista: titularesTodos },
+              { k: 'real', label: `Cantidad que hay de verdad (${p.unidad})`, type: 'num', req: 1, hint: 'La app apunta la diferencia con lo que calculaba.' },
+              { k: 'fecha', label: 'Fecha', type: 'date', req: 1 },
+              { k: 'motivo', label: 'Motivo' }
+            ],
+            guardar(v) { const dif = Math.round((v.real - existencias(pid, v.titular)) * 1000) / 1000; if (!dif) return 'No hay diferencia con lo que calcula la app'; db.ajustes.push({ id: uid(), productoId: pid, titular: v.titular, cantidad: dif, fecha: v.fecha, motivo: v.motivo }); },
+            despues: () => { body.innerHTML = pintar(); }
+          });
+        }
+        if (e.target.closest('[data-editp]')) {
+          formulario({
+            titulo: 'Producto', valores: p,
+            campos: [{ k: 'nombre', label: 'Nombre', req: 1 }, { k: 'tipo', label: 'Tipo', type: 'select', half: 1, req: 1, opts: () => TIPOS_PROD.map(t => [t, t]) }, { k: 'unidad', label: 'Se mide en', type: 'select', half: 1, req: 1, opts: () => UNI_PROD.map(u => [u, u]) }],
+            guardar(v) { Object.assign(p, v); },
+            despues: () => { body.innerHTML = pintar(); }
+          });
+        }
+      });
+    });
+  }
+
+  // ---------- Resumen por titular y PAC ----------
+  const GRUPO_CULT = { trigo: 'Cereales', cebada: 'Cereales', avena: 'Cereales', 'avena forrajera': 'Cereales', centeno: 'Cereales', triticale: 'Cereales',
+    titarro: 'Leguminosas', lenteja: 'Leguminosas', garbanzo: 'Leguminosas', guisante: 'Leguminosas', yeros: 'Leguminosas', veza: 'Leguminosas',
+    girasol: 'Oleaginosas', colza: 'Oleaginosas', camelina: 'Oleaginosas', barbecho: 'Barbecho',
+    esparceta: 'Plurianuales', alfalfa: 'Plurianuales', chopo: 'Plurianuales', 'mezcla forestales': 'Plurianuales', 'anis dulce': 'Aromáticas', cilantro: 'Aromáticas' };
+  const grupoCult = cu => cu ? (GRUPO_CULT[norm(cu)] || 'Otros') : 'Sin cultivo';
+  const ORDEN_GRUPOS = ['Cereales', 'Leguminosas', 'Oleaginosas', 'Aromáticas', 'Plurianuales', 'Barbecho', 'Otros', 'Sin cultivo'];
+  const HUE_GRUPO = { Cereales: 42, Leguminosas: 140, Oleaginosas: 55, Aromáticas: 95, Plurianuales: 320, Barbecho: 28, Otros: 200, 'Sin cultivo': 0 };
+  const fincasTitular = t => db.fincas.filter(f => (String(f.titular || '').trim() || 'Sin titular') === t);
+  const titularesResumen = () => { const ts = titulares(); return db.fincas.some(f => !String(f.titular || '').trim()) ? [...ts, 'Sin titular'] : ts; };
+
+  function vTitulares() {
+    const c = db.campanaActiva; const ts = titularesResumen();
+    if (!ts.length) return vacio('Sin titulares', 'Pon el titular en cada parcela (o impórtalo del Excel) para ver aquí el resumen de cada uno.');
+    const cults = [...new Set(db.fincas.map(f => cultivoDe(f.id, c) || 'Sin cultivo'))].sort((a, b) => sum(db.fincas.filter(f => (cultivoDe(f.id, c) || 'Sin cultivo') === b), f => f.superficie) - sum(db.fincas.filter(f => (cultivoDe(f.id, c) || 'Sin cultivo') === a), f => f.superficie));
+    const haDe = (t, cu) => sum(fincasTitular(t).filter(f => (cultivoDe(f.id, c) || 'Sin cultivo') === cu), f => f.superficie);
+    let h = `<div class="tit-cards">${ts.map(t => { const fs = fincasTitular(t); const ha = sum(fs, f => f.superficie); const st = statsGrupo(fs, c);
+      const porC = cults.map(cu => ({ cu, ha: haDe(t, cu) })).filter(x => x.ha > 0);
+      return `<div class="card pad tit-card"><div class="sp"><h3>${esc(t)}</h3><span class="small muted">${fs.length} parcelas</span></div>
+        <div class="big-n">${fmtN(ha)} ha</div>
+        ${barras(porC.map(x => ({ label: x.cu, valor: fmtN(x.ha) + ' ha', n: x.ha, h: x.cu === 'Sin cultivo' ? 0 : hue(x.cu) })), Math.max(...porC.map(x => x.ha), 1))}
+        <div class="kv small"><dt>Pueblos</dt><dd>${esc([...new Set(fs.map(f => f.municipio).filter(Boolean))].join(', ') || '—')}</dd><dt>Gastos ${c}</dt><dd>${eur(st.gastos)}</dd><dt>Ingresos ${c}</dt><dd>${eur(st.ingresos)}</dd></div>
+        <button class="btn sm" data-act="filtrarTitular" data-k="${esc(t)}">Ver sus parcelas</button></div>`; }).join('')}</div>`;
+    h += `<h2 class="sec">Hectáreas por cultivo y titular · ${c}</h2><div class="tablewrap"><table><thead><tr><th>Cultivo</th>${ts.map(t => `<th>${esc(t)}</th>`).join('')}<th>Total</th></tr></thead><tbody>
+      ${cults.map(cu => `<tr><td>${cu === 'Sin cultivo' ? chip(null) : chip(cu)}</td>${ts.map(t => `<td>${haDe(t, cu) ? fmtN(haDe(t, cu)) : '—'}</td>`).join('')}<td><b>${fmtN(sum(ts, t => haDe(t, cu)))}</b></td></tr>`).join('')}
+      <tr class="tot"><td>Total</td>${ts.map(t => `<td>${fmtN(sum(fincasTitular(t), f => f.superficie))}</td>`).join('')}<td>${fmtN(sum(db.fincas, f => f.superficie))}</td></tr></tbody></table></div>
+      <p class="note">Los gastos e ingresos son los apuntados en las parcelas de cada titular; los generales (sin parcela) no se reparten.</p>`;
+    return h;
+  }
+
+  function datosPAC(fs, c) {
+    const lab = { D: 0, C: 0, T: 0, '': 0 }; let est = 0; const grp = {};
+    fs.forEach(f => { const s = siembraDe(f.id, c); const ha = +f.superficie || 0; const g = grupoCult(s && s.cultivo); grp[g] = (grp[g] || 0) + ha;
+      if (s && s.cultivo && norm(s.cultivo) !== 'barbecho') { const k = LABOREO[s.laboreo] ? s.laboreo : ''; lab[k] += ha; }
+      if (s && s.estiercol) est += ha; });
+    const sembrada = lab.D + lab.C + lab.T + lab[''];
+    return { lab, est, grp, sembrada, total: sum(fs, f => +f.superficie || 0) };
+  }
+  const pct = (a, b) => b ? `${fmtN(a / b * 100, 1)} %` : '—';
+  function vPAC() {
+    const c = db.campanaActiva; const ant = campanaAnterior(c); const ts = titularesResumen();
+    const filas = [...ts.map(t => [t, fincasTitular(t)]), ['Total', db.fincas]];
+    let h = `<div class="card pad" style="display:flex;flex-direction:column;gap:10px"><p style="margin:0">Datos para preparar la PAC y el seguro de la campaña <b>${c}</b>, por titular.</p>
+      <button class="btn primary" data-act="excelPAC">Descargar Excel PAC y seguro</button>
+      <p class="small muted" style="margin:0">Con el formato de tu hoja: titular, nombre, término, polígono, parcela, recinto, superficie y, por campaña, cultivo, basura y laboreo. Una hoja con todo y otra por titular.</p></div>`;
+    h += `<h2 class="sec">Laboreo de la superficie sembrada · ${c}</h2><div class="tablewrap"><table><thead><tr><th>Titular</th><th>Siembra directa</th><th>Directa con complemento</th><th>Tradicional</th><th>Sin dato</th><th>Estiércol</th></tr></thead><tbody>
+      ${filas.map(([t, fs]) => { const d = datosPAC(fs, c); return `<tr${t === 'Total' ? ' class="tot"' : ''}><td>${esc(t)}</td>${['D', 'C', 'T', ''].map(k => `<td>${fmtN(d.lab[k])} ha<br><span class="small muted">${pct(d.lab[k], d.sembrada)}</span></td>`).join('')}<td>${fmtN(d.est)} ha</td></tr>`; }).join('')}</tbody></table></div>`;
+    h += `<h2 class="sec">Superficie por tipo de cultivo · ${c}</h2><div class="tablewrap"><table><thead><tr><th>Titular</th>${ORDEN_GRUPOS.map(g => `<th>${g}</th>`).join('')}</tr></thead><tbody>
+      ${filas.map(([t, fs]) => { const d = datosPAC(fs, c); return `<tr${t === 'Total' ? ' class="tot"' : ''}><td>${esc(t)}</td>${ORDEN_GRUPOS.map(g => `<td>${d.grp[g] ? `${fmtN(d.grp[g])}<br><span class="small muted">${pct(d.grp[g], d.total)}</span>` : '—'}</td>`).join('')}</tr>`; }).join('')}</tbody></table></div>`;
+    // Rotación
+    const repiten = db.fincas.filter(f => { const a = cultivoDe(f.id, c), b = cultivoDe(f.id, ant); return a && b && norm(a) === norm(b) && grupoCult(a) !== 'Plurianuales'; });
+    const sinCult = db.fincas.filter(f => !cultivoDe(f.id, c));
+    h += `<h2 class="sec">Rotación · ${ant} → ${c}</h2><div class="card pad" style="display:flex;flex-direction:column;gap:8px">
+      <p style="margin:0">${repiten.length ? `<b class="neg">${repiten.length} parcelas repiten cultivo</b> (${fmtN(sum(repiten, f => f.superficie))} ha). No cuenta las plurianuales (esparceta, alfalfa…).` : '<b class="pos">Ninguna parcela repite cultivo</b> respecto a la campaña anterior.'}</p>
+      ${repiten.length ? `<div class="tablewrap"><table><thead><tr><th>Parcela</th><th>Titular</th><th>Cultivo</th><th>ha</th></tr></thead><tbody>${repiten.sort(byNombre).slice(0, 80).map(f => `<tr><td><button class="lnk" data-act="verFinca" data-id="${f.id}">${esc(f.nombre)}</button></td><td style="text-align:left">${esc(f.titular || '')}</td><td style="text-align:left">${chip(cultivoDe(f.id, c))}</td><td>${fmtN(f.superficie)}</td></tr>`).join('')}</tbody></table></div>${repiten.length > 80 ? `<p class="note">…y ${repiten.length - 80} más.</p>` : ''}` : ''}
+      ${sinCult.length ? `<p class="small" style="margin:0"><b>${sinCult.length} parcelas sin cultivo asignado</b> en ${c} (${fmtN(sum(sinCult, f => f.superficie))} ha).</p>` : ''}</div>
+      <p class="note">Estos datos te ayudan a revisar los ecorregímenes (rotación, siembra directa…). Los porcentajes mínimos y condiciones cambian según el año: confírmalos con tu técnico o en la normativa de la PAC.</p>`;
+    return h;
+  }
+
+  async function excelPAC() {
+    let XLSX;
+    try { XLSX = await cargarXLSX(); } catch (e) { toast('No se ha podido cargar el generador de Excel. Abre la app una vez con cobertura.'); return; }
+    const camps = [...new Set(db.siembras.map(s => s.campana))].sort();
+    const cab1 = ['', '', '', '', '', '', '', '', '', '']; const cab2 = ['PROPIETARIO', 'NOMBRE', 'TERMINO', 'PROVINCIA', 'MUNICIPIO', 'POLIGONO', 'PARCELA', 'RECINTO', 'SUPERFICIE', 'SUPERFICIE DECLARABLE PAC'];
+    camps.forEach(c => { cab1.push(c, '', ''); cab2.push('CULTIVO', 'BASURA', 'LABOREO'); });
+    const nombreDe = f => { if (grupoDe(f)) return grupoDe(f); const nb = nombreBase(f.nombre); return (!nb || norm(nb) === norm(f.municipio)) ? '' : nb; };
+    const fila = f => { const r = [String(f.titular || '').toUpperCase(), nombreDe(f), String(f.municipio || '').toUpperCase(), f.provincia || '', f.codMunicipio || '', +f.poligono || f.poligono || '', +f.parcela || f.parcela || '', f.recinto || '', f.geo && f.geo.ha ? f.geo.ha : '', f.superficie || ''];
+      camps.forEach(c => { const s = siembraDe(f.id, c); r.push(s ? String(s.cultivo).toUpperCase() : '', s && s.estiercol ? 'X' : '', s ? s.laboreo || '' : ''); }); return r; };
+    const orden = (a, b) => String(a.municipio || '').localeCompare(String(b.municipio || ''), 'es') || (+a.poligono - +b.poligono) || (+a.parcela - +b.parcela);
+    const hoja = fs => { const ws = XLSX.utils.aoa_to_sheet([cab1, cab2, ...fs.slice().sort(orden).map(fila)]); ws['!cols'] = cab2.map((h, i) => ({ wch: [12, 22, 16, 9, 9, 9, 9, 9, 11, 13][i] || 11 })); ws['!merges'] = camps.map((c, i) => ({ s: { r: 0, c: 10 + i * 3 }, e: { r: 0, c: 12 + i * 3 } })); return ws; };
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, hoja(db.fincas), 'PAC');
+    titularesResumen().forEach(t => XLSX.utils.book_append_sheet(wb, hoja(fincasTitular(t)), String(t).toUpperCase().slice(0, 31)));
+    const c = db.campanaActiva; const ts = titularesResumen();
+    const cults = [...new Set(db.fincas.map(f => cultivoDe(f.id, c) || 'Sin cultivo'))].sort();
+    const res = [[`Resumen campaña ${c}`], [], ['CULTIVO', ...ts.map(t => t.toUpperCase()), 'TOTAL']];
+    cults.forEach(cu => { const v = ts.map(t => Math.round(sum(fincasTitular(t).filter(f => (cultivoDe(f.id, c) || 'Sin cultivo') === cu), f => f.superficie) * 10000) / 10000); res.push([cu.toUpperCase(), ...v, Math.round(sum(v, x => x) * 10000) / 10000]); });
+    res.push([], ['LABOREO (ha sembradas)', ...ts.map(t => t.toUpperCase())]);
+    [['D', 'Siembra directa'], ['C', 'Directa con complemento'], ['T', 'Tradicional'], ['', 'Sin dato']].forEach(([k, n]) => res.push([n, ...ts.map(t => Math.round(datosPAC(fincasTitular(t), c).lab[k] * 10000) / 10000)]));
+    res.push(['Con estiércol', ...ts.map(t => Math.round(datosPAC(fincasTitular(t), c).est * 10000) / 10000)]);
+    const wr = XLSX.utils.aoa_to_sheet(res); wr['!cols'] = [{ wch: 26 }, ...ts.map(() => ({ wch: 12 })), { wch: 12 }];
+    XLSX.utils.book_append_sheet(wb, wr, 'Resumen');
+    const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    const ok = await guardarArchivo(new Blob([out], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `PAC_${c.replace('/', '-')}_${hoyISO()}.xlsx`, true, 'PAC y seguro');
+    if (ok) toast('Excel de PAC y seguro creado');
+  }
+
   // ---------- Eventos ----------
   const acciones = {
     verFinca: b => { ui.fincaId = b.dataset.id; empujar(); render(); window.scrollTo(0, 0); },
@@ -1641,6 +2253,14 @@
     verMapaGrupo: b => { volverA(0); ui.fincaId = null; ui.grupo = null; ui.tab = 'fincas'; ui.vistaFincas = 'mapa'; ui.enfocarGrupo = b.dataset.g; render(); window.scrollTo(0, 0); },
     editCosecha: b => formCosecha(b.dataset.id),
     filtroMov: b => { ui.filtroMov = b.dataset.k; render(); },
+    almVista: b => { ui.alm.vista = b.dataset.k; render(); },
+    almTitular: b => { ui.alm.titular = b.dataset.k; render(); },
+    nuevoDoc: b => formDocumento(b.dataset.k || 'albaran'),
+    editDoc: b => formDocumento(null, b.dataset.id),
+    verProducto: b => hojaProducto(b.dataset.id, b.dataset.t || ''),
+    resumenVista: b => { ui.resumenVista = b.dataset.k; render(); },
+    excelPAC: () => excelPAC(),
+    filtrarTitular: b => { ui.titular = b.dataset.k === 'Sin titular' ? '' : b.dataset.k; ui.buscar = ''; irTab('fincas'); ui.vistaFincas = 'lista'; render(); },
     vistaFincas: b => { ui.vistaFincas = b.dataset.k; try { localStorage.setItem(KEY + '.vista', ui.vistaFincas); } catch (e) { /* ignorar */ } render(); },
     verMapa: b => { volverA(0); ui.fincaId = null; ui.grupo = null; ui.tab = 'fincas'; ui.vistaFincas = 'mapa'; ui.enfocar = b.dataset.id; render(); window.scrollTo(0, 0); },
     contornos: () => actualizarContornos({ forzar: true }),

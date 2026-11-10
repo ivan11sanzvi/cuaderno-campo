@@ -29,6 +29,20 @@ Habla con el usuario en español, con lenguaje sencillo y sin tecnicismos: es ag
 - Las labores, gastos y cosechas hechos en varias parcelas a la vez comparten `lote`. Los importes, kilos y costes se reparten por superficie, en las listas salen en una sola línea y se editan juntos.
 - «Lindan» se calcula con los contornos SIGPAC guardados en `f.geo` (vértice a menos de 5 m del borde de la otra parcela).
 
+## Almacén, albaranes y facturas
+- `db.productos` es el catálogo de productos: `{nombre, tipo: Fitosanitario|Abono|Semilla|Otro, unidad: L|kg|t|ud, regId, registro}`.
+- `db.documentos` guarda los albaranes y facturas: `{tipo: albaran|factura, titular, fecha, proveedor, numero, lineas: [{productoId, cantidad, precio, importe}], archivos: [ids], albaranes (solo facturas), base, iva, total}`.
+- `db.ajustes` guarda las regularizaciones de existencias.
+- El inventario es **por titular**: entradas de albaranes − `labor.consumo` + ajustes. En `movimientosProducto(pid, tit)`, `null` significa todos los titulares y `''` sin titular.
+- Las fotos y los PDF van en IndexedDB (`cuadernoCampoArchivos`, almacén `archivos`). Las fotos se reducen a 1800 px. La copia de seguridad JSON los incluye en base64 (`archivos`).
+- Una factura cuadra si la base (sin IVA) coincide con la suma de sus albaranes (±0,50 €) y las cantidades por producto también.
+
+## Fitosanitarios y normativa
+- `fitos.json` se genera con `herramientas/actualizar_fitos.py`. Lee el Registro del MAPA (`servicio.mapa.gob.es/regfiweb`): la lista de productos de cada cultivo y la tabla «Usos y Dosis Autorizados» de cada ficha PDF.
+- Los cultivos de la app se comparan con los del Registro mediante `CULTIVO_REG`. El titarro no está en el Registro: se compara con almorta y leguminosas de grano.
+- En una labor de Tratamiento el producto sale **solo del almacén** del titular. Se comprueban la autorización en el cultivo, la dosis máxima, el estado y la caducidad, y si hay existencias suficientes. Si hay problemas se pide confirmar, y la labor guarda `avisos` y sale marcada «⚠ Revisar normativa».
+- Conviene regenerar `fitos.json` de vez en cuando, porque el Registro cambia cada semana.
+
 ## Excel
 - La importación reconoce títulos parecidos («Paraje», «Pol.», «Sup. (ha)», «Propietario», «Superficie declarable PAC», «Término»…) y admite varias campañas en columnas: bloques CULTIVO / BASURA / LABOREO con el año encima.
 - Las filas se juntan por parcela SIGPAC. Las parcelas con el mismo nombre en el mismo pueblo forman una finca agrupada, salvo los nombres de la lista «no agrupar» (por defecto «Cambio»).

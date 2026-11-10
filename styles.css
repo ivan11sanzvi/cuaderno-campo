@@ -70,13 +70,13 @@ main {
 
 .tabs {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 6; background: var(--surface); border-top: 1px solid var(--line);
-  display: grid; grid-template-columns: repeat(5, 1fr);
+  display: grid; grid-template-columns: repeat(6, 1fr);
   padding-bottom: env(safe-area-inset-bottom, 0px);
   padding-left: env(safe-area-inset-left, 0px); padding-right: env(safe-area-inset-right, 0px);
 }
 .tabs button {
   background: none; border: 0; padding: 8px 2px 10px; display: flex; flex-direction: column; align-items: center; gap: 2px;
-  color: var(--muted); font-size: .72rem; font-weight: 600; min-height: 60px;
+  color: var(--muted); font-size: .68rem; font-weight: 600; min-height: 60px; min-width: 0;
 }
 .tabs button svg { width: 24px; height: 24px; }
 .tabs button[aria-current="page"] { color: var(--accent); }
@@ -271,3 +271,43 @@ tr.grp td { background: var(--surface-2); font-weight: 700; text-align: left; }
 .prov:first-child { border-top: 0; }
 .prov span { flex: 1; min-width: 0; font-weight: 600; }
 .field .prov select { width: auto; min-width: 0; max-width: 55%; min-height: 42px; }
+
+/* Almacén, albaranes y facturas */
+.carpetas { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; }
+.carpetas button { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: var(--surface); border-radius: 999px; padding: 0 14px; min-height: 40px; font-weight: 650; white-space: nowrap; color: var(--ink); }
+.carpetas button svg { width: 18px; height: 18px; color: var(--straw); }
+.carpetas button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+.carpetas button[aria-pressed="true"] svg { color: inherit; }
+.pill { display: inline-block; font-size: .72rem; font-weight: 700; border-radius: 999px; padding: 2px 8px; margin-top: 4px; border: 1px solid currentColor; white-space: nowrap; }
+.pill.pos { color: var(--pos); } .pill.neg { color: var(--neg); } .pill.muted { color: var(--muted); } .pill.warn { color: var(--straw); }
+.archivos { display: flex; flex-direction: column; gap: 6px; }
+.arch { display: flex; align-items: center; gap: 10px; border: 1px solid var(--line); border-radius: 10px; padding: 6px; background: var(--surface); }
+.arch img, .arch-pdf { width: 48px; height: 48px; object-fit: cover; border-radius: 6px; flex: none; }
+.arch-pdf { display: grid; place-items: center; background: var(--surface-2); font-weight: 800; font-size: .8rem; color: var(--neg); }
+.arch-n { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: .9rem; }
+.arch .iconbtn { color: var(--muted); width: 40px; height: 40px; }
+label.btn { cursor: pointer; }
+.linea { border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; background: var(--surface); display: flex; flex-direction: column; gap: 6px; }
+.linea + .linea { margin-top: 8px; }
+.linea-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.linea-top b { flex: 1 1 auto; min-width: 0; }
+.linea-top .iconbtn { color: var(--muted); width: 36px; height: 36px; margin-left: auto; }
+.grid3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.mini { display: flex; flex-direction: column; gap: 3px; font-size: .78rem; color: var(--muted); font-weight: 600; min-width: 0; }
+.field .mini input, .mini input { min-height: 44px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); padding: 6px 8px; width: 100%; min-width: 0; color: var(--ink); font-size: 1rem; }
+.cotejo { display: flex; flex-direction: column; gap: 6px; }
+.visor-img { width: 100%; border-radius: 8px; }
+.nuevo-prod { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.fito-info { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.fito-cu { border-left: 4px solid var(--line); padding-left: 8px; }
+.fito-cu.bien { border-color: var(--pos); } .fito-cu.mal { border-color: var(--neg); }
+.aviso-norma { background: color-mix(in srgb, var(--neg) 12%, var(--surface)); color: var(--ink); border: 1px solid var(--neg); border-radius: 8px; padding: 8px 10px; }
+.aviso-norma b { color: var(--neg); }
+.aviso-norma ul, .notas, .avisos-lista { margin: 4px 0 0; padding-left: 18px; }
+/* Resumen por titular y PAC */
+.tit-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.tit-card { display: flex; flex-direction: column; gap: 10px; }
+.tit-card h3 { margin: 0; font: 700 1.2rem/1.2 var(--font-head); }
+.big-n { font: 700 1.6rem/1 var(--font-head); }
+tr.tot td { font-weight: 700; background: var(--surface-2); }
+.lnk { background: none; border: 0; padding: 0; color: var(--accent); font-weight: 600; text-align: left; text-decoration: underline; }

@@ -1,9 +1,9 @@
 // Guarda la app en el teléfono para que funcione sin cobertura.
-const CACHE = 'cuaderno-campo-v4';
+const CACHE = 'cuaderno-campo-v5';
 const TESELAS = 'cuaderno-campo-teselas';
 const MAX_TESELAS = 3000;
 const ASSETS = ['./', './index.html', './styles.css', './app.js', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png',
-  './vendor/leaflet.js', './vendor/leaflet.css', './vendor/xlsx.full.min.js'];
+  './vendor/leaflet.js', './vendor/leaflet.css', './vendor/xlsx.full.min.js', './fitos.json'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
