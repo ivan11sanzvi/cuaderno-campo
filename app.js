@@ -2,7 +2,7 @@
 (function () {
   // ---------- Constantes ----------
   const KEY = 'cuadernoCampo.v1';
-  const VERSION = '1.2.0';
+  const VERSION = '1.3.0';
   const TIPOS_LABOR = ['Labrado', 'Siembra', 'Abonado', 'Tratamiento', 'Rodillo', 'Cosecha', 'Empacado', 'Otro'];
   const CON_DOSIS = ['Siembra', 'Abonado', 'Tratamiento'];
   const UNIDADES = ['kg/ha', 'L/ha', 'g/ha', 'cc/ha', 'kg', 'L'];
@@ -856,7 +856,7 @@
       else if (f.type === 'textarea') inp = `<textarea id="${id}" name="${f.k}" rows="3" placeholder="${esc(f.placeholder || '')}">${esc(v)}</textarea>`;
       else if (f.type === 'num') inp = `<input id="${id}" name="${f.k}" type="text" inputmode="decimal" autocomplete="off" value="${esc(numStr(v))}" placeholder="${esc(f.placeholder || '')}">`;
       else inp = `<input id="${id}" name="${f.k}" type="${f.type || 'text'}" value="${esc(v)}" placeholder="${esc(f.placeholder || '')}" autocomplete="off"${f.type === 'text' || !f.type ? ' autocapitalize="sentences"' : ''}${f.lista ? ` list="dl_${f.k}"` : ''}>${f.lista ? `<datalist id="dl_${f.k}">${f.lista().map(o => `<option value="${esc(o)}">`).join('')}</datalist>` : ''}`;
-      return `<div class="field" data-k="${f.k}"><label for="${id}">${f.label}${f.req ? '' : ' <span class="muted small">(opcional)</span>'}</label>${inp}${f.hint ? `<div class="hint">${f.hint}</div>` : ''}<div class="err" hidden></div></div>`;
+      return `<div class="field" data-k="${f.k}"><label for="${id}">${f.label}${f.req || f.sinOpcional ? '' : ' <span class="muted small">(opcional)</span>'}</label>${inp}${f.hint ? `<div class="hint">${f.hint}</div>` : ''}<div class="err" hidden></div></div>`;
     };
     let cuerpo = ''; const cs = spec.campos;
     for (let i = 0; i < cs.length; i++) {
@@ -1098,7 +1098,7 @@
         { k: 'fecha', label: 'Fecha', type: 'date', req: 1, half: 1 },
         { k: 'tipo', label: 'Labor', type: 'select', req: 1, half: 1, opts: () => TIPOS_LABOR.map(t => [t, t]) },
         { k: 'fincas', label: 'Fincas', type: 'fincas', req: 1, hint: 'Marca una o varias. Al marcar una finca agrupada se marcan todas sus parcelas.' },
-        { k: 'prodAlm', label: 'Producto del almacén', type: 'select', dyn: 1, opts: v => opcionesAlmacen(v, l && l.productoId), show: v => !!TIPO_DE_LABOR[v.tipo] && !(viejo && !v.prodAlm && v.tipo === 'Tratamiento' && l.producto) },
+        { k: 'prodAlm', label: 'Producto del almacén', sinOpcional: 1, type: 'select', dyn: 1, opts: v => opcionesAlmacen(v, l && l.productoId), show: v => !!TIPO_DE_LABOR[v.tipo] && !(viejo && !v.prodAlm && v.tipo === 'Tratamiento' && l.producto) },
         { k: 'producto', label: 'Producto, variedad o apero', placeholder: 'Ej.: cultivador, vertedera', show: v => !(TIPO_DE_LABOR[v.tipo] && v.prodAlm) && (v.tipo !== 'Tratamiento' || viejo) },
         { k: 'dosis', label: 'Dosis', type: 'num', half: 1, show: conDosis },
         { k: 'unidad', label: 'Unidad', type: 'select', half: 1, opts: () => UNIDADES.map(u => [u, u]), show: conDosis },
@@ -1880,9 +1880,14 @@
     albs.forEach(a => (a.lineas || []).forEach(l => { const p = prods.get(l.productoId) || { alb: 0, fac: 0 }; p.alb += +l.cantidad || 0; prods.set(l.productoId, p); }));
     (f.lineas || []).forEach(l => { const p = prods.get(l.productoId) || { alb: 0, fac: 0 }; p.fac += +l.cantidad || 0; prods.set(l.productoId, p); });
     const difProd = (f.lineas || []).length ? [...prods].filter(([, p]) => Math.abs(p.alb - p.fac) > 0.001).map(([pid, p]) => ({ pid, ...p })) : [];
-    const dif = base != null && albs.length ? Math.round((base - sumAlb) * 100) / 100 : null;
-    const estado = !albs.length ? 'sin' : (dif != null && Math.abs(dif) <= 0.5 && !difProd.length) ? 'ok' : 'mal';
-    return { albs, sumAlb, base, dif, difProd, estado };
+    const conPrecio = albs.some(a => (a.lineas || []).some(l => +l.importe > 0));
+    const dif = base != null && albs.length && conPrecio ? Math.round((base - sumAlb) * 100) / 100 : null;
+    const hayLineas = (f.lineas || []).length > 0;
+    let estado;
+    if (!albs.length) estado = 'sin';
+    else if (conPrecio) estado = (dif != null && Math.abs(dif) <= 0.5 && !difProd.length) ? 'ok' : (dif == null && !difProd.length ? 'sin' : 'mal');
+    else estado = hayLineas ? (difProd.length ? 'mal' : 'ok') : 'sin';
+    return { albs, sumAlb, base, dif, difProd, estado, conPrecio, hayLineas };
   }
   const ESTADO_COT = { ok: ['Cuadra', 'pos'], mal: ['No cuadra', 'neg'], sin: ['Sin cotejar', 'muted'] };
 
@@ -2004,8 +2009,9 @@
         el.querySelector('#dLineas').innerHTML = v.lineas.length ? v.lineas.map((l, i) => { const p = producto(l.productoId) || { nombre: '¿?', unidad: '' };
           return `<div class="linea"><div class="linea-top"><b>${esc(p.nombre)}</b><span class="small muted">${esc([p.tipo, p.registro ? 'Nº reg. ' + p.registro : ''].filter(Boolean).join(' · '))}</span><button type="button" class="iconbtn" data-dell="${i}" aria-label="Quitar producto">${ico.x}</button></div>
             <div class="grid3"><label class="mini">Cantidad (${esc(p.unidad)})<input data-c inputmode="decimal" value="${esc(numStr(l.cantidad))}" autocomplete="off"></label><label class="mini">Precio €/${esc(p.unidad)}<input data-p inputmode="decimal" value="${esc(numStr(l.precio))}" autocomplete="off"></label><label class="mini">Importe €<input data-i inputmode="decimal" value="${esc(numStr(l.importe))}" autocomplete="off"></label></div></div>`; }).join('')
-          + `<p class="small" style="margin:6px 2px 0"><b>Total productos: ${eur(totalDoc(v), 2)}</b>${esFac ? '' : ' (sin IVA)'}</p>` : '<p class="note" style="margin:0">Añade cada producto con su cantidad.</p>';
+          + `<p class="small" style="margin:6px 2px 0"><b id="dTot">Total productos: ${eur(totalDoc(v), 2)}</b>${esFac ? '' : ' (sin IVA)'}</p>` : '<p class="note" style="margin:0">Añade cada producto con su cantidad.</p>';
       };
+      const pintarTotal = () => { const t = el.querySelector('#dTot'); if (t) t.textContent = `Total productos: ${eur(totalDoc(v), 2)}`; };
       const pintarAlbs = () => {
         if (!esFac) return;
         const cont = el.querySelector('#dAlbs');
@@ -2019,9 +2025,9 @@
         const c = cotejo(v); const cont = el.querySelector('#dCot');
         if (!c.albs.length) { cont.innerHTML = '<span class="muted small">Marca los albaranes de esta factura para comprobar que cuadra.</span>'; return; }
         cont.innerHTML = `<div class="sp"><b>Comprobación</b><span class="pill ${ESTADO_COT[c.estado][1]}">${ESTADO_COT[c.estado][0]}</span></div>
-          <div class="kv small"><dt>Suma de ${c.albs.length} albarán${c.albs.length === 1 ? '' : 'es'}</dt><dd>${eur(c.sumAlb, 2)}</dd><dt>Base de la factura</dt><dd>${c.base != null ? eur(c.base, 2) : '—'}</dd>${c.dif != null ? `<dt>Diferencia</dt><dd class="${Math.abs(c.dif) > 0.5 ? 'neg' : 'pos'}">${c.dif > 0 ? '+' : ''}${eur(c.dif, 2)}</dd>` : ''}</div>
+          <div class="kv small"><dt>Suma de ${c.albs.length} albarán${c.albs.length === 1 ? '' : 'es'}</dt><dd>${c.conPrecio ? eur(c.sumAlb, 2) : 'sin precios'}</dd><dt>Base de la factura</dt><dd>${c.base != null ? eur(c.base, 2) : '—'}</dd>${c.dif != null ? `<dt>Diferencia</dt><dd class="${Math.abs(c.dif) > 0.5 ? 'neg' : 'pos'}">${c.dif > 0 ? '+' : ''}${eur(c.dif, 2)}</dd>` : ''}</div>
           ${c.difProd.length ? `<p class="small neg" style="margin:6px 0 0">Cantidades distintas: ${c.difProd.map(x => { const p = producto(x.pid) || {}; return `${esc(p.nombre || '¿?')} (albaranes ${fmtN(x.alb, 3)} · factura ${fmtN(x.fac, 3)} ${esc(p.unidad || '')})`; }).join('; ')}</p>` : ''}
-          ${c.base == null ? '<p class="small muted" style="margin:6px 0 0">Escribe la base o el total con IVA para comparar.</p>' : ''}`;
+          ${!c.conPrecio ? `<p class="small muted" style="margin:6px 0 0">Los albaranes no tienen precios: ${c.hayLineas ? 'se comparan solo las cantidades de cada producto.' : 'añade los productos de la factura para comparar cantidades.'}</p>` : c.base == null ? '<p class="small muted" style="margin:6px 0 0">Escribe la base o el total con IVA para comparar.</p>' : ''}`;
       };
       const todo = () => { leer(); pintarCot(); };
       pintarArch(); pintarLineas(); pintarAlbs(); pintarCot();
@@ -2035,7 +2041,7 @@
           const b = parseNum(el.querySelector('#dBase').value, true), iv = parseNum(el.querySelector('#dIva').value);
           if (b > 0 && iv >= 0) el.querySelector('#dTotal').value = numStr(Math.round(b * (1 + iv / 100) * 100) / 100);
         }
-        todo();
+        todo(); pintarTotal();
       });
       form.addEventListener('change', e => {
         if (e.target.matches('[data-sube]')) {
@@ -2045,7 +2051,6 @@
         }
         if (e.target.id === 'dTit' || e.target.id === 'dProv') { leer(); pintarAlbs(); }
         todo(); if (e.target.matches('[data-alb]')) pintarCot();
-        if (e.target.closest('.linea')) pintarLineas();
       });
       form.addEventListener('click', e => {
         const ver = e.target.closest('[data-ver]'); if (ver) { const a = nuevosArch.find(x => x.id === ver.dataset.ver); if (a) { const u = URL.createObjectURL(a.blob); window.open(u, '_blank'); } else verArchivo(ver.dataset.ver); return; }
