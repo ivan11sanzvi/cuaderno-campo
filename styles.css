@@ -38,6 +38,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { height: 100%; }
 body {
   margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.45 var(--font);
@@ -227,3 +228,46 @@ tr.grp td { background: var(--surface-2); font-weight: 700; text-align: left; }
 .mapinfo p { margin: 0; }
 .sigpac .refs { margin: 4px 0; display: flex; flex-wrap: wrap; gap: 4px; }
 .sigpac code { font: 600 .82rem/1.3 ui-monospace, "Roboto Mono", monospace; background: var(--surface-2); border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px; }
+
+/* Fincas agrupadas */
+.filters input[type="search"] { min-height: 44px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); padding: 0 12px; flex: 2 1 200px; min-width: 0; }
+.list > .grow { border-top: 1px solid var(--line); }
+.list > .grow:first-child { border-top: 0; }
+.ghead { display: flex; align-items: center; }
+.ghead .row { flex: 1; min-width: 0; }
+.gtoggle { color: var(--muted); margin-right: 4px; flex-shrink: 0; }
+.gtoggle svg { transition: transform .15s; }
+.grow.open .gtoggle svg { transform: rotate(180deg); }
+@media (prefers-reduced-motion: reduce) { .gtoggle svg { transition: none; } }
+.gsub { background: var(--surface-2); border-top: 1px solid var(--line); }
+.row.sub { padding-left: 30px; min-height: 54px; }
+.gbadge { display: inline-block; font-size: .66rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--accent); border: 1px solid currentColor; border-radius: 999px; padding: 1px 7px; vertical-align: 2px; white-space: nowrap; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; margin-top: 6px; }
+.end-chips { margin-top: 0; justify-content: flex-end; flex-shrink: 0; max-width: 45%; }
+
+/* Selector de fincas */
+.picker { border: 1px solid var(--line); border-radius: 10px; background: var(--surface); display: flex; flex-direction: column; overflow: hidden; }
+.field .picker input.pk-buscar { border: 0; border-radius: 0; min-height: 46px; background: transparent; }
+.pk-rapido { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 8px 12px; border-top: 1px solid var(--line); }
+.pk-rapido .chip { border: 0; cursor: pointer; min-height: 32px; }
+.pk-rapido .chip.none { border: 1px dashed var(--line); }
+.pk-list { max-height: 280px; overflow-y: auto; border-top: 1px solid var(--line); }
+.picker > .pk-list:first-child { border-top: 0; }
+.pk-f, .pk-gh { display: flex; gap: 10px; align-items: center; padding: 9px 12px; border-top: 1px solid var(--line); min-height: 46px; cursor: pointer; }
+.pk-list > :first-child, .pk-list > .pk-g:first-child > .pk-gh { border-top: 0; }
+.pk-gh { background: var(--surface-2); }
+.pk-g .pk-f { padding-left: 36px; }
+.pk-n { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.field .picker input[type="checkbox"], .chk input[type="checkbox"] { width: 22px; height: 22px; min-height: 0; padding: 0; flex: none; accent-color: var(--accent); }
+.pk-sum { padding: 8px 12px; border-top: 1px solid var(--line); font-weight: 650; background: var(--surface-2); }
+.chkrow { display: flex; flex-wrap: wrap; gap: 8px; }
+.chk { display: flex; align-items: center; gap: 8px; border: 1px solid var(--line); border-radius: 999px; padding: 6px 14px; background: var(--surface); min-height: 42px; font-weight: 600; }
+
+/* Nombre de la finca agrupada en el mapa */
+.etq-g span { display: inline-block; transform: translate(-50%, -50%); background: rgba(10, 14, 9, .78); color: #fff; font: 800 .85rem/1.2 var(--font); padding: 3px 9px; border-radius: 6px; white-space: nowrap; border: 1px solid rgba(255, 255, 255, .5); }
+.mapa:not(.etiquetas) .etq-g { display: none; }
+.provs { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); overflow: hidden; }
+.prov { display: flex; align-items: center; gap: 10px; padding: 6px 6px 6px 12px; border-top: 1px solid var(--line); }
+.prov:first-child { border-top: 0; }
+.prov span { flex: 1; min-width: 0; font-weight: 600; }
+.field .prov select { width: auto; min-width: 0; max-width: 55%; min-height: 42px; }

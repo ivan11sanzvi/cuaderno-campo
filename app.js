@@ -2,7 +2,7 @@
 (function () {
   // ---------- Constantes ----------
   const KEY = 'cuadernoCampo.v1';
-  const VERSION = '1.1.0';
+  const VERSION = '1.2.0';
   const TIPOS_LABOR = ['Labrado', 'Siembra', 'Abonado', 'Tratamiento', 'Rodillo', 'Cosecha', 'Empacado', 'Otro'];
   const CON_DOSIS = ['Siembra', 'Abonado', 'Tratamiento'];
   const UNIDADES = ['kg/ha', 'L/ha', 'g/ha', 'cc/ha', 'kg', 'L'];
@@ -11,6 +11,9 @@
     ingreso: ['Venta de grano', 'Venta de paja', 'Subvención PAC', 'Otros ingresos']
   };
   const CAT_LABOR = { Siembra: 'Semilla', Abonado: 'Abono', Tratamiento: 'Fitosanitarios' };
+  const LABOREO = { C: 'Siembra directa con complemento', T: 'Tradicional', D: 'Siembra directa' };
+  const CULT_ALIAS = { lentejas: 'Lenteja', anis: 'Anís dulce', 'anis dulce': 'Anís dulce', matalahuga: 'Anís dulce', chopos: 'Chopo', 'barbecho tradicional': 'Barbecho', 'trigo blando': 'Trigo' };
+  const SIN_CULTIVO = ['no se solicita', 'nos la quitan'];
   const CULTIVOS_BASE = ['Trigo', 'Cebada', 'Titarro', 'Lenteja', 'Anís dulce', 'Cilantro', 'Esparceta', 'Barbecho'];
   const HUES = { Trigo: 40, Cebada: 55, Titarro: 150, Lenteja: 18, 'Anís dulce': 85, Cilantro: 120, Esparceta: 320, Barbecho: 30 };
   const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
@@ -89,6 +92,74 @@
   const finca = id => db.fincas.find(f => f.id === id);
   const siembraDe = (fid, c) => db.siembras.find(s => s.fincaId === fid && s.campana === c) || null;
   const cultivoDe = (fid, c) => { const s = siembraDe(fid, c); return s ? s.cultivo : null; };
+
+  // ---------- Fincas agrupadas (varias parcelas que tú llamas igual) ----------
+  const grupoDe = f => String((f && f.grupo) || '').trim();
+  const fincasDeGrupo = g => db.fincas.filter(f => grupoDe(f) === g);
+  function listaGrupos() {
+    const m = new Map();
+    for (const f of db.fincas) { const g = grupoDe(f); if (g) { if (!m.has(g)) m.set(g, []); m.get(g).push(f); } }
+    return m;
+  }
+  const titulares = () => [...new Set(db.fincas.map(f => String(f.titular || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
+  const etiquetaLaboreo = l => LABOREO[l] || l || '';
+  const nombreBase = n => String(n || '').replace(/\s+\d+\s*-\s*\d+.*$/, '').trim();
+
+  // Parcelas que lindan (a menos de ~5 m), con los contornos de SIGPAC
+  const bbCache = new WeakMap();
+  function bbox(geo) {
+    if (bbCache.has(geo)) return bbCache.get(geo);
+    let x0 = 999, y0 = 999, x1 = -999, y1 = -999;
+    geo.c.forEach(p => p.forEach(r => r.forEach(([x, y]) => { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; })));
+    const b = [x0, y0, x1, y1]; bbCache.set(geo, b); return b;
+  }
+  function distPS(p, a, b, kx, ky) {
+    const px = p[0] * kx, py = p[1] * ky, ax = a[0] * kx, ay = a[1] * ky, dx = b[0] * kx - ax, dy = b[1] * ky - ay;
+    const L = dx * dx + dy * dy; let t = L ? ((px - ax) * dx + (py - ay) * dy) / L : 0; t = Math.max(0, Math.min(1, t));
+    return Math.hypot(px - ax - t * dx, py - ay - t * dy);
+  }
+  function cerca(A, B, tol) {
+    const lat = A.c[0][0][0][1]; const kx = 111320 * Math.cos(lat * Math.PI / 180), ky = 110540;
+    const segs = B.c.flatMap(p => p.flatMap(r => r.slice(1).map((q, i) => [r[i], q])));
+    for (const p of A.c) for (const r of p) for (const v of r) for (const [a, b] of segs) if (distPS(v, a, b, kx, ky) < tol) return true;
+    return false;
+  }
+  function lindan(fa, fb, tol = 5) {
+    const A = fa.geo, B = fb.geo; if (!A || !B || !A.c.length || !B.c.length) return false;
+    const a = bbox(A), b = bbox(B), m = tol / 80000;
+    if (a[2] + m < b[0] || b[2] + m < a[0] || a[3] + m < b[1] || b[3] + m < a[1]) return false;
+    return cerca(A, B, tol) || cerca(B, A, tol);
+  }
+  const lindantes = fs => { const ids = new Set(fs.map(f => f.id)); return db.fincas.filter(o => !ids.has(o.id) && fs.some(f => lindan(f, o))); };
+
+  // Apuntes hechos a la vez en varias parcelas comparten «lote»
+  const miembrosLote = (arr, x) => x.lote ? arr.filter(y => y.lote === x.lote) : [x];
+  function agruparLote(arr) {
+    const vistos = new Set(); const out = [];
+    for (const x of arr) {
+      if (!x.lote) { out.push({ x, n: [x] }); continue; }
+      if (vistos.has(x.lote)) continue; vistos.add(x.lote);
+      out.push({ x, n: arr.filter(y => y.lote === x.lote) });
+    }
+    return out;
+  }
+  // Reparte un total entre fincas según su superficie (el redondeo va a la última)
+  function repartir(total, fs) {
+    if (total == null || total === '' || Number.isNaN(total)) return fs.map(() => null);
+    const ha = fs.map(f => +f.superficie || 0); const T = ha.reduce((a, b) => a + b, 0);
+    let acc = 0;
+    return fs.map((f, i) => {
+      if (i === fs.length - 1) return Math.round((total - acc) * 100) / 100;
+      const v = Math.round(total * (T ? ha[i] / T : 1 / fs.length) * 100) / 100; acc += v; return v;
+    });
+  }
+  function nombreLote(n) {
+    const fs = n.map(x => finca(x.fincaId)).filter(Boolean);
+    if (fs.length <= 1) return fs[0] ? fs[0].nombre : 'Finca borrada';
+    const gs = new Set(fs.map(grupoDe));
+    if (gs.size === 1 && [...gs][0]) { const g = [...gs][0]; return fincasDeGrupo(g).length === fs.length ? g : `${g} (${fs.length} parcelas)`; }
+    return `${fs.length} parcelas`;
+  }
 
   // ---------- SIGPAC: referencias y contornos ----------
   // "1, 2, 5-7" -> [1,2,5,6,7]
@@ -206,13 +277,18 @@
     buscandoContornos = true;
     if (!opts.silencioso || pend.length > 2) toast(`Buscando ${pend.length === 1 ? 'la finca' : pend.length + ' fincas'} en SIGPAC…`);
     let ok = 0, no = 0, fallo = 0;
-    for (const f of pend) {
-      try {
-        const g = await contornoFinca(f);
-        f.geo = g;
-        if (g.c.length) { ok++; if (!(f.superficie > 0) && g.ha) f.superficie = g.ha; } else no++;
-      } catch (e) { fallo++; fallidos.add(refsKey(f)); }
-    }
+    let i = 0;
+    const trabajador = async () => {
+      while (i < pend.length) {
+        const f = pend[i++];
+        try {
+          const g = await contornoFinca(f);
+          f.geo = g;
+          if (g.c.length) { ok++; if (!(f.superficie > 0) && g.ha) f.superficie = g.ha; } else no++;
+        } catch (e) { fallo++; fallidos.add(refsKey(f)); }
+      }
+    };
+    await Promise.all([1, 2, 3, 4].map(trabajador));
     buscandoContornos = false;
     guardar(false); render();
     const partes = [];
@@ -229,6 +305,11 @@
     const gastos = sum(movs.filter(m => m.tipo === 'gasto'), m => m.importe);
     const ingresos = sum(movs.filter(m => m.tipo === 'ingreso'), m => m.importe);
     return { ha, kg, kgHa: ha && kg ? kg / ha : null, gastos, ingresos, margen: ingresos - gastos, margenHa: ha && (gastos || ingresos) ? (ingresos - gastos) / ha : null };
+  }
+  function statsGrupo(fs, c) {
+    let ha = 0, haCos = 0, kg = 0, gastos = 0, ingresos = 0;
+    for (const f of fs) { const s = statsFinca(f.id, c); ha += s.ha; kg += s.kg; if (s.kg > 0) haCos += s.ha; gastos += s.gastos; ingresos += s.ingresos; }
+    return { ha, kg, kgHa: haCos ? kg / haCos : null, gastos, ingresos, margen: ingresos - gastos, margenHa: ha && (gastos || ingresos) ? (ingresos - gastos) / ha : null };
   }
   function statsCampana(c) {
     const cult = {};
@@ -252,14 +333,15 @@
   }
 
   // ---------- Estado de la interfaz y navegación (botón atrás de Android) ----------
-  const ui = { tab: 'fincas', fincaId: null, filtroLabor: { finca: '', tipo: '' }, filtroMov: 'todos', vistaFincas: 'lista', enfocar: null, mapaAjustado: false };
+  const ui = { tab: 'fincas', fincaId: null, grupo: null, buscar: '', titular: '', abiertos: new Set(), filtroLabor: { finca: '', tipo: '' }, filtroMov: 'todos', vistaFincas: 'lista', enfocar: null, enfocarGrupo: null, mapaAjustado: false };
   const capas = [];
-  const profundidad = () => capas.length + (ui.fincaId ? 1 : 0);
+  const profundidad = () => capas.length + (ui.grupo ? 1 : 0) + (ui.fincaId ? 1 : 0);
   function empujar() { try { history.pushState({ d: profundidad() }, ''); } catch (e) { /* ignorar */ } }
   function deshacerHasta(d) {
     while (profundidad() > d) {
       if (capas.length) { const c = capas.pop(); c.el.remove(); }
-      else { ui.fincaId = null; render(); }
+      else if (ui.fincaId) { ui.fincaId = null; render(); }
+      else { ui.grupo = null; render(); }
     }
   }
   // Cerrar desde la app: se cierra al momento y se ignora el popstate que provoca history.go.
@@ -280,6 +362,7 @@
     plus: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
     x: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
     back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg>',
+    chev: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>',
     edit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg>'
   };
 
@@ -292,21 +375,19 @@
   function barras(items, max) {
     return `<div class="bars">${items.map(i => `<div class="bar"><div class="lbl"><span>${esc(i.label)}</span><b>${i.valor}</b></div><div class="track"><div class="fill" style="--h:${i.h};width:${max ? Math.max(2, i.n / max * 100) : 0}%"></div></div></div>`).join('')}</div>`;
   }
-  function filaLabor(l, conFinca = true) {
-    const f = finca(l.fincaId);
+  function filaLabor(l, conFinca = true, n = [l]) {
     const det = [l.producto, l.dosis != null ? `${fmtN(l.dosis)} ${l.unidad || ''}` : '', l.motivo].filter(Boolean).join(' · ');
-    return `<button class="row" data-act="editLabor" data-id="${l.id}">${fechaBox(l.fecha)}<div class="main"><div class="t">${esc(l.tipo)}${conFinca ? ' · ' + esc(f ? f.nombre : 'Finca borrada') : ''}</div>${det ? `<div class="s">${esc(det)}</div>` : ''}</div>${l.coste ? `<div class="end small muted">${eur(l.coste)}</div>` : ''}</button>`;
+    const coste = sum(n, x => x.coste);
+    return `<button class="row" data-act="editLabor" data-id="${l.id}">${fechaBox(l.fecha)}<div class="main"><div class="t">${esc(l.tipo)}${conFinca ? ' · ' + esc(nombreLote(n)) : ''}</div>${det ? `<div class="s">${esc(det)}</div>` : ''}</div>${coste ? `<div class="end small muted">${eur(coste)}</div>` : ''}</button>`;
   }
-  function filaMov(m, conFinca = true) {
-    const f = finca(m.fincaId);
-    const sub = [m.categoria, conFinca ? (f ? f.nombre : 'General') : '', m.laborId ? 'desde el cuaderno' : ''].filter(Boolean).join(' · ');
-    const v = m.tipo === 'gasto' ? -m.importe : m.importe;
+  function filaMov(m, conFinca = true, n = [m]) {
+    const sub = [m.categoria, conFinca ? (finca(m.fincaId) ? nombreLote(n) : 'General') : '', m.laborId ? 'desde el cuaderno' : ''].filter(Boolean).join(' · ');
+    const imp = sum(n, x => x.importe); const v = m.tipo === 'gasto' ? -imp : imp;
     return `<button class="row" data-act="editMov" data-id="${m.id}">${fechaBox(m.fecha)}<div class="main"><div class="t">${esc(m.concepto || m.categoria)}</div><div class="s">${esc(sub)}</div></div><div class="end big ${signo(v)}">${v > 0 ? '+' : ''}${eur(v, 2)}</div></button>`;
   }
-  function filaCosecha(x, conFinca = true) {
-    const f = finca(x.fincaId);
+  function filaCosecha(x, conFinca = true, n = [x]) {
     const sub = [x.humedad != null ? `${fmtN(x.humedad, 1)} % humedad` : '', x.notas].filter(Boolean).join(' · ');
-    return `<button class="row" data-act="editCosecha" data-id="${x.id}">${fechaBox(x.fecha)}<div class="main"><div class="t">${conFinca ? esc(f ? f.nombre : 'Finca borrada') : 'Cosecha'}</div>${sub ? `<div class="s">${esc(sub)}</div>` : ''}</div><div class="end big">${fmtKg(x.kg)}</div></button>`;
+    return `<button class="row" data-act="editCosecha" data-id="${x.id}">${fechaBox(x.fecha)}<div class="main"><div class="t">${conFinca ? esc(nombreLote(n)) : 'Cosecha'}</div>${sub ? `<div class="s">${esc(sub)}</div>` : ''}</div><div class="end big">${fmtKg(sum(n, y => y.kg))}</div></button>`;
   }
   function bannerAvisos() {
     if (db.ejemplo) return `<div class="banner"><p><b>Estás viendo datos de ejemplo.</b> Bórralos cuando quieras empezar con los tuyos.</p><button class="btn" data-act="borrarEjemplo">Borrar ejemplo</button></div>`;
@@ -331,11 +412,73 @@
     h += segs;
     const ha = sum(db.fincas, f => f.superficie);
     const sembrado = sum(db.fincas.filter(f => { const cu = cultivoDe(f.id, c); return cu && cu !== 'Barbecho'; }), f => f.superficie);
-    h += `<div class="stats">${stat('Fincas', db.fincas.length)}${stat('Superficie', fmtN(ha) + ' ha')}${stat('Sembrado ' + c, fmtN(sembrado) + ' ha')}</div>`;
-    h += '<div class="list">' + db.fincas.slice().sort(byNombre).map(f => {
-      const sig = [f.municipio, (f.poligono || f.parcela) ? `Pol. ${f.poligono || '–'} · Parc. ${f.parcela || '–'}` : '', fmtN(f.superficie) + ' ha'].filter(Boolean).join(' · ');
-      return `<button class="row" data-act="verFinca" data-id="${f.id}"><div class="main"><div class="t">${esc(f.nombre)}</div><div class="s">${esc(sig)}</div></div><div class="end">${chip(cultivoDe(f.id, c))}</div></button>`;
+    h += `<div class="stats">${stat('Parcelas', db.fincas.length)}${stat('Superficie', fmtN(ha) + ' ha')}${stat('Sembrado ' + c, fmtN(sembrado) + ' ha')}</div>`;
+    const tits = titulares();
+    h += `<div class="filters"><input id="fBuscar" type="search" placeholder="Buscar nombre, pueblo, polígono-parcela…" value="${esc(ui.buscar)}" autocomplete="off" aria-label="Buscar finca">${tits.length > 1 ? `<select id="fTitular" aria-label="Filtrar por titular"><option value="">Todos los titulares</option>${tits.map(t => `<option${ui.titular === t ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select>` : ''}</div>`;
+    h += `<div id="listaFincas">${listaFincasHTML()}</div>`;
+    return h;
+  }
+  function coincide(f, q) {
+    if (ui.titular && String(f.titular || '') !== ui.titular) return false;
+    if (!q) return true;
+    const t = norm([f.nombre, f.grupo, f.municipio, f.titular, `${f.poligono || ''} ${f.parcela || ''}`, cultivoDe(f.id, db.campanaActiva)].join(' '));
+    return q.split(' ').every(w => t.includes(w));
+  }
+  function filaFinca(f, enGrupo) {
+    const sig = enGrupo
+      ? [(f.poligono || f.parcela) ? `Pol. ${f.poligono || '–'} · Parc. ${f.parcela || '–'}${f.recinto ? ' · Rec. ' + f.recinto : ''}` : '', fmtN(f.superficie) + ' ha', f.titular].filter(Boolean).join(' · ')
+      : [f.municipio, (f.poligono || f.parcela) ? `Pol. ${f.poligono || '–'} · Parc. ${f.parcela || '–'}` : '', fmtN(f.superficie) + ' ha', f.titular].filter(Boolean).join(' · ');
+    return `<button class="row${enGrupo ? ' sub' : ''}" data-act="verFinca" data-id="${f.id}"><div class="main"><div class="t">${esc(f.nombre)}</div><div class="s">${esc(sig)}</div></div><div class="end">${chip(cultivoDe(f.id, db.campanaActiva))}</div></button>`;
+  }
+  function chipsCultivos(fs) {
+    const c = db.campanaActiva; const m = {};
+    fs.forEach(f => { const cu = cultivoDe(f.id, c) || ''; m[cu] = (m[cu] || 0) + (+f.superficie || 0); });
+    const ks = Object.keys(m).sort((a, b) => m[b] - m[a]);
+    return `<div class="chips end-chips">${ks.slice(0, 2).map(k => chip(k || null)).join('')}${ks.length > 2 ? `<span class="muted small">+${ks.length - 2}</span>` : ''}</div>`;
+  }
+  function listaFincasHTML() {
+    const q = norm(ui.buscar);
+    const vis = db.fincas.filter(f => coincide(f, q));
+    if (!vis.length) return '<p class="note">Ninguna finca coincide con la búsqueda.</p>';
+    const grupos = new Map(); const sueltas = [];
+    vis.forEach(f => { const g = grupoDe(f); if (g) { if (!grupos.has(g)) grupos.set(g, []); grupos.get(g).push(f); } else sueltas.push(f); });
+    const items = [...[...grupos].map(([g, fs]) => ({ n: g, g, fs })), ...sueltas.map(f => ({ n: f.nombre, f }))]
+      .sort((a, b) => a.n.localeCompare(b.n, 'es', { numeric: true }));
+    return '<div class="list">' + items.map(it => {
+      if (it.f) return filaFinca(it.f, false);
+      const todas = fincasDeGrupo(it.g); const abierto = !!(q || ui.titular) || ui.abiertos.has(it.g);
+      const munis = [...new Set(todas.map(f => f.municipio).filter(Boolean))]; const tits = [...new Set(todas.map(f => f.titular).filter(Boolean))];
+      const sub = [`${todas.length} parcelas`, fmtN(sum(todas, f => f.superficie)) + ' ha', munis.join(', '), tits.join(', ')].filter(Boolean).join(' · ');
+      return `<div class="grow${abierto ? ' open' : ''}"><div class="ghead"><button class="row" data-act="verGrupo" data-g="${esc(it.g)}"><div class="main"><div class="t">${esc(it.g)} <span class="gbadge">Agrupada</span></div><div class="s">${esc(sub)}</div></div>${chipsCultivos(todas)}</button>
+        <button class="iconbtn gtoggle" data-act="toggleGrupo" data-g="${esc(it.g)}" aria-expanded="${abierto}" aria-label="${abierto ? 'Ocultar' : 'Ver'} parcelas de ${esc(it.g)}">${ico.chev}</button></div>
+        ${abierto ? `<div class="gsub">${it.fs.sort(byNombre).map(f => filaFinca(f, true)).join('')}</div>` : ''}</div>`;
     }).join('') + '</div>';
+  }
+
+  function vGrupo(g) {
+    const fs = fincasDeGrupo(g).sort(byNombre);
+    if (!fs.length) { ui.grupo = null; return vFincas(); }
+    const c = db.campanaActiva; const st = statsGrupo(fs, c); const ids = new Set(fs.map(f => f.id));
+    const munis = [...new Set(fs.map(f => f.municipio).filter(Boolean))]; const tits = [...new Set(fs.map(f => f.titular).filter(Boolean))];
+    const porCult = {}; fs.forEach(f => { const cu = cultivoDe(f.id, c) || ''; porCult[cu] = (porCult[cu] || 0) + (+f.superficie || 0); });
+    const G = esc(g);
+    let h = `<div class="backhdr"><button class="iconbtn" data-act="atras" aria-label="Volver">${ico.back}</button><h2>${G}</h2><button class="iconbtn" data-act="editGrupo" data-g="${G}" aria-label="Cambiar nombre o parcelas">${ico.edit}</button></div>
+      <div class="meta"><span class="gbadge">Finca agrupada</span><span><b>${fmtN(st.ha)} ha</b></span><span>${fs.length} parcelas</span>${munis.length ? `<span>${esc(munis.join(', '))}</span>` : ''}</div>
+      ${tits.length ? `<div class="meta"><span>Titular${tits.length > 1 ? 'es' : ''}: <b>${esc(tits.join(', '))}</b></span></div>` : ''}`;
+    h += `<div class="card pad" style="display:flex;flex-direction:column;gap:12px">
+      <div><div class="tag">Campaña ${c}</div><div class="chips">${Object.entries(porCult).sort((a, b) => b[1] - a[1]).map(([cu, ha]) => `<span>${chip(cu || null)} <span class="small muted">${fmtN(ha)} ha</span></span>`).join('')}</div></div>
+      <div class="stats">${stat('Rendimiento', st.kgHa ? fmtN(st.kgHa, 0) + ' kg/ha' : '—')}${stat('Gastos', eur(st.gastos))}${stat('Margen', st.margenHa != null ? eur(st.margenHa) + '/ha' : '—', signo(st.margen))}</div>
+      <div class="actions"><button class="btn sm" data-act="nuevaLabor" data-grupo="${G}">${ico.plus} Labor</button><button class="btn sm" data-act="nuevoMov" data-grupo="${G}" data-tipo="gasto">${ico.plus} Gasto</button><button class="btn sm" data-act="nuevoMov" data-grupo="${G}" data-tipo="ingreso">${ico.plus} Ingreso</button><button class="btn sm" data-act="nuevaCosecha" data-grupo="${G}">${ico.plus} Cosecha</button></div>
+      <p class="small muted" style="margin:0">Lo que apuntes aquí se guarda en cada parcela. Costes, importes y kilos se reparten según la superficie de cada una.</p></div>`;
+    h += `<h2 class="sec">Parcelas</h2><div class="list">${fs.map(f => filaFinca(f, true)).join('')}</div>
+      <div class="btns" style="justify-content:flex-start">${fs.some(f => f.geo && f.geo.c.length) ? `<button class="btn sm" data-act="verMapaGrupo" data-g="${G}">Ver en el mapa</button>` : ''}<button class="btn sm" data-act="editGrupo" data-g="${G}">Añadir o quitar parcelas</button></div>`;
+    const lab = agruparLote(db.labores.filter(l => ids.has(l.fincaId) && l.campana === c).sort(byFechaDesc));
+    h += `<h2 class="sec">Labores · ${c}</h2>` + (lab.length ? `<div class="list">${lab.map(({ x, n }) => filaLabor(x, true, n)).join('')}</div>` : '<p class="note">Sin labores apuntadas en esta campaña.</p>');
+    const cos = agruparLote(db.cosechas.filter(x => ids.has(x.fincaId) && x.campana === c).sort(byFechaDesc));
+    if (cos.length) h += `<h2 class="sec">Cosecha · ${fmtKg(st.kg)}</h2><div class="list">${cos.map(({ x, n }) => filaCosecha(x, true, n)).join('')}</div>`;
+    const movs = agruparLote(db.movimientos.filter(m => ids.has(m.fincaId) && m.campana === c).sort(byFechaDesc));
+    h += `<h2 class="sec">Gastos e ingresos · ${c}</h2>` + (movs.length ? `<div class="list">${movs.map(({ x, n }) => filaMov(x, true, n)).join('')}</div>` : '<p class="note">Sin gastos ni ingresos apuntados en esta campaña.</p>');
+    h += `<div class="btns" style="justify-content:flex-start;margin-top:6px"><button class="btn sm danger" data-act="deshacerGrupo" data-g="${G}">Deshacer agrupación</button></div>`;
     return h;
   }
 
@@ -345,7 +488,15 @@
     const sig = [f.poligono && `Pol. ${f.poligono}`, f.parcela && `Parc. ${f.parcela}`, f.recinto && `Rec. ${f.recinto}`].filter(Boolean).join(' · ');
     const refs = refsFinca(f);
     let h = `<div class="backhdr"><button class="iconbtn" data-act="atras" aria-label="Volver">${ico.back}</button><h2>${esc(f.nombre)}</h2><button class="iconbtn" data-act="editFinca" data-id="${id}" aria-label="Editar finca">${ico.edit}</button></div>
-      <div class="meta"><span><b>${fmtN(f.superficie)} ha</b></span>${f.municipio ? `<span>${esc(f.municipio)}</span>` : ''}${sig ? `<span>SIGPAC ${esc(sig)}</span>` : ''}</div>`;
+      <div class="meta"><span><b>${fmtN(f.superficie)} ha</b></span>${f.municipio ? `<span>${esc(f.municipio)}</span>` : ''}${sig ? `<span>SIGPAC ${esc(sig)}</span>` : ''}</div>
+      ${f.titular ? `<div class="meta"><span>Titular: <b>${esc(f.titular)}</b></span></div>` : ''}`;
+    const g = grupoDe(f);
+    if (g) {
+      const fsG = fincasDeGrupo(g);
+      h += `<div class="card pad sp"><div style="min-width:0"><div class="tag">Finca agrupada</div><b>${esc(g)}</b> <span class="small muted">· ${fsG.length} parcelas · ${fmtN(sum(fsG, x => x.superficie))} ha</span></div><button class="btn sm" data-act="verGrupo" data-g="${esc(g)}">Ver finca</button></div>`;
+    } else {
+      h += `<div class="card pad sp"><span class="small muted">Esta parcela no está agrupada con otras.</span><button class="btn sm" data-act="agrupar" data-id="${id}">Agrupar</button></div>`;
+    }
     if (refs.length) {
       const enMapa = f.geo && f.geo.c.length && f.geo.k === refsKey(f);
       const noEnc = f.geo && !f.geo.c.length && f.geo.k === refsKey(f);
@@ -357,7 +508,7 @@
       h += `<div class="card pad sp"><span class="small muted">Sin referencia SIGPAC: no se puede situar en el mapa.</span><button class="btn sm" data-act="editFinca" data-id="${id}">Añadir referencia</button></div>`;
     }
     h += `<div class="card pad" style="display:flex;flex-direction:column;gap:12px">
-      <div class="sp"><div><div class="tag">Campaña ${c}</div><div style="margin-top:4px">${chip(s && s.cultivo)} ${s && s.variedad ? `<span class="muted small">${esc(s.variedad)}</span>` : ''}</div></div>
+      <div class="sp"><div><div class="tag">Campaña ${c}</div><div class="chips">${chip(s && s.cultivo)}${s && s.variedad ? `<span class="muted small">${esc(s.variedad)}</span>` : ''}</div>${s && (s.laboreo || s.estiercol) ? `<div class="small muted" style="margin-top:4px">${[s.laboreo ? 'Laboreo: ' + esc(etiquetaLaboreo(s.laboreo)) : '', s.estiercol ? 'Con estiércol' : ''].filter(Boolean).join(' · ')}</div>` : ''}</div>
       <button class="btn sm" data-act="asignar" data-id="${id}">${s ? 'Cambiar cultivo' : 'Asignar cultivo'}</button></div>
       <div class="stats">${stat('Rendimiento', st.kgHa ? fmtN(st.kgHa, 0) + ' kg/ha' : '—')}${stat('Gastos', eur(st.gastos))}${stat('Margen', st.margenHa != null ? eur(st.margenHa) + '/ha' : '—', signo(st.margen))}</div>
       <div class="actions"><button class="btn sm" data-act="nuevaLabor" data-finca="${id}">${ico.plus} Labor</button><button class="btn sm" data-act="nuevoMov" data-finca="${id}" data-tipo="gasto">${ico.plus} Gasto</button><button class="btn sm" data-act="nuevoMov" data-finca="${id}" data-tipo="ingreso">${ico.plus} Ingreso</button><button class="btn sm" data-act="nuevaCosecha" data-finca="${id}">${ico.plus} Cosecha</button></div></div>`;
@@ -370,9 +521,9 @@
     // Historial de rotación
     const camps = listaCampanas().filter(cc => siembraDe(id, cc) || db.cosechas.some(x => x.fincaId === id && x.campana === cc) || db.movimientos.some(m => m.fincaId === id && m.campana === cc));
     if (camps.length) {
-      h += `<h2 class="sec">Rotación e historial</h2><div class="tablewrap"><table><thead><tr><th>Campaña</th><th>Cultivo</th><th>kg/ha</th><th>Margen €/ha</th></tr></thead><tbody>${camps.map(cc => {
-        const x = statsFinca(id, cc);
-        return `<tr><td>${cc}</td><td style="text-align:left">${chip(cultivoDe(id, cc))}</td><td>${x.kgHa ? fmtN(x.kgHa, 0) : '—'}</td><td class="${signo(x.margen)}">${x.margenHa != null ? fmtN(x.margenHa, 0) : '—'}</td></tr>`;
+      h += `<h2 class="sec">Rotación e historial</h2><div class="tablewrap"><table><thead><tr><th>Campaña</th><th>Cultivo</th><th>Laboreo</th><th>kg/ha</th><th>Margen €/ha</th></tr></thead><tbody>${camps.map(cc => {
+        const x = statsFinca(id, cc); const sc = siembraDe(id, cc);
+        return `<tr><td>${cc}</td><td style="text-align:left">${chip(cultivoDe(id, cc))}</td><td style="text-align:left" class="small">${sc ? esc(etiquetaLaboreo(sc.laboreo)) + (sc.estiercol ? ' · estiércol' : '') : ''}</td><td>${x.kgHa ? fmtN(x.kgHa, 0) : '—'}</td><td class="${signo(x.margen)}">${x.margenHa != null ? fmtN(x.margenHa, 0) : '—'}</td></tr>`;
       }).join('')}</tbody></table></div>`;
     }
     if (f.notas) h += `<h2 class="sec">Notas</h2><div class="card pad" style="white-space:pre-wrap">${esc(f.notas)}</div>`;
@@ -382,16 +533,18 @@
   function vCuaderno() {
     const c = db.campanaActiva; const fl = ui.filtroLabor;
     if (!db.fincas.length) return vacio('Primero añade tus fincas', 'Las labores se apuntan siempre en una finca.', '<button class="btn primary" data-act="nuevaFinca">Añadir finca</button>');
-    let lab = db.labores.filter(l => l.campana === c && (!fl.finca || l.fincaId === fl.finca) && (!fl.tipo || l.tipo === fl.tipo)).sort(byFechaDesc);
-    let h = `<div class="filters"><select id="fLabFinca" aria-label="Filtrar por finca"><option value="">Todas las fincas</option>${db.fincas.slice().sort(byNombre).map(f => `<option value="${f.id}"${fl.finca === f.id ? ' selected' : ''}>${esc(f.nombre)}</option>`).join('')}</select>
+    const enFiltro = l => { if (!fl.finca) return true; if (fl.finca.startsWith('g:')) return grupoDe(finca(l.fincaId)) === fl.finca.slice(2); return l.fincaId === fl.finca; };
+    let lab = db.labores.filter(l => l.campana === c && enFiltro(l) && (!fl.tipo || l.tipo === fl.tipo)).sort(byFechaDesc);
+    const gruposF = [...listaGrupos().keys()].sort((a, b) => a.localeCompare(b, 'es', { numeric: true }));
+    let h = `<div class="filters"><select id="fLabFinca" aria-label="Filtrar por finca"><option value="">Todas las fincas</option>${gruposF.length ? `<optgroup label="Fincas agrupadas">${gruposF.map(g => `<option value="g:${esc(g)}"${fl.finca === 'g:' + g ? ' selected' : ''}>${esc(g)}</option>`).join('')}</optgroup><optgroup label="Parcelas">` : ''}${db.fincas.slice().sort(byNombre).map(f => `<option value="${f.id}"${fl.finca === f.id ? ' selected' : ''}>${esc(f.nombre)}</option>`).join('')}${gruposF.length ? '</optgroup>' : ''}</select>
       <select id="fLabTipo" aria-label="Filtrar por labor"><option value="">Todas las labores</option>${TIPOS_LABOR.map(t => `<option${fl.tipo === t ? ' selected' : ''}>${t}</option>`).join('')}</select></div>`;
     if (!lab.length) return h + vacio(`Sin labores en ${c}`, 'Apunta cada vez que labres, siembres, abones o trates una finca. Con fecha, producto y dosis tendrás el cuaderno de campo al día.', '<button class="btn primary" data-act="nuevaLabor">Apuntar labor</button>');
     let mes = '';
     let lista = '';
-    for (const l of lab) {
+    for (const { x: l, n } of agruparLote(lab)) {
       const m = l.fecha.slice(0, 7);
       if (m !== mes) { if (mes) lista += '</div>'; mes = m; lista += `<h2 class="sec">${MESES_L[+m.slice(5) - 1]} ${m.slice(0, 4)}</h2><div class="list">`; }
-      lista += filaLabor(l);
+      lista += filaLabor(l, true, n);
     }
     return h + lista + '</div>';
   }
@@ -409,7 +562,7 @@
       h += `<h2 class="sec">${tipo === 'gasto' ? 'Gastos' : 'Ingresos'} por tipo</h2><div class="card pad">${barras(cats.map(([k, v]) => ({ label: k, valor: eur(v), n: v, h: tipo === 'gasto' ? 15 : 130 })), cats[0][1])}</div>`;
     }
     if (!movs.length) return h + vacio(`Sin apuntes en ${c}`, 'Apunta semilla, abono, gasóleo, seguros, ventas de grano o la PAC. Puedes asignarlos a una finca o dejarlos como generales.', '<button class="btn primary" data-act="nuevoMov">Apuntar gasto o ingreso</button>');
-    return h + `<h2 class="sec">Apuntes</h2><div class="list">${movs.map(m => filaMov(m)).join('')}</div>`;
+    return h + `<h2 class="sec">Apuntes</h2><div class="list">${agruparLote(movs).map(({ x, n }) => filaMov(x, true, n)).join('')}</div>`;
   }
 
   function vCosechas() {
@@ -425,7 +578,7 @@
       const st = statsFinca(f.id, c);
       return `<button class="row" data-act="nuevaCosecha" data-finca="${f.id}"><div class="main"><div class="t">${esc(f.nombre)}</div><div class="s">${chip(cultivoDe(f.id, c))} · ${fmtN(f.superficie)} ha</div></div><div class="end">${st.kg ? `<div class="big">${fmtN(st.kgHa, 0)} kg/ha</div><div class="s muted small">${fmtKg(st.kg)}</div>` : '<span class="muted small">Pendiente</span>'}</div></button>`;
     }).join('')}</div><p class="note">Toca una finca para apuntar un remolque o el total cosechado.</p>`;
-    if (ent.length) h += `<h2 class="sec">Entradas</h2><div class="list">${ent.map(x => filaCosecha(x)).join('')}</div>`;
+    if (ent.length) h += `<h2 class="sec">Entradas</h2><div class="list">${agruparLote(ent).map(({ x, n }) => filaCosecha(x, true, n)).join('')}</div>`;
     return h;
   }
 
@@ -526,16 +679,22 @@
       const col = cu ? `hsl(${hue(cu)} 90% 58%)` : '#ffffff';
       const lyr = L.geoJSON({ type: 'MultiPolygon', coordinates: f.geo.c }, { style: { color: col, weight: 3, fillColor: col, fillOpacity: .28 } });
       lyr.fincaId = f.id;
-      lyr.bindTooltip(esc(f.nombre), { permanent: true, direction: 'center', className: 'etq' });
+      if (!grupoDe(f)) lyr.bindTooltip(esc(f.nombre), { permanent: true, direction: 'center', className: 'etq' });
       lyr.on('click', ev => { L.DomEvent.stopPropagation(ev); globoFinca(f, ev.latlng); });
       lyr.addTo(capaFincas);
     });
+    // Un solo nombre en el centro de cada finca agrupada
+    const porGrupo = new Map();
+    capaFincas.getLayers().forEach(l => { const g = grupoDe(finca(l.fincaId)); if (g) { if (!porGrupo.has(g)) porGrupo.set(g, L.latLngBounds([])); porGrupo.get(g).extend(l.getBounds()); } });
+    porGrupo.forEach((b, g) => { if (b.isValid()) L.marker(b.getCenter(), { interactive: false, keyboard: false, icon: L.divIcon({ className: 'etq-g', html: `<span>${esc(g)}</span>`, iconSize: null }) }).addTo(capaFincas); });
   }
   function globoFinca(f, ll) {
     const cu = cultivoDe(f.id, db.campanaActiva); const st = statsFinca(f.id, db.campanaActiva);
     L.popup({ maxWidth: 260 }).setLatLng(ll).setContent(`<div class="pop"><div class="t">${esc(f.nombre)}</div><div>${chip(cu)} <span class="muted">${fmtN(f.superficie)} ha</span></div>
       ${st.kgHa ? `<div class="small">${fmtN(st.kgHa, 0)} kg/ha en ${db.campanaActiva}</div>` : ''}${f.geo && f.geo.ha ? `<div class="small muted">SIGPAC: ${fmtN(f.geo.ha)} ha</div>` : ''}
-      <button class="btn sm primary" data-act="verFinca" data-id="${f.id}">Abrir ficha</button></div>`).openOn(mapa);
+      ${f.titular ? `<div class="small">Titular: <b>${esc(f.titular)}</b></div>` : ''}
+      ${grupoDe(f) ? `<div class="small">Finca agrupada: <b>${esc(grupoDe(f))}</b></div>` : ''}
+      <div class="popbtns"><button class="btn sm primary" data-act="verFinca" data-id="${f.id}">Abrir parcela</button>${grupoDe(f) ? `<button class="btn sm" data-act="verGrupo" data-g="${esc(grupoDe(f))}">Ver finca</button>` : ''}</div></div>`).openOn(mapa);
   }
   function ajustarMapa(avisar) {
     const b = capaFincas.getBounds();
@@ -576,6 +735,10 @@
       const lyr = capaFincas.getLayers().find(l => l.fincaId === ui.enfocar);
       if (lyr) { mapa.fitBounds(lyr.getBounds(), { padding: [30, 30], maxZoom: 17 }); globoFinca(finca(ui.enfocar), lyr.getBounds().getCenter()); }
       ui.enfocar = null; ui.mapaAjustado = true;
+    } else if (ui.enfocarGrupo) {
+      const b = L.latLngBounds([]); capaFincas.getLayers().forEach(l => { if (l.fincaId && grupoDe(finca(l.fincaId)) === ui.enfocarGrupo) b.extend(l.getBounds()); });
+      if (b.isValid()) mapa.fitBounds(b, { padding: [30, 30], maxZoom: 17 });
+      ui.enfocarGrupo = null; ui.mapaAjustado = true;
     } else if (!ui.mapaAjustado) { ajustarMapa(false); ui.mapaAjustado = capaFincas.getLayers().length > 0; }
     setTimeout(() => mapa.invalidateSize(), 50);
     actualizarContornos({ silencioso: true });
@@ -584,12 +747,12 @@
   // ---------- Render principal ----------
   function render() {
     $('#campBtn').textContent = db.campanaActiva + ' ▾';
-    $('#title').textContent = ui.fincaId ? 'Finca' : TITULOS[ui.tab];
+    $('#title').textContent = ui.fincaId ? 'Parcela' : ui.grupo ? 'Finca agrupada' : TITULOS[ui.tab];
     document.querySelectorAll('.tabs button').forEach(b => b.setAttribute('aria-current', b.dataset.tab === ui.tab ? 'page' : 'false'));
     const main = $('#main');
-    main.innerHTML = ui.fincaId ? vDetalle(ui.fincaId) : ({ fincas: vFincas, cuaderno: vCuaderno, cuentas: vCuentas, cosechas: vCosechas, resumen: vResumen }[ui.tab])();
+    main.innerHTML = ui.fincaId ? vDetalle(ui.fincaId) : ui.grupo ? vGrupo(ui.grupo) : ({ fincas: vFincas, cuaderno: vCuaderno, cuentas: vCuentas, cosechas: vCosechas, resumen: vResumen }[ui.tab])();
     const fab = { fincas: ['nuevaFinca', 'Finca'], cuaderno: ['nuevaLabor', 'Labor'], cuentas: ['nuevoMov', 'Apunte'], cosechas: ['nuevaCosecha', 'Cosecha'] }[ui.tab];
-    const mostrarFab = fab && !ui.fincaId && db.fincas.length && !(ui.tab === 'fincas' && ui.vistaFincas === 'mapa');
+    const mostrarFab = fab && !ui.fincaId && !ui.grupo && db.fincas.length && !(ui.tab === 'fincas' && ui.vistaFincas === 'mapa');
     $('#fabSlot').innerHTML = mostrarFab ? `<button class="fab" data-act="${fab[0]}">${ico.plus}${fab[1]}</button>` : '';
     montarMapa();
   }
@@ -621,6 +784,57 @@
     });
   }
 
+  // ---------- Selector de varias fincas (para labores, gastos y cosechas) ----------
+  function pickerHTML(sel) {
+    const s = new Set(sel || []); const c = db.campanaActiva;
+    const fila = x => `<label class="pk-f" data-txt="${esc(norm([x.nombre, x.grupo, x.municipio, x.titular, (x.poligono || '') + ' ' + (x.parcela || '')].join(' ')))}" data-cu="${esc(cultivoDe(x.id, c) || '')}"><input type="checkbox" value="${x.id}"${s.has(x.id) ? ' checked' : ''}><span class="pk-n">${esc(x.nombre)}</span><span class="muted small">${fmtN(x.superficie)} ha</span></label>`;
+    const items = [...[...listaGrupos()].map(([g, fs]) => ({ n: g, g, fs })), ...db.fincas.filter(x => !grupoDe(x)).map(x => ({ n: x.nombre, x }))]
+      .sort((a, b) => a.n.localeCompare(b.n, 'es', { numeric: true }));
+    const cults = [...new Set(db.fincas.map(x => cultivoDe(x.id, c)).filter(Boolean))].sort((a, b) => db.cultivos.indexOf(a) - db.cultivos.indexOf(b));
+    return `<div class="picker">
+      <input type="search" class="pk-buscar" placeholder="Buscar finca, pueblo, polígono-parcela…" aria-label="Buscar finca" autocomplete="off">
+      ${cults.length ? `<div class="pk-rapido"><span class="small muted">Marcar todas las de ${c}:</span>${cults.map(cu => `<button type="button" class="chip pk-cu" style="--h:${hue(cu)}" data-cu="${esc(cu)}">${esc(cu)}</button>`).join('')}<button type="button" class="chip none pk-nada">Quitar todas</button></div>` : ''}
+      <div class="pk-list">${items.map(it => it.x ? fila(it.x) : `<div class="pk-g"><label class="pk-gh"><input type="checkbox" data-g="${esc(it.g)}"><b class="pk-n">${esc(it.g)}</b><span class="muted small">${it.fs.length} parc. · ${fmtN(sum(it.fs, y => y.superficie))} ha</span></label>${it.fs.sort(byNombre).map(fila).join('')}</div>`).join('')}</div>
+      <div class="pk-sum small"></div></div>`;
+  }
+  function montarPicker(root, onChange) {
+    const lista = root.querySelector('.pk-list'), sumEl = root.querySelector('.pk-sum');
+    const act = () => {
+      root.querySelectorAll('.pk-g').forEach(g => {
+        const cs = [...g.querySelectorAll('.pk-f input')]; const n = cs.filter(i => i.checked).length;
+        const gh = g.querySelector('.pk-gh input'); gh.checked = n === cs.length; gh.indeterminate = n > 0 && n < cs.length;
+      });
+      const ids = [...lista.querySelectorAll('.pk-f input:checked')].map(i => i.value);
+      sumEl.textContent = ids.length ? `${ids.length} ${ids.length === 1 ? 'parcela elegida' : 'parcelas elegidas'} · ${fmtN(sum(ids.map(finca), f => f.superficie))} ha` : 'Ninguna parcela elegida';
+      if (onChange) onChange(ids);
+    };
+    root.addEventListener('change', e => {
+      const g = e.target.closest('.pk-gh');
+      if (g) g.parentElement.querySelectorAll('.pk-f').forEach(l => { if (!l.hidden) l.querySelector('input').checked = e.target.checked; });
+      act();
+    });
+    root.addEventListener('click', e => {
+      const b = e.target.closest('.pk-cu');
+      if (b) { lista.querySelectorAll('.pk-f').forEach(l => { if (l.dataset.cu === b.dataset.cu) l.querySelector('input').checked = true; }); act(); }
+      if (e.target.closest('.pk-nada')) { lista.querySelectorAll('input').forEach(i => { i.checked = false; }); act(); }
+    });
+    root.querySelector('.pk-buscar').addEventListener('input', e => {
+      const q = norm(e.target.value);
+      lista.querySelectorAll('.pk-f').forEach(l => { l.hidden = !!q && !q.split(' ').every(w => l.dataset.txt.includes(w)); });
+      lista.querySelectorAll('.pk-g').forEach(g => { const fs = [...g.querySelectorAll('.pk-f')]; g.hidden = fs.every(l => l.hidden) && !(q && norm(g.querySelector('.pk-gh').textContent).includes(q)); if (!g.hidden && fs.every(l => l.hidden)) fs.forEach(l => { l.hidden = false; }); });
+    });
+    act();
+    const prim = lista.querySelector('.pk-f input:checked');
+    if (prim) lista.scrollTop = Math.max(0, prim.closest('.pk-f').offsetTop - lista.offsetTop - 50);
+  }
+  function idsIniciales(pre) {
+    if (pre.grupo) return fincasDeGrupo(pre.grupo).map(f => f.id);
+    if (pre.finca) return [pre.finca];
+    const fl = ui.filtroLabor.finca;
+    if (ui.tab === 'cuaderno' && fl) return fl.startsWith('g:') ? fincasDeGrupo(fl.slice(2)).map(f => f.id) : [fl];
+    return [];
+  }
+
   // spec: {titulo, campos, valores, guardar(v) -> string|undefined (error), borrar()}
   function formulario(spec) {
     const vals = Object.assign({}, spec.valores);
@@ -628,9 +842,10 @@
       const id = 'f_' + f.k; const v = vals[f.k];
       let inp;
       if (f.type === 'select') inp = `<select id="${id}" name="${f.k}">${f.opts(vals).map(([val, t]) => `<option value="${esc(val)}"${String(v ?? '') === String(val) ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select>`;
+      else if (f.type === 'fincas') inp = pickerHTML(v);
       else if (f.type === 'textarea') inp = `<textarea id="${id}" name="${f.k}" rows="3" placeholder="${esc(f.placeholder || '')}">${esc(v)}</textarea>`;
       else if (f.type === 'num') inp = `<input id="${id}" name="${f.k}" type="text" inputmode="decimal" autocomplete="off" value="${esc(numStr(v))}" placeholder="${esc(f.placeholder || '')}">`;
-      else inp = `<input id="${id}" name="${f.k}" type="${f.type || 'text'}" value="${esc(v)}" placeholder="${esc(f.placeholder || '')}" autocomplete="off"${f.type === 'text' || !f.type ? ' autocapitalize="sentences"' : ''}>`;
+      else inp = `<input id="${id}" name="${f.k}" type="${f.type || 'text'}" value="${esc(v)}" placeholder="${esc(f.placeholder || '')}" autocomplete="off"${f.type === 'text' || !f.type ? ' autocapitalize="sentences"' : ''}${f.lista ? ` list="dl_${f.k}"` : ''}>${f.lista ? `<datalist id="dl_${f.k}">${f.lista().map(o => `<option value="${esc(o)}">`).join('')}</datalist>` : ''}`;
       return `<div class="field" data-k="${f.k}"><label for="${id}">${f.label}${f.req ? '' : ' <span class="muted small">(opcional)</span>'}</label>${inp}${f.hint ? `<div class="hint">${f.hint}</div>` : ''}<div class="err" hidden></div></div>`;
     };
     let cuerpo = ''; const cs = spec.campos;
@@ -641,7 +856,14 @@
     abrirCapa(`<div class="sheet" role="dialog" aria-modal="true">${cabecera(spec.titulo)}<form class="body" id="frm" novalidate>${cuerpo}${spec.extra || ''}</form>
       <footer>${spec.borrar ? '<button class="btn danger" type="button" data-del>Borrar</button>' : ''}<button class="btn primary" type="submit" form="frm">Guardar</button></footer></div>`, (el, d) => {
       const form = el.querySelector('form');
-      const leer = () => { for (const f of cs) { const i = form.elements[f.k]; if (i) vals[f.k] = i.value; } return vals; };
+      const leer = () => {
+        for (const f of cs) {
+          if (f.type === 'fincas') { vals[f.k] = [...form.querySelectorAll(`.field[data-k="${f.k}"] .pk-f input:checked`)].map(i => i.value); continue; }
+          const i = form.elements[f.k]; if (i) vals[f.k] = i.value;
+        }
+        return vals;
+      };
+      cs.filter(f => f.type === 'fincas').forEach(f => montarPicker(form.querySelector(`.field[data-k="${f.k}"] .picker`)));
       const refrescar = (origen) => {
         leer();
         for (const f of cs) {
@@ -665,6 +887,10 @@
           const w = form.querySelector(`.field[data-k="${f.k}"]`); const err = w.querySelector('.err'); err.hidden = true;
           if (w.hidden || (w.parentElement && w.parentElement.hidden)) { out[f.k] = f.type === 'num' ? null : ''; continue; }
           let v = vals[f.k];
+          if (f.type === 'fincas') {
+            if (f.req && !v.length) { err.textContent = 'Elige al menos una finca'; err.hidden = false; ok = false; continue; }
+            out[f.k] = v; continue;
+          }
           if (f.type === 'num') {
             v = parseNum(v, f.miles);
             if (Number.isNaN(v)) { err.textContent = 'Escribe un número, por ejemplo 12,5'; err.hidden = false; ok = false; continue; }
@@ -698,8 +924,10 @@
       titulo: f ? 'Editar finca' : 'Nueva finca',
       valores: f || Object.assign({ agregado: 0, zona: 0 }, pre || {}),
       campos: [
-        { k: 'nombre', label: 'Nombre', req: 1, placeholder: 'Ej.: El Llano' },
+        { k: 'nombre', label: 'Nombre', req: 1, placeholder: 'Ej.: Sarrana 663-180' },
         { k: 'superficie', label: 'Superficie (ha)', type: 'num', req: 1, placeholder: 'Ej.: 12,45' },
+        { k: 'titular', label: 'Titular', half: 1, placeholder: 'Ej.: Iván', lista: titulares },
+        { k: 'grupo', label: 'Finca agrupada', half: 1, placeholder: 'Ej.: Sarrana', lista: () => [...listaGrupos().keys()] },
         { k: 'municipio', label: 'Municipio', placeholder: 'Nombre del pueblo' },
         { k: 'provincia', label: 'Provincia (código)', type: 'num', half: 1, placeholder: 'Ej.: 47' },
         { k: 'codMunicipio', label: 'Municipio (código)', type: 'num', half: 1, placeholder: 'Ej.: 215' },
@@ -757,68 +985,83 @@
     const c = db.campanaActiva; const s = siembraDe(fid, c);
     formulario({
       titulo: `Cultivo de ${esc(finca(fid).nombre)}`,
-      valores: { campana: c, cultivo: s ? s.cultivo : db.cultivos[0], variedad: s ? s.variedad : '' },
+      valores: { campana: c, cultivo: s ? s.cultivo : db.cultivos[0], variedad: s ? s.variedad : '', laboreo: s ? s.laboreo || '' : '', estiercol: s && s.estiercol ? 'si' : 'no' },
       campos: [
         { k: 'cultivo', label: 'Cultivo', type: 'select', req: 1, opts: () => [...db.cultivos.map(x => [x, x]), ['__ninguno', 'Sin cultivo (quitar)']] },
         { k: 'variedad', label: 'Variedad', placeholder: 'Ej.: Marcopolo, Pedrezuela, Castellana…', show: v => v.cultivo !== '__ninguno' && v.cultivo !== 'Barbecho' },
+        { k: 'laboreo', label: 'Laboreo', type: 'select', half: 1, opts: () => [['', '—'], ...Object.entries(LABOREO)], show: v => v.cultivo !== '__ninguno' },
+        { k: 'estiercol', label: 'Estiércol', type: 'select', half: 1, opts: () => [['no', 'No'], ['si', 'Sí']], show: v => v.cultivo !== '__ninguno' },
         campoCampana
       ],
       guardar(v) {
         db.siembras = db.siembras.filter(x => !(x.fincaId === fid && x.campana === v.campana));
-        if (v.cultivo !== '__ninguno') db.siembras.push({ id: uid(), fincaId: fid, campana: v.campana, cultivo: v.cultivo, variedad: v.variedad });
+        if (v.cultivo !== '__ninguno') db.siembras.push({ id: uid(), fincaId: fid, campana: v.campana, cultivo: v.cultivo, variedad: v.variedad, laboreo: v.laboreo, estiercol: v.estiercol === 'si' });
       }
     });
   }
 
-  function formLabor(id, fincaPre) {
+  function formLabor(id, pre = {}) {
     const l = id ? db.labores.find(x => x.id === id) : null;
     if (!db.fincas.length) { toast('Primero añade una finca'); return; }
+    const miembros = l ? miembrosLote(db.labores, l) : [];
     const conDosis = v => CON_DOSIS.includes(v.tipo);
     const trat = v => v.tipo === 'Tratamiento';
+    const una = v => (v.fincas || []).length <= 1;
+    const ini = l
+      ? Object.assign({}, l, { fincas: miembros.map(x => x.fincaId), coste: miembros.some(x => x.coste) ? Math.round(sum(miembros, x => x.coste) * 100) / 100 : null })
+      : { fecha: hoyISO(), tipo: 'Labrado', fincas: idsIniciales(pre), unidad: 'kg/ha', campana: db.campanaActiva };
     formulario({
-      titulo: l ? 'Editar labor' : 'Nueva labor',
-      valores: l || { fecha: hoyISO(), tipo: 'Labrado', fincaId: fincaPre || (ui.filtroLabor.finca || optsFincas()[0][0]), unidad: 'kg/ha', campana: db.campanaActiva },
+      titulo: l ? (miembros.length > 1 ? `Editar labor (${miembros.length} parcelas)` : 'Editar labor') : 'Nueva labor',
+      valores: ini,
       campos: [
         { k: 'fecha', label: 'Fecha', type: 'date', req: 1, half: 1 },
         { k: 'tipo', label: 'Labor', type: 'select', req: 1, half: 1, opts: () => TIPOS_LABOR.map(t => [t, t]) },
-        { k: 'fincaId', label: 'Finca', type: 'select', req: 1, opts: optsFincas },
+        { k: 'fincas', label: 'Fincas', type: 'fincas', req: 1, hint: 'Marca una o varias. Al marcar una finca agrupada se marcan todas sus parcelas.' },
         { k: 'producto', label: 'Producto, variedad o apero', placeholder: 'Ej.: Urea 46 %, cultivador, cebada Pedrezuela' },
         { k: 'dosis', label: 'Dosis', type: 'num', half: 1, show: conDosis },
         { k: 'unidad', label: 'Unidad', type: 'select', half: 1, opts: () => UNIDADES.map(u => [u, u]), show: conDosis },
         { k: 'registro', label: 'Nº de registro', half: 1, show: trat, placeholder: 'Registro del producto' },
         { k: 'motivo', label: 'Plaga o mala hierba', half: 1, show: trat, placeholder: 'Ej.: avena loca' },
-        { k: 'superficie', label: 'Superficie trabajada (ha)', type: 'num', placeholder: 'Vacío = toda la finca' },
-        { k: 'coste', label: 'Coste (€)', type: 'num', miles: 1, hint: 'Si lo rellenas, se apunta también como gasto de la finca.' },
+        { k: 'superficie', label: 'Superficie trabajada (ha)', type: 'num', placeholder: 'Vacío = toda la finca', show: una },
+        { k: 'coste', label: 'Coste total (€)', type: 'num', miles: 1, hint: 'Se apunta también como gasto. Con varias fincas se reparte según la superficie de cada una.' },
         campoCampana,
         { k: 'notas', label: 'Notas', type: 'textarea', placeholder: 'Maquinaria, condiciones del tiempo, quién la hizo…' }
       ],
       guardar(v) {
-        const x = l || { id: uid() };
-        Object.assign(x, v);
-        if (!l) db.labores.push(x);
-        let m = db.movimientos.find(mm => mm.laborId === x.id);
-        if (x.coste > 0) {
-          if (!m) { m = { id: uid(), laborId: x.id, tipo: 'gasto' }; db.movimientos.push(m); }
-          Object.assign(m, { fecha: x.fecha, fincaId: x.fincaId, campana: x.campana, categoria: CAT_LABOR[x.tipo] || 'Servicios contratados', concepto: x.tipo + (x.producto ? ' · ' + x.producto : ''), importe: x.coste });
-        } else if (m) db.movimientos = db.movimientos.filter(mm => mm !== m);
-        if (x.tipo === 'Siembra' && !siembraDe(x.fincaId, x.campana)) {
-          const cu = db.cultivos.find(c => (x.producto || '').toLowerCase().includes(c.toLowerCase()));
-          if (cu) db.siembras.push({ id: uid(), fincaId: x.fincaId, campana: x.campana, cultivo: cu, variedad: '' });
-        }
+        const fs = v.fincas.map(finca).filter(Boolean);
+        const ids = new Set(miembros.map(x => x.id));
+        db.labores = db.labores.filter(x => !ids.has(x.id));
+        db.movimientos = db.movimientos.filter(m => !ids.has(m.laborId));
+        const lote = fs.length > 1 ? (l && l.lote) || uid() : null;
+        const costes = repartir(v.coste, fs);
+        fs.forEach((f, i) => {
+          const x = Object.assign({}, v, { id: i === 0 && l ? l.id : uid(), fincaId: f.id, coste: costes[i], superficie: fs.length > 1 ? null : v.superficie });
+          delete x.fincas; if (lote) x.lote = lote;
+          db.labores.push(x);
+          if (x.coste > 0) db.movimientos.push({ id: uid(), laborId: x.id, tipo: 'gasto', fecha: x.fecha, fincaId: x.fincaId, campana: x.campana, categoria: CAT_LABOR[x.tipo] || 'Servicios contratados', concepto: x.tipo + (x.producto ? ' · ' + x.producto : ''), importe: x.coste, lote: lote || undefined });
+          if (x.tipo === 'Siembra' && !siembraDe(x.fincaId, x.campana)) {
+            const cu = db.cultivos.find(c => (x.producto || '').toLowerCase().includes(c.toLowerCase()));
+            if (cu) db.siembras.push({ id: uid(), fincaId: x.fincaId, campana: x.campana, cultivo: cu, variedad: '' });
+          }
+        });
       },
-      textoBorrar: 'Se borrará la labor y, si tenía coste, también su gasto.',
-      borrar: l && (() => { db.labores = db.labores.filter(x => x !== l); db.movimientos = db.movimientos.filter(m => m.laborId !== l.id); })
+      textoBorrar: miembros.length > 1 ? `Se borrará esta labor en las ${miembros.length} parcelas y, si tenía coste, también sus gastos.` : 'Se borrará la labor y, si tenía coste, también su gasto.',
+      borrar: l && (() => { const ids = new Set(miembros.map(x => x.id)); db.labores = db.labores.filter(x => !ids.has(x.id)); db.movimientos = db.movimientos.filter(m => !ids.has(m.laborId)); })
     });
   }
 
   function formMov(id, pre = {}) {
     const m = id ? db.movimientos.find(x => x.id === id) : null;
     if (m && m.laborId && db.labores.some(l => l.id === m.laborId)) { formLabor(m.laborId); return; }
+    const miembros = m ? miembrosLote(db.movimientos, m) : [];
     const tipo = pre.tipo || 'gasto';
     const venta = v => v.categoria === 'Venta de grano' || v.categoria === 'Venta de paja';
+    const ini = m
+      ? Object.assign({}, m, { fincas: miembros.map(x => x.fincaId).filter(id2 => finca(id2)), importe: Math.round(sum(miembros, x => x.importe) * 100) / 100, kilos: miembros.some(x => x.kilos) ? sum(miembros, x => x.kilos) : null })
+      : { tipo, fecha: hoyISO(), categoria: CAT[tipo][0], fincas: pre.grupo || pre.finca ? idsIniciales(pre) : [], campana: db.campanaActiva };
     formulario({
-      titulo: m ? 'Editar apunte' : (tipo === 'ingreso' ? 'Nuevo ingreso' : 'Nuevo gasto'),
-      valores: m || { tipo, fecha: hoyISO(), categoria: CAT[tipo][0], fincaId: pre.finca || '', campana: db.campanaActiva },
+      titulo: m ? (miembros.length > 1 ? `Editar apunte (${miembros.length} parcelas)` : 'Editar apunte') : (tipo === 'ingreso' ? 'Nuevo ingreso' : 'Nuevo gasto'),
+      valores: ini,
       campos: [
         { k: 'tipo', label: 'Tipo', type: 'select', req: 1, half: 1, opts: () => [['gasto', 'Gasto'], ['ingreso', 'Ingreso']] },
         { k: 'fecha', label: 'Fecha', type: 'date', req: 1, half: 1 },
@@ -826,8 +1069,8 @@
         { k: 'concepto', label: 'Concepto', placeholder: 'Ej.: 2.500 kg semilla certificada' },
         { k: 'kilos', label: 'Kilos vendidos', type: 'num', miles: 1, half: 1, show: venta },
         { k: 'precio', label: 'Precio (€/kg)', type: 'num', half: 1, show: venta, placeholder: 'Ej.: 0,23' },
-        { k: 'importe', label: 'Importe (€)', type: 'num', miles: 1, req: 1 },
-        { k: 'fincaId', label: 'Finca', type: 'select', opts: () => [['', 'General (sin finca)'], ...optsFincas()], hint: 'Déjalo en «General» para gastos de toda la explotación: seguro, gasóleo, PAC…' },
+        { k: 'importe', label: 'Importe total (€)', type: 'num', miles: 1, req: 1 },
+        { k: 'fincas', label: 'Fincas', type: 'fincas', hint: 'Sin marcar ninguna es un gasto general de la explotación (seguro, gasóleo, PAC…). Con varias, el importe se reparte según la superficie.' },
         campoCampana,
         { k: 'notas', label: 'Notas', type: 'textarea' }
       ],
@@ -838,20 +1081,30 @@
       },
       guardar(v) {
         if (v.importe <= 0) return 'El importe tiene que ser mayor que cero';
-        if (m) Object.assign(m, v); else db.movimientos.push(Object.assign({ id: uid() }, v));
+        const fs = v.fincas.map(finca).filter(Boolean);
+        db.movimientos = db.movimientos.filter(x => !miembros.includes(x));
+        const base = Object.assign({}, v); delete base.fincas;
+        if (!fs.length) { db.movimientos.push(Object.assign({ id: m ? m.id : uid() }, base, { fincaId: '' })); return; }
+        const lote = fs.length > 1 ? (m && m.lote) || uid() : null;
+        const imp = repartir(v.importe, fs), kg = v.kilos ? repartir(v.kilos, fs) : fs.map(() => null);
+        fs.forEach((f, i) => { const x = Object.assign({ id: i === 0 && m ? m.id : uid() }, base, { fincaId: f.id, importe: imp[i], kilos: kg[i] }); if (lote) x.lote = lote; db.movimientos.push(x); });
       },
-      borrar: m && (() => { db.movimientos = db.movimientos.filter(x => x !== m); })
+      borrar: m && (() => { db.movimientos = db.movimientos.filter(x => !miembros.includes(x)); })
     });
   }
 
-  function formCosecha(id, fincaPre) {
+  function formCosecha(id, pre = {}) {
     const x = id ? db.cosechas.find(c => c.id === id) : null;
     if (!db.fincas.length) { toast('Primero añade una finca'); return; }
+    const miembros = x ? miembrosLote(db.cosechas, x) : [];
+    const ini = x
+      ? Object.assign({}, x, { fincas: miembros.map(y => y.fincaId), kg: Math.round(sum(miembros, y => y.kg)) })
+      : { fecha: hoyISO(), fincas: idsIniciales(pre), campana: db.campanaActiva };
     formulario({
-      titulo: x ? 'Editar cosecha' : 'Apuntar cosecha',
-      valores: x || { fecha: hoyISO(), fincaId: fincaPre || optsFincas()[0][0], campana: db.campanaActiva },
+      titulo: x ? (miembros.length > 1 ? `Editar cosecha (${miembros.length} parcelas)` : 'Editar cosecha') : 'Apuntar cosecha',
+      valores: ini,
       campos: [
-        { k: 'fincaId', label: 'Finca', type: 'select', req: 1, opts: optsFincas },
+        { k: 'fincas', label: 'Fincas', type: 'fincas', req: 1, hint: 'Si eliges varias, los kilos se reparten según la superficie de cada una.' },
         { k: 'fecha', label: 'Fecha', type: 'date', req: 1, half: 1 },
         { k: 'kg', label: 'Kilos', type: 'num', miles: 1, req: 1, half: 1, placeholder: 'Ej.: 12.400' },
         { k: 'humedad', label: 'Humedad (%)', type: 'num', placeholder: 'Ej.: 11,5' },
@@ -860,9 +1113,62 @@
       ],
       guardar(v) {
         if (v.kg <= 0) return 'Los kilos tienen que ser mayores que cero';
-        if (x) Object.assign(x, v); else db.cosechas.push(Object.assign({ id: uid() }, v));
+        const fs = v.fincas.map(finca).filter(Boolean);
+        db.cosechas = db.cosechas.filter(c => !miembros.includes(c));
+        const lote = fs.length > 1 ? (x && x.lote) || uid() : null;
+        const kgs = repartir(v.kg, fs);
+        const base = Object.assign({}, v); delete base.fincas;
+        fs.forEach((f, i) => { const c = Object.assign({ id: i === 0 && x ? x.id : uid() }, base, { fincaId: f.id, kg: kgs[i] }); if (lote) c.lote = lote; db.cosechas.push(c); });
       },
-      borrar: x && (() => { db.cosechas = db.cosechas.filter(c => c !== x); })
+      borrar: x && (() => { db.cosechas = db.cosechas.filter(c => !miembros.includes(c)); })
+    });
+  }
+
+  // ---------- Agrupar parcelas en una finca ----------
+  function hojaAgrupar(o) {
+    const base = o.grupo ? fincasDeGrupo(o.grupo) : [finca(o.id)];
+    const actual = o.grupo || grupoDe(base[0]) || '';
+    const nb = nombreBase(base[0].nombre);
+    const sinNombre = !nb || norm(nb) === norm(base[0].municipio) || norm(nb) === 'parcela'; // nombre puesto por la app («Lerma 632-599»)
+    const sug = actual || (sinNombre ? '' : nb);
+    const vec = lindantes(base);
+    const mismo = sug ? db.fincas.filter(x => !base.includes(x) && !vec.includes(x) && norm(nombreBase(x.nombre)) === norm(nombreBase(sug))) : [];
+    const sinGeo = base.some(f => !f.geo || !f.geo.c.length);
+    const fila = (f, chk) => `<label class="pk-f"><input type="checkbox" value="${f.id}"${chk ? ' checked' : ''}><span class="pk-n">${esc(f.nombre)}${grupoDe(f) && grupoDe(f) !== actual ? ` <span class="small muted">(ahora en ${esc(grupoDe(f))})</span>` : ''}</span><span class="muted small">${fmtN(f.superficie)} ha</span></label>`;
+    const caja = (t, fs, chk, vacioTxt) => `<div class="field"><label>${t}</label>${fs.length ? `<div class="picker"><div class="pk-list">${fs.sort(byNombre).map(f => fila(f, chk)).join('')}</div></div>` : `<p class="note" style="margin:0">${vacioTxt}</p>`}</div>`;
+    abrirCapa(`<div class="sheet" role="dialog" aria-modal="true">${cabecera(o.grupo ? 'Finca agrupada' : 'Agrupar parcelas')}<form class="body" id="frmAg" novalidate>
+      <div class="field"><label for="agNombre">Nombre de la finca agrupada</label><input id="agNombre" value="${esc(sug)}" placeholder="Ej.: Sarrana" autocomplete="off" list="dl_grupos"><datalist id="dl_grupos">${[...listaGrupos().keys()].map(g => `<option value="${esc(g)}">`).join('')}</datalist></div>
+      ${caja(o.grupo ? 'Parcelas de la finca' : 'Esta parcela', base, true, '')}
+      ${caja('Lindan con ellas', vec, false, sinGeo ? 'Para saber qué parcelas lindan, la app necesita sus contornos de SIGPAC (polígono, parcela, provincia y municipio).' : 'Ninguna de tus parcelas linda con estas.')}
+      ${mismo.length ? caja('Con el mismo nombre', mismo, false, '') : ''}
+      <div class="field"><label for="agBuscar">Añadir otra parcela</label><input id="agBuscar" type="search" placeholder="Buscar por nombre o polígono-parcela…" autocomplete="off"><div id="agRes" class="picker" hidden><div class="pk-list"></div></div><div id="agExtra"></div></div>
+      </form><footer><button class="btn" type="button" data-close>Cancelar</button><button class="btn primary" type="submit" form="frmAg">Guardar</button></footer></div>`, (el, d) => {
+      const form = el.querySelector('form');
+      const mostrados = () => new Set([...form.querySelectorAll('.pk-f input')].map(i => i.value));
+      const res = el.querySelector('#agRes'), resL = res.querySelector('.pk-list'), extra = el.querySelector('#agExtra');
+      el.querySelector('#agBuscar').addEventListener('input', e => {
+        const q = norm(e.target.value); const ya = mostrados();
+        const hits = q ? db.fincas.filter(f => !ya.has(f.id) && q.split(' ').every(w => norm([f.nombre, f.grupo, f.municipio, (f.poligono || '') + ' ' + (f.parcela || '')].join(' ')).includes(w))).slice(0, 25) : [];
+        res.hidden = !hits.length; resL.innerHTML = hits.map(f => fila(f, false)).join('');
+      });
+      resL.addEventListener('change', e => {
+        const lab = e.target.closest('.pk-f'); if (!lab || !e.target.checked) return;
+        if (!extra.querySelector('.picker')) extra.innerHTML = '<div class="picker" style="margin-top:8px"><div class="pk-list"></div></div>';
+        extra.querySelector('.pk-list').appendChild(lab);
+        if (!resL.children.length) res.hidden = true;
+      });
+      form.addEventListener('submit', e => {
+        e.preventDefault();
+        const nombre = el.querySelector('#agNombre').value.trim();
+        if (!nombre) { toast('Ponle un nombre a la finca agrupada'); return; }
+        const marcadas = new Set([...form.querySelectorAll('.pk-list .pk-f input:checked')].filter(i => !i.closest('#agRes')).map(i => i.value));
+        if (marcadas.size < 2) { toast('Marca al menos 2 parcelas para agruparlas'); return; }
+        base.forEach(f => { if (!marcadas.has(f.id)) f.grupo = ''; });
+        db.fincas.forEach(f => { if (marcadas.has(f.id)) f.grupo = nombre; });
+        guardar(); volverA(d - 1);
+        if (ui.grupo === o.grupo && o.grupo) ui.grupo = nombre;
+        render(); toast(`«${nombre}»: ${marcadas.size} parcelas`);
+      });
     });
   }
 
@@ -938,7 +1244,7 @@
         else if (a === 'borrarTodo') {
           const r = await confirmar('¿Borrar todos los datos?', 'Se borrarán todas las fincas, labores, cuentas y cosechas de este teléfono. Si no tienes copia de seguridad, no podrás recuperarlas.', 'Borrar todo');
           if (!r.ok) return;
-          db = nuevoDB(); guardar(false); ui.fincaId = null; volverA(0); render(); toast('Datos borrados');
+          db = nuevoDB(); guardar(false); ui.fincaId = null; ui.grupo = null; volverA(0); render(); toast('Datos borrados');
         }
       });
     });
@@ -982,14 +1288,19 @@
     ['otras', ['otras parcelas', 'otras referencias', 'mas parcelas']],
     ['parcela', ['parcela', 'parc', 'par']],
     ['recinto', ['recinto', 'recintos', 'rec']],
+    ['supDeclarable', ['superficie declarable pac', 'superficie declarable', 'sup declarable', 'superficie pac', 'declarable']],
     ['superficie', ['superficie', 'superficie ha', 'sup', 'sup ha', 'hectareas', 'ha', 'has', 'superficie declarada', 'superficie sigpac', 'superficie cultivada', 'sup declarada']],
     ['cultivo', ['cultivo', 'producto', 'cultivo declarado', 'siembra', 'especie', 'cultivo campana']],
     ['variedad', ['variedad']],
+    ['laboreo', ['laboreo', 'tipo laboreo', 'tipo de laboreo']],
+    ['estiercol', ['basura', 'estiercol', 'abonado organico', 'estercolado']],
     ['campana', ['campana', 'ano', 'cosecha', 'ano campana']],
     ['notas', ['notas', 'observaciones', 'obs', 'comentarios', 'nota']],
+    ['titular', ['titular', 'propietario', 'titular pac', 'dueno']],
+    ['grupo', ['finca agrupada', 'agrupacion', 'grupo de fincas']],
     ['nombre', ['nombre', 'finca', 'paraje', 'denominacion', 'nombre finca', 'nombre de la finca', 'alias']]
   ];
-  const ETIQ = { nombre: 'Nombre', superficie: 'Superficie', municipio: 'Municipio', codMunicipio: 'Cód. municipio', provincia: 'Provincia', agregado: 'Agregado', zona: 'Zona', poligono: 'Polígono', parcela: 'Parcela', recinto: 'Recinto', otras: 'Otras parcelas', cultivo: 'Cultivo', variedad: 'Variedad', campana: 'Campaña', notas: 'Notas' };
+  const ETIQ = { nombre: 'Nombre', superficie: 'Superficie', supDeclarable: 'Superficie declarable', municipio: 'Municipio', codMunicipio: 'Cód. municipio', provincia: 'Provincia', agregado: 'Agregado', zona: 'Zona', poligono: 'Polígono', parcela: 'Parcela', recinto: 'Recinto', otras: 'Otras parcelas', cultivo: 'Cultivo', variedad: 'Variedad', laboreo: 'Laboreo', estiercol: 'Basura (estiércol)', campana: 'Campaña', notas: 'Notas', titular: 'Titular', grupo: 'Finca agrupada' };
   function columna(h) {
     const n = norm(h); if (!n) return null;
     for (const [k, syn] of COLS) if (syn.includes(n)) return k;
@@ -1000,66 +1311,125 @@
     const s = String(v == null ? '' : v).trim(); if (!s) return '';
     let m = s.match(/^(\d{4})\s*[\/\-]\s*(\d{2}|\d{4})$/);
     if (m) return m[1] + '/' + String((+m[1] + 1) % 100).padStart(2, '0');
+    m = s.match(/^(\d{2})\s*\/\s*(\d{2})$/);
+    if (m && (+m[1] + 1) % 100 === +m[2]) { const a = 2000 + +m[1]; return a + '/' + m[2]; }
     m = s.match(/^(\d{4})$/);
     if (m) { const a = +m[1] - 1; return a + '/' + String((a + 1) % 100).padStart(2, '0'); } // año de cosecha
     return '';
   }
-  const cultivoNormal = v => { const n = norm(v); if (!n) return ''; const c = db.cultivos.find(x => norm(x) === n); const t = String(v).trim(); return c || (t.charAt(0).toUpperCase() + t.slice(1).toLowerCase()); };
+  const campanaAnterior = c => { const a = parseInt(c, 10) - 1; return a + '/' + String((a + 1) % 100).padStart(2, '0'); };
+  const tituloCaso = s => (s && s === s.toUpperCase() && /[A-ZÁÉÍÓÚÑ]/.test(s))
+    ? s.toLowerCase().replace(/(^|[\s(\-])(\S)/g, (m0, a, b) => a + b.toUpperCase()).replace(/ (De|La|Del|Y|El|Los|Las) /g, x => x.toLowerCase()) : s;
+  function cultivoNormal(v) {
+    const n = norm(v);
+    if (!n || SIN_CULTIVO.includes(n) || /^\d+(\.\d+)?$/.test(String(v).trim())) return '';
+    if (CULT_ALIAS[n]) return CULT_ALIAS[n];
+    const c = db.cultivos.find(x => norm(x) === n); const t = String(v).trim();
+    return c || (t.charAt(0).toUpperCase() + t.slice(1).toLowerCase());
+  }
 
+  // Lee la hoja: una fila por recinto o por finca. Admite varias campañas en columnas (CULTIVO/LABOREO/BASURA bajo «2025/26»…).
   function analizarHoja(XLSX, wb) {
     const nombreHoja = wb.SheetNames.find(n => norm(n) !== 'instrucciones') || wb.SheetNames[0];
     const filas = XLSX.utils.sheet_to_json(wb.Sheets[nombreHoja], { header: 1, raw: true, defval: '' });
-    let cab = -1, mapa = {};
+    let cab = -1, cols = {};
     for (let i = 0; i < Math.min(15, filas.length); i++) {
-      const m = {}; filas[i].forEach((h, j) => { const k = columna(h); if (k && !(k in m)) m[k] = j; });
-      if (Object.keys(m).length >= 2) { cab = i; mapa = m; break; }
+      const m = {}; filas[i].forEach((h, j) => { const k = columna(h); if (k) (m[k] = m[k] || []).push(j); });
+      if (Object.keys(m).length >= 2) { cab = i; cols = m; break; }
     }
     if (cab < 0) return { error: 'No encuentro la fila de títulos. La primera fila debe tener títulos como Nombre, Superficie, Polígono, Parcela…' };
-    const reconocidas = Object.keys(mapa).map(k => ETIQ[k]);
-    const ignoradas = filas[cab].filter((h, j) => String(h).trim() && !Object.values(mapa).includes(j)).map(String);
-    const val = (fila, k) => (k in mapa ? fila[mapa[k]] : '');
-    const txt = (fila, k) => String(val(fila, k) == null ? '' : val(fila, k)).trim();
-    const ent = (fila, k) => { const v = val(fila, k); if (v === '' || v == null) return null; const n = typeof v === 'number' ? v : parseNum(v, false); return Number.isFinite(n) ? Math.round(n) : null; };
-    const grupos = new Map(); let vacias = 0;
-    for (const fila of filas.slice(cab + 1)) {
-      if (!fila.some(v => String(v).trim())) continue;
-      let pr = provinciaDe(val(fila, 'provincia'));
-      let mu = ent(fila, 'codMunicipio'); let muNombre = txt(fila, 'municipio');
-      if (mu == null && /^\d+$/.test(muNombre)) { mu = +muNombre; muNombre = ''; }
-      const ag = ent(fila, 'agregado') || 0, zo = ent(fila, 'zona') || 0, po = ent(fila, 'poligono'), pa = ent(fila, 'parcela');
-      const recs = listaRecintos(val(fila, 'recinto'));
-      const nombre = txt(fila, 'nombre');
-      const supV = val(fila, 'superficie'); const sup = typeof supV === 'number' ? supV : parseNum(supV, false);
-      if (!nombre && !(po && pa)) { vacias++; continue; }
-      const clave = nombre ? 'n:' + norm(nombre) : `r:${pr}:${mu}:${ag}:${zo}:${po}:${pa}`;
-      let g = grupos.get(clave);
-      if (!g) { g = { nombreAuto: !nombre, nombre: nombre || `Pol. ${po} Parc. ${pa}`, municipio: muNombre, provincia: pr || '', codMunicipio: mu || '', agregado: ag, zona: zo, poligono: po ? String(po) : '', parcela: pa ? String(pa) : '', recs: [], entera: false, otras: [], superficie: 0, cultivos: {}, variedad: txt(fila, 'variedad'), campana: campanaTxt(val(fila, 'campana')), notas: [], filas: 0 }; grupos.set(clave, g); }
-      g.filas++;
-      if (!g.municipio && muNombre) g.municipio = muNombre;
-      if (Number.isFinite(sup) && sup > 0) g.superficie += sup;
-      if (po && pa) {
-        if (!g.poligono) Object.assign(g, { provincia: pr || g.provincia, codMunicipio: mu || g.codMunicipio, agregado: ag, zona: zo, poligono: String(po), parcela: String(pa) });
-        if (+g.poligono === po && +g.parcela === pa && (+g.codMunicipio || 0) === (mu || +g.codMunicipio || 0)) { if (recs.length) g.recs.push(...recs); else g.entera = true; }
-        else if (recs.length) recs.forEach(re => g.otras.push(refTxt({ pr: pr || g.provincia, mu: mu || g.codMunicipio, ag, zo, po, pa, re })));
-        else g.otras.push(refTxt({ pr: pr || g.provincia, mu: mu || g.codMunicipio, ag, zo, po, pa, re: null }));
-      }
-      txt(fila, 'otras').split(/[\n;]+/).map(s => s.trim()).filter(Boolean).forEach(s => g.otras.push(s));
-      const cu = cultivoNormal(txt(fila, 'cultivo'));
-      if (cu) g.cultivos[cu] = (g.cultivos[cu] || 0) + (Number.isFinite(sup) && sup > 0 ? sup : 1);
-      if (!g.variedad) g.variedad = txt(fila, 'variedad');
-      if (!g.campana) g.campana = campanaTxt(val(fila, 'campana'));
-      const nota = txt(fila, 'notas'); if (nota && !g.notas.includes(nota)) g.notas.push(nota);
+    const datos = filas.slice(cab + 1).filter(f => f.some(v => String(v).trim()));
+    const esNum = j => { const vs = datos.map(f => f[j]).filter(v => v !== '' && v != null).slice(0, 40); return vs.length > 0 && vs.every(v => typeof v === 'number' || /^\d+$/.test(String(v).trim())); };
+    if (cols.municipio && !cols.codMunicipio) {
+      const num = cols.municipio.find(esNum);
+      if (num != null) { cols.codMunicipio = [num]; cols.municipio = cols.municipio.filter(j => j !== num); if (!cols.municipio.length) delete cols.municipio; }
     }
-    const plan = [...grupos.values()].map(g => {
-      const cultivo = Object.entries(g.cultivos).sort((a, b) => b[1] - a[1]).map(x => x[0])[0] || '';
-      const datos = { nombre: g.nombre, municipio: g.municipio, provincia: g.provincia, codMunicipio: g.codMunicipio, agregado: g.agregado, zona: g.zona, poligono: g.poligono, parcela: g.parcela,
-        recinto: g.entera ? '' : [...new Set(g.recs)].sort((a, b) => a - b).join(', '), otras: [...new Set(g.otras)].join('\n'), superficie: Math.round(g.superficie * 10000) / 10000 || null, notas: g.notas.join('\n') };
-      const existe = db.fincas.find(f => norm(f.nombre) === norm(g.nombre)) ||
-        (g.poligono ? db.fincas.find(f => +f.provincia === +g.provincia && +f.codMunicipio === +g.codMunicipio && +f.poligono === +g.poligono && +f.parcela === +g.parcela) : null);
-      if (existe && g.nombreAuto) datos.nombre = existe.nombre; // no cambiar el nombre si el Excel no trae
-      return { datos, cultivo, variedad: g.variedad, campana: g.campana || db.campanaActiva, existe };
+    const uno = k => cols[k] ? cols[k][0] : -1;
+    const arriba = cab > 0 ? filas[cab - 1] : [];
+    const campDe = j => { for (const dd of [0, 1, -1, 2, -2]) { const c = campanaTxt(arriba[j + dd]); if (c) return c; } return ''; };
+    let bloques = [];
+    if ((cols.cultivo || []).length > 1) {
+      bloques = cols.cultivo.map(j => ({ campana: campDe(j), cultivo: j, laboreo: -1, estiercol: -1, variedad: -1, campCol: -1 }));
+      for (const k of ['laboreo', 'estiercol', 'variedad']) (cols[k] || []).forEach(j => { const b = bloques.filter(x => x.cultivo < j).pop(); if (b && b[k] < 0) b[k] = j; });
+      bloques = bloques.filter(b => b.campana);
+    }
+    if (!bloques.length) bloques = [{ campana: '', cultivo: uno('cultivo'), laboreo: uno('laboreo'), estiercol: uno('estiercol'), variedad: uno('variedad'), campCol: uno('campana') }];
+    const usadas = new Set(Object.values(cols).flat());
+    const reconocidas = [...new Set(Object.keys(cols).map(k => ETIQ[k]))];
+    const ignoradas = filas[cab].map((h, j) => [String(h).trim(), j]).filter(([h, j]) => h && !usadas.has(j)).map(([h]) => h);
+    const supCol = cols.supDeclarable ? uno('supDeclarable') : uno('superficie');
+    const get = (fila, j) => j >= 0 ? fila[j] : '';
+    const txt = (fila, j) => { const v = get(fila, j); return String(v == null ? '' : v).trim(); };
+    const ent = (fila, j) => { const v = get(fila, j); if (v === '' || v == null) return null; const n = typeof v === 'number' ? v : parseNum(v, false); return Number.isFinite(n) ? Math.round(n) : null; };
+    const registros = []; let vacias = 0;
+    for (const fila of datos) {
+      const pr = provinciaDe(get(fila, uno('provincia')));
+      let mu = ent(fila, uno('codMunicipio')); let muNombre = txt(fila, uno('municipio'));
+      if (mu == null && /^\d+$/.test(muNombre)) { mu = +muNombre; muNombre = ''; }
+      const m2 = muNombre.match(/^(\d+)\s*[-–]\s*(.+)$/); if (m2) { if (mu == null) mu = +m2[1]; muNombre = m2[2]; } // «197-LERMA»
+      const po = ent(fila, uno('poligono')), pa = ent(fila, uno('parcela'));
+      const nombre = txt(fila, uno('nombre'));
+      if (!nombre && !(po && pa)) { vacias++; continue; }
+      const supV = get(fila, supCol); const sup = typeof supV === 'number' ? supV : parseNum(supV, false);
+      const camp = {};
+      for (const b of bloques) {
+        const c = b.campana || campanaTxt(get(fila, b.campCol)) || '';
+        const cu = cultivoNormal(txt(fila, b.cultivo)); const lab = txt(fila, b.laboreo).toUpperCase(); const est = txt(fila, b.estiercol);
+        if (cu || lab || est) camp[c] = { cultivo: cu, laboreo: lab, estiercol: !!est && !/^(no|n|0)$/i.test(est), variedad: txt(fila, b.variedad) };
+      }
+      registros.push({ nombre, titular: tituloCaso(txt(fila, uno('titular'))), grupo: txt(fila, uno('grupo')), municipio: tituloCaso(muNombre), pr: pr || '', mu: mu || '',
+        ag: ent(fila, uno('agregado')) || 0, zo: ent(fila, uno('zona')) || 0, po, pa, recs: listaRecintos(get(fila, uno('recinto'))),
+        sup: Number.isFinite(sup) && sup > 0 ? sup : 0, otras: txt(fila, uno('otras')), notas: txt(fila, uno('notas')), camp });
+    }
+    const campanas = [...new Set(bloques.map(b => b.campana).filter(Boolean))].sort();
+    return { hoja: nombreHoja, registros, reconocidas, ignoradas, vacias, filas: datos.length, campanas, conProvincia: !!cols.provincia };
+  }
+
+  // Convierte las filas en parcelas (una por parcela SIGPAC, nombre, titular y cultivos) y les pone su finca agrupada.
+  function construirPlan(r, o) {
+    const valeCamp = c => !c || !o.multi || o.campanas.has(c);
+    const partes = new Map();
+    for (const x of r.registros) {
+      const pr = x.pr || (o.provPorPueblo || {})[x.mu || norm(x.municipio)] || '';
+      const camp = {}; for (const [c, d] of Object.entries(x.camp)) if (valeCamp(c)) camp[c || db.campanaActiva] = d;
+      const firma = Object.keys(camp).sort().map(c => `${c}:${camp[c].cultivo}:${camp[c].laboreo}:${camp[c].estiercol ? 1 : 0}`).join(',');
+      const key = x.po && x.pa ? [pr, x.mu, x.ag, x.zo, x.po, x.pa, norm(x.nombre), norm(x.titular), firma].join('|') : 'n|' + norm(x.nombre) + '|' + norm(x.titular);
+      let p = partes.get(key);
+      if (!p) { p = { nombre: x.nombre, titular: x.titular, grupoExcel: x.grupo, municipio: x.municipio, pr, mu: x.mu, ag: x.ag, zo: x.zo, po: x.po, pa: x.pa, recs: [], entera: false, sup: 0, otras: [], notas: [], camp }; partes.set(key, p); }
+      if (x.recs.length) p.recs.push(...x.recs); else if (x.po) p.entera = true;
+      p.sup += x.sup; if (!p.municipio && x.municipio) p.municipio = x.municipio;
+      if (x.otras) p.otras.push(...x.otras.split(/[\n;]+/).map(s => s.trim()).filter(Boolean));
+      if (x.notas && !p.notas.includes(x.notas)) p.notas.push(x.notas);
+    }
+    const lista = [...partes.values()];
+    const clavePueblo = p => p.mu || norm(p.municipio);
+    const porNombre = new Map();
+    lista.forEach(p => { if (p.nombre) { const k = norm(p.nombre) + '|' + clavePueblo(p); if (!porNombre.has(k)) porNombre.set(k, []); porNombre.get(k).push(p); } });
+    const pueblosPorNombre = new Map();
+    porNombre.forEach((ps, k) => { const n = k.split('|')[0]; if (ps.length > 1) pueblosPorNombre.set(n, (pueblosPorNombre.get(n) || 0) + 1); });
+    const corto = p => p.po && p.pa ? `${p.po}-${p.pa}` : '';
+    lista.forEach(p => {
+      const n = norm(p.nombre);
+      const hermanos = p.nombre ? porNombre.get(n + '|' + clavePueblo(p)) : null;
+      const varios = !!hermanos && hermanos.length > 1;
+      if (p.grupoExcel) p.grupo = p.grupoExcel;
+      else if (varios && !o.noAgrupar.has(n)) p.grupo = pueblosPorNombre.get(n) > 1 && p.municipio ? `${p.nombre} (${p.municipio})` : p.nombre;
+      else p.grupo = '';
+      p.nombreFinal = p.nombre ? (varios || o.noAgrupar.has(n) ? `${p.nombre} ${corto(p)}`.trim() : p.nombre) : `${p.municipio || 'Parcela'} ${corto(p)}`.trim();
     });
-    return { hoja: nombreHoja, plan, reconocidas, ignoradas, vacias, filas: filas.length - cab - 1 };
+    const usados = new Map(); lista.forEach(p => { const k = norm(p.nombreFinal); usados.set(k, (usados.get(k) || 0) + 1); });
+    lista.forEach(p => { if (usados.get(norm(p.nombreFinal)) > 1 && p.recs.length) p.nombreFinal += ` rec. ${[...new Set(p.recs)].sort((a, b) => a - b).join(',')}`; });
+    const tomadas = new Set();
+    return lista.map(p => {
+      const recinto = p.entera ? '' : [...new Set(p.recs)].sort((a, b) => a - b).join(', ');
+      const datos = { nombre: p.nombreFinal, grupo: p.grupo, titular: p.titular, municipio: p.municipio, provincia: p.pr, codMunicipio: p.mu, agregado: p.ag, zona: p.zo, poligono: p.po ? String(p.po) : '', parcela: p.pa ? String(p.pa) : '', recinto, otras: [...new Set(p.otras)].join('\n'), superficie: Math.round(p.sup * 10000) / 10000 || null, notas: p.notas.join('\n') };
+      const mis = listaRecintos(recinto);
+      const existe = p.po && p.pa
+        ? db.fincas.find(f => !tomadas.has(f.id) && +f.codMunicipio === +p.mu && +f.poligono === p.po && +f.parcela === p.pa && (+f.agregado || 0) === p.ag && (+f.zona || 0) === p.zo && (!mis.length || !listaRecintos(f.recinto).length || listaRecintos(f.recinto).some(x => mis.includes(x))))
+        : db.fincas.find(f => !tomadas.has(f.id) && norm(f.nombre) === norm(p.nombreFinal));
+      if (existe) tomadas.add(existe.id);
+      return { datos, camp: p.camp, existe };
+    });
   }
 
   async function importarExcel(file) {
@@ -1069,63 +1439,93 @@
     try { const wb = XLSX.read(await file.arrayBuffer(), { type: 'array' }); r = analizarHoja(XLSX, wb); }
     catch (e) { toast('No se ha podido leer ese archivo. Usa un Excel (.xlsx, .xls), .ods o .csv'); return; }
     if (r.error) { toast(r.error); return; }
-    if (!r.plan.length) { toast('No hay fincas en la hoja: cada fila necesita un nombre o polígono y parcela'); return; }
-    const nuevas = r.plan.filter(p => !p.existe).length, act = r.plan.length - nuevas;
-    const sinSup = r.plan.filter(p => !p.datos.superficie && !(p.existe && p.existe.superficie > 0)).length;
-    const conRef = r.plan.filter(p => p.datos.poligono && p.datos.provincia && p.datos.codMunicipio).length;
-    const filasHTML = r.plan.slice(0, 40).map(p => `<tr><td>${esc(p.datos.nombre)}${p.existe ? ' <span class="tag">actualiza</span>' : ''}</td><td>${p.datos.superficie ? fmtN(p.datos.superficie) : '—'}</td><td>${p.datos.poligono ? `${esc(p.datos.poligono)}-${esc(p.datos.parcela)}${p.datos.recinto ? '-' + esc(p.datos.recinto) : ''}${p.datos.otras ? ' +' + p.datos.otras.split('\n').length : ''}` : '—'}</td><td style="text-align:left">${p.cultivo ? chip(p.cultivo) : ''}</td></tr>`).join('');
+    if (!r.registros.length) { toast('No hay fincas en la hoja: cada fila necesita un nombre o polígono y parcela'); return; }
+    let noAgr = 'Cambio'; try { const s = localStorage.getItem(KEY + '.noAgrupar'); if (s != null) noAgr = s; } catch (e) { /* ignorar */ }
+    const cuenta = {}; db.fincas.forEach(f => { if (+f.provincia) cuenta[+f.provincia] = (cuenta[+f.provincia] || 0) + 1; });
+    const provDef = +Object.keys(cuenta).sort((a, b) => cuenta[b] - cuenta[a])[0] || 0;
+    let provGuard = {}; try { provGuard = JSON.parse(localStorage.getItem(KEY + '.provPueblo') || '{}') || {}; } catch (e) { /* ignorar */ }
+    const pueblos = [...new Map(r.registros.map(x => [String(x.mu || norm(x.municipio)), x.municipio ? `${x.municipio}${x.mu ? ' (' + x.mu + ')' : ''}` : `Municipio ${x.mu}`])).entries()].sort((a, b) => a[1].localeCompare(b[1], 'es'));
+    const multi = r.campanas.length > 1;
+    const campDef = new Set(r.campanas.filter(c => c === db.campanaActiva || c === campanaAnterior(db.campanaActiva)));
+    if (multi && !campDef.size) campDef.add(r.campanas[r.campanas.length - 1]);
     abrirCapa(`<div class="sheet" role="dialog" aria-modal="true">${cabecera('Importar fincas')}<div class="body">
-      <p style="margin:0">Hoja «${esc(r.hoja)}»: ${r.filas} filas → <b>${r.plan.length} fincas</b> (${nuevas} nuevas${act ? `, ${act} ya existen y se actualizarán` : ''}).</p>
-      <div class="small"><b>Columnas reconocidas:</b> ${r.reconocidas.map(esc).join(', ')}${r.ignoradas.length ? `<br><span class="muted">No usadas: ${r.ignoradas.map(esc).join(', ')}</span>` : ''}</div>
-      ${sinSup ? `<p class="small neg" style="margin:0">${sinSup} sin superficie: se tomará la de SIGPAC si tienen referencia.</p>` : ''}
-      ${r.plan.some(p => p.cultivo) ? `<p class="small muted" style="margin:0">Los cultivos se asignan a la campaña indicada en el Excel o, si no hay, a la ${db.campanaActiva}.</p>` : ''}
-      <div class="tablewrap"><table><thead><tr><th>Finca</th><th>ha</th><th>Pol-Parc-Rec</th><th>Cultivo</th></tr></thead><tbody>${filasHTML}</tbody></table></div>
-      ${r.plan.length > 40 ? `<p class="note">…y ${r.plan.length - 40} más.</p>` : ''}
-      ${conRef ? `<p class="small muted" style="margin:0">${conRef} con referencia SIGPAC completa: se situarán en el mapa automáticamente.</p>` : ''}
-      </div><footer><button class="btn" data-close>Cancelar</button><button class="btn primary" data-ok>Importar ${r.plan.length}</button></footer></div>`, (el, d) => {
+      <p class="small" style="margin:0">Hoja «${esc(r.hoja)}» · <b>Columnas reconocidas:</b> ${r.reconocidas.map(esc).join(', ')}${r.ignoradas.length ? `<br><span class="muted">No usadas: ${r.ignoradas.map(esc).join(', ')}</span>` : ''}</p>
+      ${multi ? `<div class="field"><label>Campañas que se importan</label><div class="chkrow">${r.campanas.map(c => `<label class="chk"><input type="checkbox" name="impCamp" value="${c}"${campDef.has(c) ? ' checked' : ''}> ${c}</label>`).join('')}</div><div class="hint">Cultivo, laboreo y estiércol de cada campaña marcada.</div></div>` : ''}
+      ${!r.conProvincia ? `<div class="field"><label>Provincia de cada pueblo</label><div class="hint" style="margin-bottom:4px">El Excel no trae la provincia y hace falta para encontrar las parcelas en SIGPAC. Revisa los pueblos de otra provincia.</div>
+        <div class="provs">${pueblos.map(([k, n]) => `<label class="prov"><span>${esc(n)}</span><select class="impProv" data-k="${esc(k)}" aria-label="Provincia de ${esc(n)}"><option value="">Sin provincia</option>${PROVINCIAS.map((p, i) => i ? `<option value="${i}"${i === (+provGuard[k] || provDef) ? ' selected' : ''}>${esc(p)}</option>` : '').join('')}</select></label>`).join('')}</div></div>` : ''}
+      <div class="field"><label for="impNoAgr">Nombres que no se agrupan</label><input id="impNoAgr" value="${esc(noAgr)}" placeholder="Ej.: Cambio" autocomplete="off"><div class="hint">Las parcelas con el mismo nombre en el mismo pueblo se juntan en una finca agrupada, salvo estos nombres (separados por comas).</div></div>
+      <div id="impRes"></div>
+      </div><footer><button class="btn" data-close>Cancelar</button><button class="btn primary" data-ok>Importar</button></footer></div>`, (el, d) => {
+      const opciones = () => ({
+        multi, campanas: new Set([...el.querySelectorAll('[name=impCamp]:checked')].map(i => i.value)),
+        provPorPueblo: Object.fromEntries([...el.querySelectorAll('.impProv')].map(s => [s.dataset.k, +s.value || ''])),
+        noAgrupar: new Set(el.querySelector('#impNoAgr').value.split(',').map(norm).filter(Boolean))
+      });
+      let plan = [];
+      const pintar = () => {
+        const o = opciones(); plan = construirPlan(r, o);
+        const nuevas = plan.filter(p => !p.existe).length; const grupos = new Set(plan.map(p => p.datos.grupo).filter(Boolean));
+        const ult = multi ? [...o.campanas].sort().pop() : null;
+        const cuDe = p => { const ks = Object.keys(p.camp).sort(); const k = ult && p.camp[ult] ? ult : ks[ks.length - 1]; return k && p.camp[k] ? p.camp[k].cultivo : ''; };
+        const sinProv = plan.filter(p => p.datos.poligono && !p.datos.provincia).length;
+        el.querySelector('#impRes').innerHTML = `<p style="margin:0">${r.filas} filas → <b>${plan.length} parcelas</b> (${fmtN(sum(plan, p => p.datos.superficie))} ha) y <b>${grupos.size} fincas agrupadas</b>. ${nuevas} nuevas${plan.length - nuevas ? `, ${plan.length - nuevas} ya las tenías y se actualizarán` : ''}.</p>
+          ${sinProv ? `<p class="small neg" style="margin:8px 0 0">${sinProv} parcelas sin provincia: elígela arriba para poder situarlas en el mapa.</p>` : ''}
+          <div class="tablewrap" style="margin-top:10px"><table><thead><tr><th>Parcela</th><th>Finca agrupada</th><th>ha</th><th>Titular</th><th>Cultivo${ult ? ' ' + ult : ''}</th></tr></thead><tbody>${plan.slice(0, 40).map(p => `<tr><td>${esc(p.datos.nombre)}${p.existe ? ' <span class="tag">actualiza</span>' : ''}</td><td style="text-align:left">${esc(p.datos.grupo)}</td><td>${p.datos.superficie ? fmtN(p.datos.superficie) : '—'}</td><td style="text-align:left">${esc(p.datos.titular)}</td><td style="text-align:left">${cuDe(p) ? chip(cuDe(p)) : ''}</td></tr>`).join('')}</tbody></table></div>
+          ${plan.length > 40 ? `<p class="note">…y ${plan.length - 40} más.</p>` : ''}`;
+        el.querySelector('[data-ok]').textContent = `Importar ${plan.length}`;
+      };
+      el.querySelector('.body').addEventListener('change', pintar);
+      el.querySelector('#impNoAgr').addEventListener('input', pintar);
+      pintar();
       el.querySelector('[data-ok]').addEventListener('click', () => {
-        for (const p of r.plan) {
+        try {
+          localStorage.setItem(KEY + '.noAgrupar', el.querySelector('#impNoAgr').value);
+          localStorage.setItem(KEY + '.provPueblo', JSON.stringify(Object.assign(provGuard, opciones().provPorPueblo)));
+        } catch (e) { /* ignorar */ }
+        for (const p of plan) {
           const f = p.existe || { id: uid() };
           for (const [k, v] of Object.entries(p.datos)) if (v !== '' && v != null) f[k] = v;
           if (!p.existe) db.fincas.push(f);
-          if (p.cultivo) {
-            if (!db.cultivos.includes(p.cultivo)) db.cultivos.push(p.cultivo);
-            db.siembras = db.siembras.filter(s => !(s.fincaId === f.id && s.campana === p.campana));
-            db.siembras.push({ id: uid(), fincaId: f.id, campana: p.campana, cultivo: p.cultivo, variedad: p.variedad || '' });
-            if (!db.campanas.includes(p.campana)) db.campanas.push(p.campana);
+          for (const [c, dd] of Object.entries(p.camp)) {
+            db.siembras = db.siembras.filter(s => !(s.fincaId === f.id && s.campana === c));
+            if (dd.cultivo) {
+              if (!db.cultivos.includes(dd.cultivo)) db.cultivos.push(dd.cultivo);
+              db.siembras.push({ id: uid(), fincaId: f.id, campana: c, cultivo: dd.cultivo, variedad: dd.variedad || '', laboreo: dd.laboreo || '', estiercol: !!dd.estiercol });
+            }
+            if (!db.campanas.includes(c)) db.campanas.push(c);
           }
         }
         db.ejemplo = false;
-        guardar(); volverA(0); ui.tab = 'fincas'; render();
-        toast(`${r.plan.length} fincas importadas`);
+        guardar(); volverA(0); ui.tab = 'fincas'; ui.fincaId = null; ui.grupo = null; render();
+        toast(`${plan.length} parcelas importadas`);
         setTimeout(() => actualizarContornos({}), 400);
       });
     });
   }
 
-  const COLS_EXPORT = ['Nombre', 'Superficie (ha)', 'Municipio', 'Provincia', 'Cód. municipio', 'Agregado', 'Zona', 'Polígono', 'Parcela', 'Recinto', 'Otras parcelas', 'Cultivo', 'Variedad', 'Campaña', 'Notas'];
+  const COLS_EXPORT = ['Nombre', 'Finca agrupada', 'Titular', 'Superficie (ha)', 'Municipio', 'Provincia', 'Cód. municipio', 'Agregado', 'Zona', 'Polígono', 'Parcela', 'Recinto', 'Otras parcelas', 'Cultivo', 'Variedad', 'Laboreo', 'Basura', 'Campaña', 'Notas'];
   async function excelFincas(plantilla) {
     let XLSX;
     try { XLSX = await cargarXLSX(); } catch (e) { toast('No se ha podido cargar el generador de Excel. Abre la app una vez con cobertura.'); return; }
     const c = db.campanaActiva;
     const filas = plantilla
-      ? [['El Llano', 12.45, 'Villalón de Campos', 47, 215, 0, 0, 403, 30, '1', '', 'Trigo', 'Marcopolo', c, 'Arrendada'],
-         ['El Llano', 3.2, 'Villalón de Campos', 47, 215, 0, 0, 403, 31, '1, 2', '', 'Trigo', 'Marcopolo', c, ''],
-         ['Carrascal', 8.2, 'Villalón de Campos', 47, 215, 0, 0, 404, 39, '', '', 'Lenteja', 'Castellana', c, '']]
-      : db.fincas.slice().sort(byNombre).map(f => { const s = siembraDe(f.id, c); return [f.nombre, f.superficie, f.municipio || '', f.provincia || '', f.codMunicipio || '', f.agregado || 0, f.zona || 0, f.poligono || '', f.parcela || '', f.recinto || '', f.otras || '', s ? s.cultivo : '', s ? s.variedad || '' : '', c, f.notas || '']; });
+      ? [['Sarrana 663-180', 'Sarrana', 'Iván', 2.92, 'Lerma', 9, 197, 0, 0, 663, 180, '1, 2', '', 'Trigo', '', 'C', '', c, ''],
+         ['Sarrana 663-181', 'Sarrana', 'Iván', 1.5, 'Lerma', 9, 197, 0, 0, 663, 181, '1', '', 'Trigo', '', 'C', 'X', c, ''],
+         ['Consejera', '', 'Tomás', 6.82, 'Lerma', 9, 197, 0, 0, 631, 778, '1', '', 'Esparceta', '', 'D', '', c, 'Arrendada']]
+      : db.fincas.slice().sort(byNombre).map(f => { const s = siembraDe(f.id, c); return [f.nombre, grupoDe(f), f.titular || '', f.superficie, f.municipio || '', f.provincia || '', f.codMunicipio || '', f.agregado || 0, f.zona || 0, f.poligono || '', f.parcela || '', f.recinto || '', f.otras || '', s ? s.cultivo : '', s ? s.variedad || '' : '', s ? s.laboreo || '' : '', s && s.estiercol ? 'X' : '', c, f.notas || '']; });
     const ws = XLSX.utils.aoa_to_sheet([COLS_EXPORT, ...filas]);
-    ws['!cols'] = COLS_EXPORT.map((h, i) => ({ wch: [18, 14, 20, 10, 14, 9, 6, 9, 9, 10, 18, 12, 14, 10, 24][i] }));
+    ws['!cols'] = COLS_EXPORT.map((h, i) => ({ wch: [20, 16, 10, 12, 16, 9, 12, 9, 6, 9, 9, 9, 16, 12, 12, 8, 7, 9, 24][i] }));
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Fincas');
     if (plantilla) {
       const ins = XLSX.utils.aoa_to_sheet([['Cómo rellenar la hoja «Fincas»'], [''],
-        ['• Una fila por finca, o una fila por recinto: las filas con el mismo nombre se juntan en una sola finca y se suman sus superficies.'],
-        ['• Provincia, Cód. municipio, Polígono, Parcela y Recinto son los códigos SIGPAC. Están en tu declaración de la PAC o en el visor SIGPAC.'],
-        ['• Si dejas Recinto vacío se toma la parcela entera. Puedes poner varios: 1, 2, 5-7.'],
-        ['• Agregado y Zona casi siempre son 0.'],
-        ['• Campaña: 2026/27, o el año de cosecha (2027). Si se deja vacía se usa la campaña activa.'],
-        ['• Puedes borrar las filas de ejemplo. Los títulos de la primera fila pueden variar un poco (Ha, Pol., Paraje…).']]);
-      ins['!cols'] = [{ wch: 110 }];
+        ['• Una fila por recinto o por parcela. Las filas de la misma parcela (mismo polígono y parcela) se juntan y se suman sus superficies.'],
+        ['• Las parcelas con el mismo Nombre en el mismo pueblo se juntan en una «finca agrupada» (por ejemplo, Sarrana = parcelas 180 y 181). Cada parcela se sigue viendo por separado.'],
+        ['• Puedes poner la columna «Finca agrupada» para decir tú cómo se agrupan.'],
+        ['• Provincia, Cód. municipio, Polígono, Parcela y Recinto son los códigos SIGPAC de tu declaración de la PAC. Si el municipio viene como «197-LERMA» también vale.'],
+        ['• Laboreo: C = siembra directa con complemento, T = tradicional, D = siembra directa. Basura: X si se echó estiércol.'],
+        ['• Campaña: 2026/27, o el año de cosecha (2027). También vale poner varias campañas en columnas, con el año encima de cada bloque Cultivo / Basura / Laboreo.']]);
+      ins['!cols'] = [{ wch: 120 }];
       XLSX.utils.book_append_sheet(wb, ins, 'Instrucciones');
     }
     const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
@@ -1153,7 +1553,7 @@
       `La copia tiene <b>${datos.fincas.length} fincas</b>, ${(datos.labores || []).length} labores, ${(datos.movimientos || []).length} apuntes y ${(datos.cosechas || []).length} cosechas.<br><br>Sustituirá a los datos que hay ahora en este teléfono (${db.fincas.length} fincas).`, 'Importar');
     if (!r.ok) return;
     db = normalizar(datos); db.ultimaCopia = new Date().toISOString(); db.ejemplo = false; guardar(false);
-    ui.fincaId = null; volverA(0); render(); toast('Copia importada');
+    ui.fincaId = null; ui.grupo = null; volverA(0); render(); toast('Copia importada');
   });
 
   // ---------- Datos de ejemplo ----------
@@ -1217,15 +1617,32 @@
     nuevaFinca: () => formFinca(),
     editFinca: b => formFinca(b.dataset.id),
     asignar: b => formAsignar(b.dataset.id),
-    nuevaLabor: b => formLabor(null, b.dataset.finca),
+    nuevaLabor: b => formLabor(null, { finca: b.dataset.finca, grupo: b.dataset.grupo }),
     editLabor: b => formLabor(b.dataset.id),
-    nuevoMov: b => formMov(null, { finca: b.dataset.finca, tipo: b.dataset.tipo }),
+    nuevoMov: b => formMov(null, { finca: b.dataset.finca, grupo: b.dataset.grupo, tipo: b.dataset.tipo }),
     editMov: b => formMov(b.dataset.id),
-    nuevaCosecha: b => formCosecha(null, b.dataset.finca),
+    nuevaCosecha: b => formCosecha(null, { finca: b.dataset.finca, grupo: b.dataset.grupo }),
+    verGrupo: b => {
+      const g = b.dataset.g; if (mapa) mapa.closePopup();
+      if (ui.fincaId && ui.grupo === g) { volverA(profundidad() - 1); return; }
+      if (ui.fincaId) { ui.fincaId = null; ui.grupo = g; } else { if (!ui.grupo) { ui.grupo = g; empujar(); } else ui.grupo = g; }
+      render(); window.scrollTo(0, 0);
+    },
+    toggleGrupo: b => { const g = b.dataset.g; if (ui.abiertos.has(g)) ui.abiertos.delete(g); else ui.abiertos.add(g); const l = $('#listaFincas'); if (l) l.innerHTML = listaFincasHTML(); },
+    agrupar: b => hojaAgrupar({ id: b.dataset.id }),
+    editGrupo: b => hojaAgrupar({ grupo: b.dataset.g }),
+    deshacerGrupo: async b => {
+      const g = b.dataset.g;
+      const r = await confirmar('¿Deshacer la agrupación?', `Las parcelas de «${esc(g)}» quedarán sueltas. No se borra nada de lo apuntado en ellas.`, 'Deshacer');
+      if (!r.ok) return;
+      fincasDeGrupo(g).forEach(f => { f.grupo = ''; });
+      guardar(); volverA(0); render(); toast('Agrupación deshecha');
+    },
+    verMapaGrupo: b => { volverA(0); ui.fincaId = null; ui.grupo = null; ui.tab = 'fincas'; ui.vistaFincas = 'mapa'; ui.enfocarGrupo = b.dataset.g; render(); window.scrollTo(0, 0); },
     editCosecha: b => formCosecha(b.dataset.id),
     filtroMov: b => { ui.filtroMov = b.dataset.k; render(); },
     vistaFincas: b => { ui.vistaFincas = b.dataset.k; try { localStorage.setItem(KEY + '.vista', ui.vistaFincas); } catch (e) { /* ignorar */ } render(); },
-    verMapa: b => { if (ui.fincaId) volverA(0); ui.fincaId = null; ui.tab = 'fincas'; ui.vistaFincas = 'mapa'; ui.enfocar = b.dataset.id; render(); window.scrollTo(0, 0); },
+    verMapa: b => { volverA(0); ui.fincaId = null; ui.grupo = null; ui.tab = 'fincas'; ui.vistaFincas = 'mapa'; ui.enfocar = b.dataset.id; render(); window.scrollTo(0, 0); },
     contornos: () => actualizarContornos({ forzar: true }),
     importarExcel: () => { cargarXLSX().catch(() => {}); $('#xlsIn').click(); },
     fincaDesdeRecinto: () => { const x = ui.recSel; if (!x) return; mapa.closePopup(); formFinca(null, { provincia: x.provincia, codMunicipio: x.municipio, agregado: x.agregado, zona: x.zona, poligono: String(x.poligono), parcela: String(x.parcela), recinto: String(x.recinto), superficie: x.superficie }); },
@@ -1236,19 +1653,23 @@
     borrarEjemplo: async () => {
       const r = await confirmar('¿Borrar los datos de ejemplo?', 'Se quedará la app vacía para empezar con tus fincas.');
       if (!r.ok) return;
-      db = nuevoDB(); guardar(false); ui.fincaId = null; volverA(0); render();
+      db = nuevoDB(); guardar(false); ui.fincaId = null; ui.grupo = null; volverA(0); render();
     }
   };
   function irTab(t) {
-    if (ui.fincaId) volverA(0);
-    ui.fincaId = null; ui.tab = t; render(); window.scrollTo(0, 0);
+    volverA(0);
+    ui.fincaId = null; ui.grupo = null; ui.tab = t; render(); window.scrollTo(0, 0);
   }
   document.addEventListener('click', e => {
     const b = e.target.closest('[data-act]');
     if (b && acciones[b.dataset.act]) acciones[b.dataset.act](b);
   });
   document.querySelectorAll('.tabs button').forEach(b => b.addEventListener('click', () => irTab(b.dataset.tab)));
+  $('#main').addEventListener('input', e => {
+    if (e.target.id === 'fBuscar') { ui.buscar = e.target.value; const l = $('#listaFincas'); if (l) l.innerHTML = listaFincasHTML(); }
+  });
   $('#main').addEventListener('change', e => {
+    if (e.target.id === 'fTitular') { ui.titular = e.target.value; const l = $('#listaFincas'); if (l) l.innerHTML = listaFincasHTML(); }
     if (e.target.id === 'fLabFinca') { ui.filtroLabor.finca = e.target.value; render(); }
     if (e.target.id === 'fLabTipo') { ui.filtroLabor.tipo = e.target.value; render(); }
   });

@@ -3,7 +3,9 @@
 App para el móvil (PWA) para llevar una explotación de cereal, leguminosas y cultivos alternativos:
 
 - **Fincas**: superficie, municipio, referencia SIGPAC y cultivo de cada campaña, con el historial de rotaciones.
-- **Cuaderno de campo**: labrado, siembra, abonado, tratamientos (producto, dosis, nº de registro, plaga), cosecha… Si una labor lleva coste, se apunta sola como gasto.
+- **Fincas agrupadas**: varias parcelas que llamas igual (por ejemplo «Sarrana» = 663-175, 179 y 180) forman una finca con sus totales, y cada parcela se sigue viendo por separado. Puedes agrupar a mano, y la app te sugiere las parcelas que lindan.
+- **Titular** de cada parcela, con filtro y buscador en la lista.
+- **Cuaderno de campo**: labrado, siembra, abonado, tratamientos (producto, dosis, nº de registro, plaga), cosecha… Si una labor lleva coste, se apunta sola como gasto. Una labor, gasto o cosecha se puede apuntar en varias parcelas a la vez (o en toda una finca agrupada) y se reparte por superficie.
 - **Cuentas**: gastos e ingresos por finca o generales (seguro, gasóleo, PAC). En ventas de grano calcula el importe a partir de los kilos y el precio.
 - **Cosechas**: kilos por finca (cada remolque o el total) y rendimiento en kg/ha.
 - **Mapa**: tus fincas sobre la ortofoto del PNOA (IGN) con los linderos de SIGPAC, coloreadas por cultivo. Al tocar cualquier parcela se ven su referencia, superficie y uso, y se puede crear una finca con ella o añadirla a una existente. Botón de «Mi ubicación» con el GPS.
