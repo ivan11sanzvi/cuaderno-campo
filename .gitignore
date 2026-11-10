@@ -5,3 +5,4 @@
 *.csv
 *.json.bak
 Resumen_proyecto_*.md
+__pycache__/
