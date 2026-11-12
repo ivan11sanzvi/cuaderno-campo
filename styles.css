@@ -338,3 +338,6 @@ tr.tot td { font-weight: 700; background: var(--surface-2); }
 
 /* Explotación: agricultores y maquinaria */
 .row.baja { opacity: .6; }
+.sec-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 6px; }
+.sec-row h2.sec { margin: 0 2px; }
+.sec-row .btn svg { width: 16px; height: 16px; }

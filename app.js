@@ -2,7 +2,7 @@
 (function () {
   // ---------- Constantes ----------
   const KEY = 'cuadernoCampo.v1';
-  const VERSION = '1.6.0';
+  const VERSION = '1.7.0';
   const TIPOS_LABOR = ['Labrado', 'Siembra', 'Abonado', 'Tratamiento', 'Rodillo', 'Cosecha', 'Empacado', 'Otro'];
   const CON_DOSIS = ['Siembra', 'Abonado', 'Tratamiento'];
   const UNIDADES = ['kg/ha', 'L/ha', 'g/ha', 'cc/ha', 'kg', 'L'];
@@ -61,12 +61,12 @@
   // ---------- Datos ----------
   function nuevoDB() {
     const c = campanaDe(hoyISO());
-    return { v: 1, campanaActiva: c, campanas: [c], cultivos: CULTIVOS_BASE.slice(), fincas: [], siembras: [], labores: [], movimientos: [], cosechas: [], productos: [], documentos: [], ajustes: [], titulares: [], maquinas: [], ultimaCopia: null, ultimoCambio: null, ejemplo: false };
+    return { v: 1, campanaActiva: c, campanas: [c], cultivos: CULTIVOS_BASE.slice(), fincas: [], siembras: [], labores: [], movimientos: [], cosechas: [], productos: [], documentos: [], ajustes: [], titulares: [], maquinas: [], equipos: [], ultimaCopia: null, ultimoCambio: null, ejemplo: false };
   }
   function normalizar(d) {
     const base = nuevoDB();
     const o = Object.assign(base, d && typeof d === 'object' ? d : {});
-    for (const k of ['campanas', 'fincas', 'siembras', 'labores', 'movimientos', 'cosechas', 'productos', 'documentos', 'ajustes', 'titulares', 'maquinas']) if (!Array.isArray(o[k])) o[k] = [];
+    for (const k of ['campanas', 'fincas', 'siembras', 'labores', 'movimientos', 'cosechas', 'productos', 'documentos', 'ajustes', 'titulares', 'maquinas', 'equipos']) if (!Array.isArray(o[k])) o[k] = [];
     if (!Array.isArray(o.cultivos) || !o.cultivos.length) o.cultivos = CULTIVOS_BASE.slice();
     if (!o.campanaActiva) o.campanaActiva = campanaDe(hoyISO());
     if (!o.campanas.includes(o.campanaActiva)) o.campanas.push(o.campanaActiva);
@@ -388,7 +388,7 @@
     return `<div class="bars">${items.map(i => `<div class="bar"><div class="lbl"><span>${esc(i.label)}</span><b>${i.valor}</b></div><div class="track"><div class="fill" style="--h:${i.h};width:${max ? Math.max(2, i.n / max * 100) : 0}%"></div></div></div>`).join('')}</div>`;
   }
   function filaLabor(l, conFinca = true, n = [l]) {
-    const maqs = [l.tractorId, l.aperoId].map(id => (maquina(id) || {}).nombre).filter(Boolean).join(' + ');
+    const maqs = equipo(l.equipoId) ? equipo(l.equipoId).nombre : [l.tractorId, l.aperoId].map(id => (maquina(id) || {}).nombre).filter(Boolean).join(' + ');
     const det = [l.producto, l.dosis != null ? `${fmtN(l.dosis)} ${l.unidad || ''}` : '', l.motivo, maqs].filter(Boolean).join(' · ');
     const coste = sum(n, x => x.coste);
     const aviso = n.some(x => x.avisos && x.avisos.length);
@@ -1096,7 +1096,8 @@
     db.movimientos = db.movimientos.filter(m => !ids.has(m.laborId));
     const lote = fs.length > 1 ? (l && l.lote) || uid() : null;
     const costes = repartir(v.coste, fs);
-    if (v.tractorId || v.aperoId) { db.ultMaq = db.ultMaq || {}; db.ultMaq[v.tipo] = { tractorId: v.tractorId || '', aperoId: v.aperoId || '' }; }
+    if (v.tractorId || v.aperoId) { db.ultMaq = db.ultMaq || {}; db.ultMaq[v.tipo] = { equipoId: v.equipoId || '', tractorId: v.tractorId || '', aperoId: v.aperoId || '' }; }
+    if (v.equipoId && !equipo(v.equipoId)) v.equipoId = '';
     if (v.tipo !== 'Tratamiento') delete v.aplicador; else if (v.aplicador) db.ultAplicador = v.aplicador;
     fs.forEach((f, i) => {
       const x = Object.assign({}, v, { id: i === 0 && l ? l.id : uid(), fincaId: f.id, coste: costes[i], superficie: fs.length > 1 ? null : v.superficie });
@@ -1138,7 +1139,7 @@
     const ini = l
       ? Object.assign({}, l, { fincas: miembros.map(x => x.fincaId), prodAlm: l.productoId || '', coste: miembros.some(x => x.coste) ? Math.round(sum(miembros, x => x.coste) * 100) / 100 : null })
       : Object.assign({ fecha: hoyISO(), tipo: 'Labrado', fincas: idsIniciales(pre), unidad: 'kg/ha', campana: db.campanaActiva, prodAlm: '' }, maqPorDefecto((pre.valores || {}).tipo || 'Labrado'), { aplicador: aplicadorPorDefecto() }, pre.valores || {});
-    let maqTocada = !!l || !!(pre.valores && (pre.valores.tractorId || pre.valores.aperoId));
+    let maqTocada = !!l || !!(pre.valores && (pre.valores.tractorId || pre.valores.aperoId || pre.valores.equipoId));
     if (l && l.tipo === 'Siembra') { const s = siembraDe(l.fincaId, l.campana); if (s) { ini.cultivoSiembra = s.cultivo; ini.variedadSiembra = s.variedad || ''; } }
     let ultimoProd = ini.prodAlm;
     cargarFitos().then(d => { FITOS = d; if (refrescarInfo) refrescarInfo(); }).catch(() => {});
@@ -1159,6 +1160,7 @@
         { k: 'registro', label: 'Nº de registro', half: 1, show: v => trat(v) && !v.prodAlm, placeholder: 'Registro del producto' },
         { k: 'motivo', label: 'Plaga o mala hierba', half: 1, show: trat, placeholder: 'Ej.: avena loca' },
         { k: 'superficie', label: 'Superficie trabajada (ha)', type: 'num', placeholder: 'Vacío = toda la finca', show: una },
+        { k: 'equipoId', label: 'Equipo de trabajo', type: 'select', opts: () => [['', 'Sin equipo (elige las máquinas)'], ...db.equipos.map(e => [e.id, e.nombre + (e.rendimiento ? ` · ${fmtN(e.rendimiento)} ha/h` : '')])], show: () => db.equipos.length > 0, hint: 'Con equipo, la app calcula el coste de la maquinaria por hectárea.' },
         { k: 'tractorId', label: 'Tractor o cosechadora', type: 'select', half: 1, opts: () => optsMaq(true, l && l.tractorId), show: hayMaq },
         { k: 'aperoId', label: 'Apero', type: 'select', half: 1, opts: () => optsMaq(false, l && l.aperoId), show: hayMaq },
         { k: 'aplicador', label: 'Aplicador', type: 'select', opts: () => optsAplicador(l && l.aplicador), show: trat, hint: 'Quien hace el tratamiento, con su carné (ROPO). Sale en el cuaderno oficial.' },
@@ -1169,10 +1171,11 @@
       extra: '<div id="fitoInfo" class="fito-info" hidden></div>',
       alCambiar(v, form, origen) {
         refrescarInfo = () => alCambiarReal(v, form);
-        if (origen === 'tractorId' || origen === 'aperoId') maqTocada = true;
-        if (origen === 'tipo' && !maqTocada && form.elements.tractorId) {
-          const d = maqPorDefecto(v.tipo); form.elements.tractorId.value = d.tractorId; form.elements.aperoId.value = d.aperoId; v.tractorId = d.tractorId; v.aperoId = d.aperoId;
-        }
+        const ponMaq = d => { ['equipoId', 'tractorId', 'aperoId'].forEach(k => { if (form.elements[k] && d[k] !== undefined) { form.elements[k].value = d[k]; v[k] = d[k]; } }); };
+        if (origen === 'tractorId' || origen === 'aperoId' || origen === 'equipoId') maqTocada = true;
+        if (origen === 'equipoId' && equipo(v.equipoId)) { const e = equipo(v.equipoId); ponMaq({ tractorId: e.tractorId || '', aperoId: e.aperoId || '' }); }
+        if ((origen === 'tractorId' || origen === 'aperoId') && v.equipoId) { const e = equipo(v.equipoId); if (!e || (e.tractorId || '') !== v.tractorId || (e.aperoId || '') !== v.aperoId) ponMaq({ equipoId: '' }); }
+        if (origen === 'tipo' && !maqTocada && form.elements.tractorId) ponMaq(maqPorDefecto(v.tipo));
         if (origen === 'prodAlm' || (v.prodAlm && v.prodAlm !== ultimoProd)) {
           ultimoProd = v.prodAlm;
           const p = producto(v.prodAlm); const reg = regProducto(p);
@@ -2464,7 +2467,7 @@
     if (/\b(compra|compro|compre|comprado|compramos|hemos comprado|he comprado)\b/.test(t) && cantidadesDichas(t).length && !VERBOS.some(([, re]) => re.test(t))) return interpretarDocumento(t, R, 'albaran');
     if (/\bfactura/.test(t) && !/\b(sembr|sulfat|arad|labr)/.test(t)) return interpretarDocumento(t, R, 'factura');
     if (/\bsemilla|para sembrar\b/.test(t) && /\b(cosecha|propia|nuestra|guard|apart|reserv|dej)\w*/.test(t) && !/\b(he sembrado|sembre|acabo de sembrar)\b/.test(t)) return interpretarSemilla(t, R);
-    const mq = maquinasDichas(t); R.maquinas = mq.ms;
+    const mq = maquinasDichas(t); R.maquinas = mq.ms; R.equipo = mq.equipo || null;
     const tv = mq.t; // sin los nombres de las máquinas («la sulfatadora» no es «he sulfatado»)
     const verbo = VERBOS.map(([tipo, re]) => { const m = tv.match(re); return m ? { tipo, i: m.index } : null; }).filter(Boolean).sort((a, b) => a.i - b.i);
     if (verbo.length && verbo[0].tipo === 'Cosecha' && cantidadesDichas(tv).some(c => c.base === 'kg')) return interpretarCosecha(tv, R);
@@ -2544,14 +2547,15 @@
     const haM = t.match(/\b(\d+(?:\.\d+)?) (?:hectareas?|ha)\b/);
     const motivo = (t.match(/\bcontra (?:la |el |los |las )?([a-z ]{3,40}?)(?= a \d| con | en | por | y |$|\d)/) || [])[1] || '';
     const variedad = (t.match(/\bvariedad ([a-z0-9]+(?: [a-z0-9]+)?)/) || [])[1] || '';
-    const mqs = R.maquinas || []; const dm = maqPorDefecto(tipo);
+    const mqs = R.maquinas || []; const dm = R.equipo ? { equipoId: R.equipo.id, tractorId: R.equipo.tractorId || '', aperoId: R.equipo.aperoId || '' } : maqPorDefecto(tipo);
     const tractorV = (mqs.find(m => MOTRICES.includes(m.tipo)) || {}).id || dm.tractorId;
     const aperoV = (mqs.find(m => !MOTRICES.includes(m.tipo)) || {}).id || (mqs.length ? '' : dm.aperoId);
+    const equipoV = dm.equipoId && tractorV === dm.tractorId && aperoV === dm.aperoId ? dm.equipoId : '';
     const apero = !p && !mqs.length && !CON_DOSIS.includes(tipo) ? ((t.match(/\bcon (?:el |la |los |las )?([a-z]+(?: [a-z]+)?)/) || [])[1] || '') : '';
     R.labor = {
       fecha: R.fecha, tipo, fincas: fs.map(f => f.id), prodAlm: p ? p.id : '', producto: apero ? apero.charAt(0).toUpperCase() + apero.slice(1) : '',
       dosis, unidad: unidad || (tipo === 'Siembra' || tipo === 'Abonado' ? 'kg/ha' : 'L/ha'), motivo: motivo.trim(), superficie: fs.length === 1 && haM ? +haM[1] : null,
-      coste: dineroDicho(t), campana: db.campanaActiva, notas: '', tractorId: tractorV, aperoId: aperoV, aplicador: tipo === 'Tratamiento' ? aplicadorPorDefecto() : '', cultivoSiembra: tipo === 'Siembra' ? cultivo : '', variedadSiembra: variedad ? variedad.charAt(0).toUpperCase() + variedad.slice(1) : ''
+      coste: dineroDicho(t), campana: db.campanaActiva, notas: '', equipoId: equipoV, tractorId: tractorV, aperoId: aperoV, aplicador: tipo === 'Tratamiento' ? aplicadorPorDefecto() : '', cultivoSiembra: tipo === 'Siembra' ? cultivo : '', variedadSiembra: variedad ? variedad.charAt(0).toUpperCase() + variedad.slice(1) : ''
     };
     R.quitadas = quitadas; R.nombresFinca = nombres;
     if (tipo === 'Siembra' && !cultivo) R.dudas.push('No has dicho el cultivo: la siembra se apunta sin cambiar el cultivo de las parcelas.');
@@ -2714,7 +2718,7 @@
     let h = ''; let puedeGuardar = false; let abrir = '';
     if (R.intencion === 'labor') {
       const v = R.labor; const p = producto(v.prodAlm);
-      h += `<dl class="kv">${fila('Labor', esc(v.tipo))}${fila('Fecha', fmtFecha(v.fecha))}${fila('Fincas', listaParc(v.fincas, R.quitadas))}${v.cultivoSiembra ? fila('Cultivo', chip(v.cultivoSiembra) + (v.variedadSiembra ? ' ' + esc(v.variedadSiembra) : '') + ` <span class="small muted">en ${esc(v.campana)}</span>`) : ''}${fila('Producto', p ? esc(p.nombre) : esc(v.producto))}${fila('Dosis', v.dosis != null ? `${fmtN(v.dosis, 4)} ${esc(v.unidad)}` : '')}${fila('Contra', esc(v.motivo))}${fila('Maquinaria', esc([v.tractorId, v.aperoId].map(nombreMaq).filter(Boolean).join(' + ')))}${fila('Aplicador', esc(v.aplicador))}${fila('Coste', v.coste ? eur(v.coste, 2) : '')}</dl>`;
+      h += `<dl class="kv">${fila('Labor', esc(v.tipo))}${fila('Fecha', fmtFecha(v.fecha))}${fila('Fincas', listaParc(v.fincas, R.quitadas))}${v.cultivoSiembra ? fila('Cultivo', chip(v.cultivoSiembra) + (v.variedadSiembra ? ' ' + esc(v.variedadSiembra) : '') + ` <span class="small muted">en ${esc(v.campana)}</span>`) : ''}${fila('Producto', p ? esc(p.nombre) : esc(v.producto))}${fila('Dosis', v.dosis != null ? `${fmtN(v.dosis, 4)} ${esc(v.unidad)}` : '')}${fila('Contra', esc(v.motivo))}${fila('Maquinaria', (equipo(v.equipoId) ? `<b>${esc(equipo(v.equipoId).nombre)}</b>: ` : '') + esc([v.tractorId, v.aperoId].map(nombreMaq).filter(Boolean).join(' + ')))}${fila('Aplicador', esc(v.aplicador))}${fila('Coste', v.coste ? eur(v.coste, 2) : '')}</dl>`;
       if (p) h += `<div class="fito-info">${infoLaborHTML(Object.assign({}, v))}</div>`;
       puedeGuardar = v.fincas.length > 0 && !R.bloqueo && v.tipo !== 'Otro';
       abrir = 'labor';
@@ -2881,12 +2885,16 @@
   // La última que usaste en ese tipo de labor; si no, la única que haya de ese tipo
   function maqPorDefecto(tipo) {
     const u = (db.ultMaq || {})[tipo] || {};
+    const eqOk = id => { const e = equipo(id); return e && [e.tractorId, e.aperoId].filter(Boolean).every(x => { const m = maquina(x); return m && !m.baja; }) ? e : null; };
+    let e = u.equipoId ? eqOk(u.equipoId) : null;
+    if (!e && !u.tractorId && !u.aperoId) { const es = db.equipos.filter(x => x.labor === tipo && eqOk(x.id)); if (es.length === 1) e = es[0]; }
+    if (e) return { equipoId: e.id, tractorId: e.tractorId || '', aperoId: e.aperoId || '' };
     const ok = id => { const m = maquina(id); return m && !m.baja ? id : ''; };
     const unica = tipos => { const ms = db.maquinas.filter(m => !m.baja && tipos.includes(m.tipo)); return ms.length === 1 ? ms[0].id : ''; };
     let tractorId = ok(u.tractorId), aperoId = ok(u.aperoId);
     if (!tractorId && !u.tractorId) tractorId = unica(tipo === 'Cosecha' ? ['Cosechadora'] : ['Tractor']);
     if (!aperoId && !u.aperoId && APERO_DE[tipo]) aperoId = unica(APERO_DE[tipo]);
-    return { tractorId, aperoId };
+    return { equipoId: '', tractorId, aperoId };
   }
   const conCarne = () => titularesTodos().filter(t => { const f = fichaTitular(t); return f && f.ropo; });
   function aplicadorPorDefecto() {
@@ -2910,6 +2918,7 @@
   // Máquinas dichas por voz: nombre, marca, modelo o «la sulfatadora (de Tomás)» si no hay duda
   const SINON_MAQ = { Pulverizador: ['sulfatadora', 'pulverizador', 'atomizador', 'maquina de sulfatar'], Abonadora: ['abonadora'], Sembradora: ['sembradora'], Cosechadora: ['cosechadora'], Tractor: ['tractor'], Remolque: ['remolque'], Empacadora: ['empacadora', 'empacadora'], Cultivador: ['cultivador'], Grada: ['grada'], Arado: ['arado', 'vertedera'], 'Chísel': ['chisel'], Rodillo: ['rodillo'] };
   function candidatosMaquina() {
+    const eqs = []; db.equipos.forEach(e => { const n = normVoz(e.nombre); if (n.length >= 3) { eqs.push({ n, e }); const sin = n.replace(/^equipo (de |del )?/, ''); if (sin !== n && sin.length >= 4) eqs.push({ n: 'equipo de ' + sin, e }); } });
     const m = new Map(); const add = (n, x) => { n = normVoz(n); if (!n || n.length < 3) return; if (!m.has(n)) m.set(n, new Set()); m.get(n).add(x); };
     db.maquinas.filter(x => !x.baja).forEach(x => {
       add(x.nombre, x); add(x.nombre.replace(/^(el|la|los|las) /i, ''), x);
@@ -2917,18 +2926,92 @@
       if (x.modelo && /[a-z]/i.test(x.modelo) && /\d/.test(x.modelo)) add(x.modelo, x);
       (SINON_MAQ[x.tipo] || []).forEach(s => { add(s, x); if (x.titular) add(`${s} de ${x.titular}`, x); });
     });
-    return [...m.entries()].filter(([, set]) => set.size === 1).map(([n, set]) => ({ n, m: [...set][0] }));
+    return [...m.entries()].filter(([, set]) => set.size === 1).map(([n, set]) => ({ n, m: [...set][0] })).concat(eqs);
   }
   function maquinasDichas(t) {
     const cs = candidatosMaquina(); if (!cs.length) return { ms: [], t };
-    const hits = buscarNombres(t, cs, 0.86); const ms = [];
-    hits.forEach(h => { if (!ms.includes(h.c.m) && ms.length < 2) ms.push(h.c.m); });
+    const hits = buscarNombres(t, cs, 0.86); const ms = []; let eq = null;
+    hits.forEach(h => { if (h.c.e) { if (!eq) eq = h.c.e; return; } if (!ms.includes(h.c.m) && ms.length < 2) ms.push(h.c.m); });
     // dos máquinas del mismo tipo (tractor y tractor): solo la primera
     const out = ms.filter((x, i) => !ms.slice(0, i).some(y => MOTRICES.includes(y.tipo) === MOTRICES.includes(x.tipo)));
     let w = quitarTramos(t, hits).split(' ');
     // «el John Deere de Iván»: el «de Iván» es de la máquina, no de las fincas
     hits.forEach(h => { const e = h.i + h.k; if (w[e] === 'de' && w[e + 1] && candidatosTitular().some(c => parecido(c.n, w[e + 1]) > 0.85)) { w[e] = '_'; w[e + 1] = '_'; } });
-    return { ms: out, t: w.join(' ') };
+    return { ms: out, equipo: eq, t: w.join(' ') };
+  }
+
+
+  // ---------- Equipos de trabajo y coste de la maquinaria ----------
+  // Coste por hora de una máquina = (precio de compra − valor al venderla) / horas de amortización.
+  // Coste por hectárea de un equipo = (coste/hora del tractor + coste/hora del apero) / rendimiento (ha/h).
+  const equipo = id => (id && db.equipos.find(e => e.id === id)) || null;
+  const costeHoraMaq = m => m && +m.precioCompra > 0 && +m.horasVida > 0 ? Math.max(0, +m.precioCompra - (+m.valorResidual || 0)) / +m.horasVida : null;
+  function costeEquipo(e) {
+    const r = { porHora: 0, porHa: null, partes: [], faltan: [] };
+    [e.tractorId, e.aperoId].filter(Boolean).forEach(id => {
+      const m = maquina(id); if (!m) { r.faltan.push('una máquina que ya no está'); return; }
+      const c = costeHoraMaq(m);
+      if (c == null) r.faltan.push(`${m.nombre}: ${!(+m.precioCompra > 0) ? 'precio de compra' : 'horas de amortización'}`); else { r.porHora += c; r.partes.push([m.nombre, c]); }
+    });
+    if (+e.rendimiento > 0 && r.partes.length) r.porHa = r.porHora / +e.rendimiento;
+    return r;
+  }
+  // Labores hechas con cada equipo en la campaña: hectáreas, horas y coste
+  function usoEquipos(campana) {
+    const out = new Map(); db.equipos.forEach(e => out.set(e.id, { e, ha: 0, n: 0 }));
+    db.labores.forEach(l => {
+      const o = out.get(l.equipoId); if (!o || (campana && l.campana !== campana)) return;
+      o.ha += l.superficie > 0 ? +l.superficie : +((finca(l.fincaId) || {}).superficie) || 0; o.n++;
+    });
+    out.forEach(o => { const c = costeEquipo(o.e); o.horas = +o.e.rendimiento > 0 ? o.ha / +o.e.rendimiento : null; o.porHa = c.porHa; o.coste = c.porHa != null ? o.ha * c.porHa : null; o.faltan = c.faltan; });
+    return [...out.values()];
+  }
+  function bloqueEquipos() {
+    const us = usoEquipos(db.campanaActiva);
+    let h = `<div class="sec-row"><h2 class="sec">Equipos de trabajo</h2><button class="btn sm" data-act="nuevoEquipo">${ico.plus}Nuevo equipo</button></div>`;
+    if (!us.length) return h + '<p class="note" style="margin-top:4px">Junta un tractor con su apero (por ejemplo «Equipo de siembra»: tractor + sembradora) y pon cuántas hectáreas hace por hora. Con eso la app calcula el coste por hectárea de cada labor.</p>';
+    h += '<div class="list">' + us.map(o => {
+      const e = o.e; const maqs = [e.tractorId, e.aperoId].map(id => (maquina(id) || {}).nombre).filter(Boolean).join(' + ');
+      const sub = [e.labor, maqs, +e.rendimiento > 0 ? `${fmtN(e.rendimiento)} ha/h` : 'sin rendimiento'].filter(Boolean).join(' · ');
+      const uso = o.n ? `${fmtN(o.ha)} ha · ${o.horas != null ? fmtN(o.horas, 1) + ' h' : ''}${o.coste != null ? ' · ' + eur(o.coste) : ''}` : 'Sin usar esta campaña';
+      return `<button class="row" data-act="editEquipo" data-id="${e.id}"><div class="main"><div class="t">${esc(e.nombre)}</div><div class="s">${esc(sub)}</div><div class="s">${esc(uso)}</div>${o.faltan.length || !(+e.rendimiento > 0) ? '<span class="pill warn">Faltan datos para el coste</span>' : ''}</div><div class="end">${o.porHa != null ? `<b>${eur(o.porHa, 2)}</b><div class="small muted">por ha</div>` : ''}</div></button>`;
+    }).join('') + '</div>';
+    const conCoste = us.filter(o => o.coste != null && o.ha > 0);
+    if (conCoste.length) {
+      const tot = sum(conCoste, o => o.coste); const ha = sum(db.fincas, f => +f.superficie || 0);
+      h += `<div class="card pad small" style="margin-top:8px;display:flex;flex-direction:column;gap:2px"><b>Coste de maquinaria en ${esc(db.campanaActiva)} (amortización)</b><span><b>${eur(tot)}</b> en ${fmtN(sum(conCoste, o => o.ha))} ha trabajadas${ha ? ` · ${eur(tot / ha, 2)} por ha de la explotación (${fmtN(ha)} ha)` : ''}</span><span class="muted">Solo cuenta las labores apuntadas con un equipo. Más adelante se podrán sumar gasóleo y reparaciones.</span></div>`;
+    }
+    return h;
+  }
+  function formEquipo(id) {
+    const e = id ? equipo(id) : null;
+    const info = v => {
+      const c = costeEquipo(v); const r = parseNum(v.rendimiento);
+      const filas = c.partes.map(([n, x]) => `<span>${esc(n)}: ${eur(x, 2)} por hora</span>`).join('');
+      const pha = r > 0 && c.partes.length ? c.porHora / r : null;
+      return `<b>Coste de amortización</b>${filas}${c.faltan.length ? `<span class="neg">Falta en la ficha de la máquina: ${esc(c.faltan.join(', '))}</span>` : ''}${pha != null ? `<span>Total ${eur(c.porHora, 2)}/h ÷ ${fmtN(r)} ha/h = <b>${eur(pha, 2)} por hectárea</b></span>` : '<span class="muted">Pon el rendimiento para calcular el coste por hectárea.</span>'}`;
+    };
+    formulario({
+      titulo: e ? esc(e.nombre) : 'Nuevo equipo de trabajo',
+      valores: e ? Object.assign({}, e) : { labor: '' },
+      campos: [
+        { k: 'nombre', label: 'Nombre', req: 1, placeholder: 'Ej.: Equipo de siembra' },
+        { k: 'labor', label: 'Para la labor', type: 'select', opts: () => [['', '—'], ...TIPOS_LABOR.filter(t => t !== 'Otro').map(t => [t, t])], hint: 'Al apuntar esa labor, el equipo saldrá puesto.' },
+        { k: 'tractorId', label: 'Tractor', type: 'select', half: 1, opts: () => optsMaq(true, e && e.tractorId) },
+        { k: 'aperoId', label: 'Apero', type: 'select', half: 1, opts: () => optsMaq(false, e && e.aperoId) },
+        { k: 'rendimiento', label: 'Rendimiento medio (ha/hora)', type: 'num', req: 1, placeholder: 'Ej.: 3,5', hint: 'Las hectáreas que hace en una hora de trabajo, contando giros y cargas.' },
+        { k: 'notas', label: 'Notas', type: 'textarea' }
+      ],
+      extra: `<div class="card pad small" id="eqInfo" style="display:flex;flex-direction:column;gap:2px"></div>`,
+      alCambiar(v, form) { const box = form.querySelector('#eqInfo'); if (box) box.innerHTML = info(v); },
+      guardar(v) {
+        if (!v.tractorId && !v.aperoId) return 'Elige al menos el tractor o el apero';
+        if (!(v.rendimiento > 0)) return 'El rendimiento tiene que ser mayor que cero';
+        if (e) Object.assign(e, v); else db.equipos.push(Object.assign({ id: uid() }, v));
+      },
+      textoBorrar: 'Se borrará el equipo. Las labores ya apuntadas conservan sus máquinas.',
+      borrar: e && (() => { db.equipos = db.equipos.filter(x => x !== e); db.labores.forEach(l => { if (l.equipoId === e.id) l.equipoId = ''; }); })
+    });
   }
 
   // Cambiar el nombre de un titular lo cambia en todo lo suyo
@@ -2971,6 +3054,7 @@
     const tits = titularesTodos(); const tit = ui.exp.titular;
     let h = tits.length ? `<div class="carpetas" role="group" aria-label="Maquinaria de">${[['', 'Todos'], ...tits.map(t => [t, t])].map(([k, t]) => `<button data-act="expTitular" data-k="${esc(k)}" aria-pressed="${tit === k}">${k ? ico.carpeta : ''}${esc(t)}</button>`).join('')}</div>` : '';
     const ms = db.maquinas.filter(m => !tit || m.titular === tit);
+    if (!tit && db.maquinas.length) h += bloqueEquipos() + '<h2 class="sec" style="margin-top:18px">Máquinas</h2>';
     if (!ms.length) return h + vacio('Sin maquinaria', 'Da de alta los tractores y aperos de cada titular: matrícula, ROMA, ITV, inspección ITEAF y seguro. Más adelante servirá para calcular costes por hectárea, mantenimiento y gasóleo.', '<button class="btn primary" data-act="nuevaMaquina">Añadir máquina</button>');
     const alertas = ms.filter(m => !m.baja).flatMap(m => avisosMaquina(m).filter(([, iso, dd]) => ['vencido', 'pronto'].includes(estadoFecha(iso, dd))).map(([t, iso, dd]) => `${esc(m.nombre)}: ${t} ${estadoFecha(iso, dd) === 'vencido' ? vencidoDe(t) + ' el' : 'vence el'} ${fmtFecha(iso)}`));
     if (alertas.length) h += `<div class="banner"><p>${alertas.join('<br>')}</p></div>`;
@@ -2981,7 +3065,7 @@
       ${m.baja ? '' : `<div class="chips" style="margin-top:4px">${avisosMaquina(m).map(([t, iso, dd]) => iso ? pillFecha(t, iso, dd) : `<span class="pill muted">${t}: sin fecha</span>`).join('')}</div>`}</div>
       ${(() => { const tr = trabajoMaquina(m.id, db.campanaActiva); return tr.ha || m.contador ? `<div class="end small muted">${tr.ha ? `<b>${fmtN(tr.ha)} ha</b>` : ''}${tr.ha && m.contador ? '<br>' : ''}${m.contador ? fmtN(m.contador, 0) + ' h' : ''}</div>` : ''; })()}</button>`;
     const tipos = [...new Set(ms.map(m => m.tipo))].sort((a, b) => TIPOS_MAQ.indexOf(a) - TIPOS_MAQ.indexOf(b));
-    h += tipos.map(t => `<h2 class="sec">${esc(t)}</h2><div class="list">${ms.filter(m => m.tipo === t).sort(orden).map(fila).join('')}</div>`).join('');
+    h += tipos.map(t => `<h2 class="sec">${tit ? '' : '<span class="muted">· </span>'}${esc(t)}</h2><div class="list">${ms.filter(m => m.tipo === t).sort(orden).map(fila).join('')}</div>`).join('');
     return h + `<p class="note">Las hectáreas son las trabajadas en la campaña ${esc(db.campanaActiva)}. Cualquier máquina se puede usar en las fincas de cualquier titular: elígela al apuntar la labor.</p>`;
   }
 
@@ -3052,11 +3136,18 @@
         { k: 'seguroCompania', label: 'Seguro (compañía)', half: 1 },
         { k: 'seguroVence', label: 'Seguro vence el', type: 'date', half: 1 },
         { k: 'fechaCompra', label: 'Fecha de compra', type: 'date', half: 1 },
-        { k: 'precioCompra', label: 'Precio de compra (€)', type: 'num', miles: 1, half: 1, hint: 'Servirá para calcular su coste por hectárea.' },
+        { k: 'precioCompra', label: 'Precio de compra (€)', type: 'num', miles: 1, half: 1 },
+        { k: 'horasVida', label: 'Horas de amortización', type: 'num', miles: 1, half: 1, placeholder: 'Ej.: 12.000', hint: 'Horas de trabajo en las que la pagas.' },
+        { k: 'valorResidual', label: 'Valor al venderla (€)', type: 'num', miles: 1, half: 1, placeholder: '0', hint: 'Lo que esperas sacar al final. Vacío = 0.' },
         { k: 'baja', label: 'Estado', type: 'select', opts: () => [['no', 'En uso'], ['si', 'Vendida o de baja']] },
         { k: 'notas', label: 'Notas', type: 'textarea', placeholder: 'Taller, recambios, averías conocidas…' }
       ],
-      extra: m ? resumenTrabajoMaq(m) : '',
+      extra: '<div class="card pad small" id="maqCoste" hidden></div>' + (m ? resumenTrabajoMaq(m) : ''),
+      alCambiar(v, form) {
+        const box = form.querySelector('#maqCoste'); if (!box) return;
+        const c = costeHoraMaq({ precioCompra: parseNum(v.precioCompra, true), horasVida: parseNum(v.horasVida, true), valorResidual: parseNum(v.valorResidual, true) });
+        box.hidden = c == null; if (c != null) box.innerHTML = `Coste de amortización: <b>${eur(c, 2)} por hora</b>`;
+      },
       guardar(v) {
         if (v.anio && (v.anio < 1900 || v.anio > new Date().getFullYear() + 1)) return 'El año no parece correcto';
         const x = Object.assign({}, v, { baja: v.baja === 'si', matricula: String(v.matricula || '').toUpperCase().replace(/\s/g, '') });
@@ -3105,6 +3196,8 @@
     editAgricultor: b => formAgricultor(b.dataset.n),
     nuevaMaquina: () => formMaquina(null),
     editMaquina: b => formMaquina(b.dataset.id),
+    nuevoEquipo: () => formEquipo(null),
+    editEquipo: b => formEquipo(b.dataset.id),
     almTitular: b => { ui.alm.titular = b.dataset.k; render(); },
     nuevoDoc: b => formDocumento(b.dataset.k || 'albaran'),
     editDoc: b => formDocumento(null, b.dataset.id),
