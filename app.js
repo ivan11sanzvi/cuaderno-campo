@@ -2,7 +2,7 @@
 (function () {
   // ---------- Constantes ----------
   const KEY = 'cuadernoCampo.v1';
-  const VERSION = '1.8.0';
+  const VERSION = '1.9.0';
   const TIPOS_LABOR = ['Labrado', 'Siembra', 'Abonado', 'Tratamiento', 'Rodillo', 'Cosecha', 'Empacado', 'Otro'];
   const CON_DOSIS = ['Siembra', 'Abonado', 'Tratamiento'];
   const UNIDADES = ['kg/ha', 'L/ha', 'g/ha', 'cc/ha', 'kg', 'L'];
@@ -299,25 +299,59 @@
   }
 
   // Coste de la maquinaria propia en una labor (amortización del equipo × hectáreas). null = no se puede calcular
+  const haLabor = l => l.superficie > 0 ? +l.superficie : +((finca(l.fincaId) || {}).superficie) || 0;
   function costeMaqLabor(l) {
     const e = equipo(l.equipoId); if (!e) return null;
     const c = costeEquipo(e); if (c.porHa == null) return null;
-    const ha = l.superficie > 0 ? +l.superficie : +((finca(l.fincaId) || {}).superficie) || 0;
-    return Math.round(c.porHa * ha * 100) / 100;
+    return Math.round(c.porHa * haLabor(l) * 100) / 100;
   }
+  // ---------- Gasóleo ----------
+  // Litros = L/ha del equipo × hectáreas. Salen del almacén del dueño del tractor.
+  // Precio = el de los últimos albaranes que forman las existencias que había ese día (lo último que entró es lo que queda).
+  const esGasoleo = p => p && p.unidad === 'L' && (p.tipo === 'Combustible' || /gas[oó]le?o|gas-?oil/i.test(p.nombre));
+  function gasoleoAlm() {
+    const ps = db.productos.filter(esGasoleo); if (ps.length <= 1) return ps[0] || null;
+    const n = p => db.documentos.reduce((a, d) => a + (d.lineas || []).filter(x => x.productoId === p.id).length, 0);
+    return ps.sort((a, b) => n(b) - n(a))[0];
+  }
+  const litrosLabor = l => { const e = equipo(l.equipoId); return e && +e.gasoleo > 0 ? Math.round(+e.gasoleo * haLabor(l) * 100) / 100 : 0; };
+  const titularGasoleo = l => { const e = equipo(l.equipoId); const m = e && (maquina(e.tractorId) || maquina(e.aperoId)); return m ? m.titular || '' : titularDe(l.fincaId); };
+  let cacheGas = { k: '', m: new Map() };
+  function precioGasoleo(fecha) {
+    const g = gasoleoAlm(); if (!g) return null;
+    const k = `${db.ultimoCambio}|${db.labores.length}|${db.documentos.length}|${db.ajustes.length}|${db.equipos.length}|${g.id}`;
+    if (cacheGas.k !== k) cacheGas = { k, m: new Map() };
+    const f = fecha || hoyISO(); if (cacheGas.m.has(f)) return cacheGas.m.get(f);
+    const entradas = []; db.documentos.filter(d => d.tipo === 'albaran').forEach(d => (d.lineas || []).forEach(x => { const q = +x.cantidad || 0; const imp = +x.importe || (+x.precio ? +x.precio * q : 0); if (x.productoId === g.id && q > 0 && imp > 0) entradas.push({ fecha: d.fecha || '', q, imp }); }));
+    let r = null;
+    if (entradas.length) {
+      const antes = entradas.filter(x => x.fecha <= f).sort((a, b) => b.fecha.localeCompare(a.fecha));
+      if (!antes.length) r = sum(entradas, x => x.imp) / sum(entradas, x => x.q);
+      else {
+        const stock = sum(movimientosProducto(g.id, null).filter(m => (m.fecha || '') <= f), m => m.cant);
+        let q = 0, imp = 0;
+        for (const x of antes) { const tomar = stock > 0 ? Math.min(x.q, stock - q) : x.q; if (tomar <= 0) break; q += tomar; imp += x.imp / x.q * tomar; if (stock <= 0) break; }
+        r = q > 0 ? imp / q : sum(antes, x => x.imp) / sum(antes, x => x.q);
+      }
+    }
+    cacheGas.m.set(f, r); return r;
+  }
+  function costeGasLabor(l) { const q = litrosLabor(l); if (!q) return null; const p = precioGasoleo(l.fecha); return p == null ? null : Math.round(q * p * 100) / 100; }
   function statsFinca(fid, c) {
     const f = finca(fid); const ha = (f && f.superficie) || 0;
     const kg = sum(db.cosechas.filter(x => x.fincaId === fid && x.campana === c), x => x.kg);
     const movs = db.movimientos.filter(m => m.fincaId === fid && m.campana === c);
-    const maq = sum(db.labores.filter(l => l.fincaId === fid && l.campana === c && l.equipoId), l => costeMaqLabor(l) || 0);
+    const ls = db.labores.filter(l => l.fincaId === fid && l.campana === c && l.equipoId);
+    const amort = sum(ls, l => costeMaqLabor(l) || 0), gas = sum(ls, l => costeGasLabor(l) || 0), litros = sum(ls, litrosLabor);
+    const maq = amort + gas;
     const gastos = sum(movs.filter(m => m.tipo === 'gasto'), m => m.importe) + maq;
     const ingresos = sum(movs.filter(m => m.tipo === 'ingreso'), m => m.importe);
-    return { ha, kg, maq, kgHa: ha && kg ? kg / ha : null, gastos, ingresos, margen: ingresos - gastos, margenHa: ha && (gastos || ingresos) ? (ingresos - gastos) / ha : null };
+    return { ha, kg, maq, amort, gas, litros, kgHa: ha && kg ? kg / ha : null, gastos, ingresos, margen: ingresos - gastos, margenHa: ha && (gastos || ingresos) ? (ingresos - gastos) / ha : null };
   }
   function statsGrupo(fs, c) {
-    let ha = 0, haCos = 0, kg = 0, gastos = 0, ingresos = 0, maq = 0;
-    for (const f of fs) { const s = statsFinca(f.id, c); ha += s.ha; kg += s.kg; if (s.kg > 0) haCos += s.ha; gastos += s.gastos; ingresos += s.ingresos; maq += s.maq; }
-    return { ha, kg, maq, kgHa: haCos ? kg / haCos : null, gastos, ingresos, margen: ingresos - gastos, margenHa: ha && (gastos || ingresos) ? (ingresos - gastos) / ha : null };
+    let ha = 0, haCos = 0, kg = 0, gastos = 0, ingresos = 0, maq = 0, amort = 0, gas = 0, litros = 0;
+    for (const f of fs) { const s = statsFinca(f.id, c); ha += s.ha; kg += s.kg; if (s.kg > 0) haCos += s.ha; gastos += s.gastos; ingresos += s.ingresos; maq += s.maq; amort += s.amort; gas += s.gas; litros += s.litros; }
+    return { ha, kg, maq, amort, gas, litros, kgHa: haCos ? kg / haCos : null, gastos, ingresos, margen: ingresos - gastos, margenHa: ha && (gastos || ingresos) ? (ingresos - gastos) / ha : null };
   }
   function statsCampana(c) {
     const cult = {};
@@ -335,10 +369,12 @@
     const genI = sum(generales.filter(m => m.tipo === 'ingreso'), m => m.importe);
     const movs = db.movimientos.filter(m => m.campana === c);
     const ingresos = sum(movs.filter(m => m.tipo === 'ingreso'), m => m.importe);
-    const maq = sum(db.labores.filter(l => l.campana === c && l.equipoId && finca(l.fincaId)), l => costeMaqLabor(l) || 0);
+    const lsC = db.labores.filter(l => l.campana === c && l.equipoId && finca(l.fincaId));
+    const maq = sum(lsC, l => costeMaqLabor(l) || 0), gas = sum(lsC, l => costeGasLabor(l) || 0);
+    // el gasóleo ya está en los gastos con su factura: en las fincas solo se reparte, no se suma otra vez
     const gastos = sum(movs.filter(m => m.tipo === 'gasto'), m => m.importe) + maq;
     const haSemb = sum(lista.filter(o => o.cultivo !== 'Barbecho' && o.cultivo !== 'Sin cultivo'), o => o.ha);
-    return { lista, genG, genI, ingresos, gastos, maq, resultado: ingresos - gastos, kg: sum(lista, o => o.kg), haSemb };
+    return { lista, genG, genI, ingresos, gastos, maq, gas, resultado: ingresos - gastos, kg: sum(lista, o => o.kg), haSemb };
   }
 
   // ---------- Estado de la interfaz y navegación (botón atrás de Android) ----------
@@ -399,12 +435,12 @@
   function filaLabor(l, conFinca = true, n = [l]) {
     const maqs = equipo(l.equipoId) ? equipo(l.equipoId).nombre : [l.tractorId, l.aperoId].map(id => (maquina(id) || {}).nombre).filter(Boolean).join(' + ');
     const det = [l.producto, l.dosis != null ? `${fmtN(l.dosis)} ${l.unidad || ''}` : '', l.motivo, maqs].filter(Boolean).join(' · ');
-    const maqC = sum(n, x => costeMaqLabor(x) || 0);
+    const maqC = sum(n, x => (costeMaqLabor(x) || 0) + (costeGasLabor(x) || 0));
     const coste = sum(n, x => x.coste) + maqC;
     const aviso = n.some(x => x.avisos && x.avisos.length);
     return `<button class="row" data-act="editLabor" data-id="${l.id}">${fechaBox(l.fecha)}<div class="main"><div class="t">${esc(l.tipo)}${conFinca ? ' · ' + esc(nombreLote(n)) : ''}</div>${det ? `<div class="s">${esc(det)}</div>` : ''}${aviso ? '<span class="pill neg">⚠ Revisar normativa</span>' : ''}</div>${coste ? `<div class="end small muted">${eur(coste)}${maqC ? '<div class="small">con maquinaria</div>' : ''}</div>` : ''}</button>`;
   }
-  const notaMaq = st => st.maq ? `<p class="small muted" style="margin:0">Los gastos incluyen <b>${eur(st.maq)}</b> de maquinaria propia (amortización de los equipos).</p>` : '';
+  const notaMaq = st => st.maq ? `<p class="small muted" style="margin:0">Los gastos incluyen <b>${eur(st.maq)}</b> de maquinaria propia: ${[st.amort ? eur(st.amort) + ' de amortización' : '', st.gas ? `${eur(st.gas)} de gasóleo (${fmtN(st.litros, 0)} L)` : ''].filter(Boolean).join(' y ')}.</p>` : '';
   function filaMov(m, conFinca = true, n = [m]) {
     const sub = [m.categoria, conFinca ? (finca(m.fincaId) ? nombreLote(n) : 'General') : '', m.laborId ? 'desde el cuaderno' : ''].filter(Boolean).join(' · ');
     const imp = sum(n, x => x.importe); const v = m.tipo === 'gasto' ? -imp : imp;
@@ -579,6 +615,7 @@
     const movs = db.movimientos.filter(m => m.campana === c && (ui.filtroMov === 'todos' || m.tipo === ui.filtroMov)).sort(byFechaDesc);
     let h = `<div class="stats">${stat('Ingresos', eur(st.ingresos), 'pos')}${stat('Gastos', eur(st.gastos), 'neg')}${stat('Resultado', eur(st.resultado), signo(st.resultado))}</div>`;
     if (st.maq) h += `<p class="note" style="margin-top:-4px">Los gastos incluyen <b>${eur(st.maq)}</b> de amortización de la maquinaria propia, calculada con los equipos de trabajo. No es dinero que salga ahora, pero sí lo que cuesta hacer las labores.</p>`;
+    if (st.gas) h += `<p class="note" style="margin-top:-4px">En las fincas se reparten <b>${eur(st.gas)}</b> de gasóleo gastado por los equipos. Aquí no se suma otra vez: ya cuenta con la factura del gasóleo.</p>`;
     h += `<div class="segs" role="group" aria-label="Mostrar">${[['todos', 'Todo'], ['gasto', 'Gastos'], ['ingreso', 'Ingresos']].map(([k, t]) => `<button data-act="filtroMov" data-k="${k}" aria-pressed="${ui.filtroMov === k}">${t}</button>`).join('')}</div>`;
     const tipo = ui.filtroMov === 'ingreso' ? 'ingreso' : 'gasto';
     const porCat = {};
@@ -1194,7 +1231,15 @@
           const e = equipo(v.equipoId); const ce = e ? costeEquipo(e) : null;
           const fs = (v.fincas || []).map(finca).filter(Boolean); const sup = parseNum(v.superficie);
           const ha = fs.length === 1 && sup > 0 ? sup : sum(fs, f => +f.superficie || 0);
-          hEq.innerHTML = !e ? 'Con equipo, la app suma a la finca el coste de la maquinaria.' : ce.porHa == null ? `<span class="neg">Faltan datos para el coste: ${esc(ce.faltan.join(', ') || 'rendimiento')}.</span>` : `Maquinaria: ${eur(ce.porHa, 2)}/ha${ha ? ` × ${fmtN(ha)} ha = <b>${eur(ce.porHa * ha, 2)}</b>, se suma a los gastos de la finca` : ''}.`;
+          let txt = !e ? 'Con equipo, la app suma a la finca el coste de la maquinaria.' : ce.porHa == null ? `<span class="neg">Faltan datos para la amortización: ${esc(ce.faltan.join(', ') || 'rendimiento')}.</span>` : `Amortización: ${eur(ce.porHa, 2)}/ha${ha ? ` × ${fmtN(ha)} ha = <b>${eur(ce.porHa * ha, 2)}</b>` : ''}.`;
+          if (e && +e.gasoleo > 0 && ha) {
+            const q = +e.gasoleo * ha; const pr = precioGasoleo(v.fecha); const g = gasoleoAlm();
+            const t = titularGasoleo({ equipoId: e.id, fincaId: fs[0] && fs[0].id });
+            txt += `<br>Gasóleo: ${fmtN(e.gasoleo)} L/ha × ${fmtN(ha)} ha = <b>${fmtN(q, 0)} L</b>${pr != null ? ` × ${fmtN(pr, 3)} €/L = <b>${eur(q * pr, 2)}</b>` : ' <span class="neg">(sin precio: falta el albarán del gasóleo con su precio)</span>'}${g ? `, del almacén de ${esc(t || '—')}` : ''}.`;
+            if (g) { const ex = existencias(g.id, t) + (l ? sum(miembros.filter(x => titularGasoleo(x) === t), litrosLabor) : 0); if (ex < q) txt += ` <span class="neg">Solo le quedan ${fmtN(ex, 0)} L.</span>`; }
+          }
+          if (e) txt += '<br>Se suma a los gastos de la finca.';
+          hEq.innerHTML = txt;
         }
         if (origen === 'prodAlm' || (v.prodAlm && v.prodAlm !== ultimoProd)) {
           ultimoProd = v.prodAlm;
@@ -1920,7 +1965,7 @@
   const unidadDeFormulado = f => LIQUIDOS.test(f || '') ? 'L' : 'kg';
 
   // ---------- Almacén: productos, existencias por titular, albaranes y facturas ----------
-  const TIPOS_PROD = ['Fitosanitario', 'Abono', 'Semilla', 'Otro'];
+  const TIPOS_PROD = ['Fitosanitario', 'Abono', 'Semilla', 'Combustible', 'Otro'];
   const UNI_PROD = ['L', 'kg', 't', 'ud'];
   const TIPO_DE_LABOR = { Tratamiento: 'Fitosanitario', Abonado: 'Abono', Siembra: 'Semilla' };
   const producto = id => db.productos.find(p => p.id === id);
@@ -1931,6 +1976,8 @@
     db.documentos.filter(d => d.tipo === 'albaran' && (tit == null || d.titular === tit)).forEach(d => (d.lineas || []).forEach(l => { if (l.productoId === pid) out.push({ fecha: d.fecha, cant: +l.cantidad || 0, txt: `Albarán ${d.numero || ''} · ${d.proveedor || ''}`.trim(), titular: d.titular, doc: d.id }); }));
     db.labores.filter(l => l.consumo && l.consumo.productoId === pid && (tit == null || l.consumo.titular === tit)).forEach(l => out.push({ fecha: l.fecha, cant: -(+l.consumo.cantidad || 0), txt: `${l.tipo} · ${(finca(l.fincaId) || {}).nombre || ''}`, titular: l.consumo.titular, labor: l.id }));
     db.ajustes.filter(a => a.productoId === pid && (tit == null || a.titular === tit)).forEach(a => out.push({ fecha: a.fecha, cant: +a.cantidad || 0, txt: `Ajuste${a.motivo ? ' · ' + a.motivo : ''}`, titular: a.titular, ajuste: a.id }));
+    const g = gasoleoAlm();
+    if (g && g.id === pid) db.labores.forEach(l => { const q = litrosLabor(l); if (!q) return; const t = titularGasoleo(l); if (tit == null || t === tit) out.push({ fecha: l.fecha, cant: -q, txt: `Gasóleo · ${l.tipo} · ${(finca(l.fincaId) || {}).nombre || ''}`, titular: t, labor: l.id }); });
     return out.sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
   }
   const existencias = (pid, tit) => Math.round(sum(movimientosProducto(pid, tit), m => m.cant) * 1000) / 1000;
@@ -1940,6 +1987,7 @@
     db.documentos.filter(d => d.tipo === 'albaran' && (tit == null || d.titular === tit)).forEach(d => (d.lineas || []).forEach(l => ids.add(l.productoId)));
     db.labores.forEach(l => { if (l.consumo && (tit == null || l.consumo.titular === tit)) ids.add(l.consumo.productoId); });
     db.ajustes.forEach(a => { if (tit == null || a.titular === tit) ids.add(a.productoId); });
+    const g = gasoleoAlm(); if (g && db.labores.some(l => litrosLabor(l) && (tit == null || titularGasoleo(l) === tit))) ids.add(g.id);
     return [...ids].map(producto).filter(Boolean).sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
   }
   const totalDoc = d => Math.round(sum(d.lineas || [], l => l.importe) * 100) / 100;
@@ -2147,7 +2195,7 @@
           db.movimientos = db.movimientos.filter(m => m.docId !== x.id);
           if (el.querySelector('#dGasto').checked && (x.total || x.base)) {
             const tipos = (x.lineas.length ? x.lineas : db.documentos.filter(a => x.albaranes.includes(a.id)).flatMap(a => a.lineas)).map(l => (producto(l.productoId) || {}).tipo);
-            const cat = { Fitosanitario: 'Fitosanitarios', Abono: 'Abono', Semilla: 'Semilla' }[tipos.sort((a, b) => tipos.filter(t => t === b).length - tipos.filter(t => t === a).length)[0]] || 'Otros gastos';
+            const cat = { Fitosanitario: 'Fitosanitarios', Abono: 'Abono', Semilla: 'Semilla', Combustible: 'Gasóleo' }[tipos.sort((a, b) => tipos.filter(t => t === b).length - tipos.filter(t => t === a).length)[0]] || 'Otros gastos';
             db.movimientos.push({ id: uid(), docId: x.id, tipo: 'gasto', fecha: x.fecha, fincaId: '', campana: campanaDe(x.fecha || hoyISO()), categoria: cat, concepto: `Factura ${x.numero || ''} · ${x.proveedor || ''} (${x.titular})`.replace(/\s+/g, ' '), importe: x.total || x.base });
           }
         }
@@ -2674,7 +2722,7 @@
       if (r) return deRegistro(r);
     }
     const cu = db.cultivos.find(c => n.includes(norm(c)));
-    const tipo = /\b(urea|nitrato|abono|npk|nac|fosfato|potasa|sulfato|complejo)\b/.test(n) ? 'Abono' : (/\bsemilla|para sembrar\b/.test(n) || cu) ? 'Semilla' : 'Otro';
+    const tipo = /\b(gasoleo|gasoil|gas oil|combustible)\b/.test(n) ? 'Combustible' : /\b(urea|nitrato|abono|npk|nac|fosfato|potasa|sulfato|complejo)\b/.test(n) ? 'Abono' : (/\bsemilla|para sembrar\b/.test(n) || cu) ? 'Semilla' : 'Otro';
     const nombre = tipo === 'Semilla' && cu && !/sembrar|semilla/.test(n) ? `${cu} para sembrar` : l.nombre.replace(/^./, x => x.toUpperCase());
     return { nuevo: { nombre, tipo, unidad: l.base === 'L' || l.base === 'cc' ? 'L' : 'kg' } };
   }
@@ -2983,7 +3031,9 @@
       const o = out.get(l.equipoId); if (!o || (campana && l.campana !== campana)) return;
       o.ha += l.superficie > 0 ? +l.superficie : +((finca(l.fincaId) || {}).superficie) || 0; o.n++;
     });
-    out.forEach(o => { const c = costeEquipo(o.e); o.horas = +o.e.rendimiento > 0 ? o.ha / +o.e.rendimiento : null; o.porHa = c.porHa; o.coste = c.porHa != null ? o.ha * c.porHa : null; o.faltan = c.faltan; });
+    db.labores.forEach(l => { const o = out.get(l.equipoId); if (!o || (campana && l.campana !== campana)) return; o.litros = (o.litros || 0) + litrosLabor(l); o.gas = (o.gas || 0) + (costeGasLabor(l) || 0); });
+    const pr = precioGasoleo(hoyISO());
+    out.forEach(o => { const c = costeEquipo(o.e); o.horas = +o.e.rendimiento > 0 ? o.ha / +o.e.rendimiento : null; o.gasHa = +o.e.gasoleo > 0 && pr != null ? +o.e.gasoleo * pr : 0; o.porHa = c.porHa != null ? c.porHa + o.gasHa : null; o.coste = c.porHa != null ? o.ha * c.porHa + (o.gas || 0) : null; o.faltan = c.faltan; });
     return [...out.values()];
   }
   function bloqueEquipos() {
@@ -2992,14 +3042,14 @@
     if (!us.length) return h + '<p class="note" style="margin-top:4px">Junta un tractor con su apero (por ejemplo «Equipo de siembra»: tractor + sembradora) y pon cuántas hectáreas hace por hora. Con eso la app calcula el coste por hectárea de cada labor.</p>';
     h += '<div class="list">' + us.map(o => {
       const e = o.e; const maqs = [e.tractorId, e.aperoId].map(id => (maquina(id) || {}).nombre).filter(Boolean).join(' + ');
-      const sub = [e.labor, maqs, +e.rendimiento > 0 ? `${fmtN(e.rendimiento)} ha/h` : 'sin rendimiento'].filter(Boolean).join(' · ');
-      const uso = o.n ? `${fmtN(o.ha)} ha · ${o.horas != null ? fmtN(o.horas, 1) + ' h' : ''}${o.coste != null ? ' · ' + eur(o.coste) : ''}` : 'Sin usar esta campaña';
+      const sub = [e.labor, maqs, +e.rendimiento > 0 ? `${fmtN(e.rendimiento)} ha/h` : 'sin rendimiento', +e.gasoleo > 0 ? `${fmtN(e.gasoleo)} L/ha` : ''].filter(Boolean).join(' · ');
+      const uso = o.n ? [`${fmtN(o.ha)} ha`, o.horas != null ? fmtN(o.horas, 1) + ' h' : '', o.litros ? fmtN(o.litros, 0) + ' L' : '', o.coste != null ? eur(o.coste) : ''].filter(Boolean).join(' · ') : 'Sin usar esta campaña';
       return `<button class="row" data-act="editEquipo" data-id="${e.id}"><div class="main"><div class="t">${esc(e.nombre)}</div><div class="s">${esc(sub)}</div><div class="s">${esc(uso)}</div>${o.faltan.length || !(+e.rendimiento > 0) ? '<span class="pill warn">Faltan datos para el coste</span>' : ''}</div><div class="end">${o.porHa != null ? `<b>${eur(o.porHa, 2)}</b><div class="small muted">por ha</div>` : ''}</div></button>`;
     }).join('') + '</div>';
     const conCoste = us.filter(o => o.coste != null && o.ha > 0);
     if (conCoste.length) {
       const tot = sum(conCoste, o => o.coste); const ha = sum(db.fincas, f => +f.superficie || 0);
-      h += `<div class="card pad small" style="margin-top:8px;display:flex;flex-direction:column;gap:2px"><b>Coste de maquinaria en ${esc(db.campanaActiva)} (amortización)</b><span><b>${eur(tot)}</b> en ${fmtN(sum(conCoste, o => o.ha))} ha trabajadas${ha ? ` · ${eur(tot / ha, 2)} por ha de la explotación (${fmtN(ha)} ha)` : ''}</span><span class="muted">Solo cuenta las labores apuntadas con un equipo. Más adelante se podrán sumar gasóleo y reparaciones.</span></div>`;
+      h += `<div class="card pad small" style="margin-top:8px;display:flex;flex-direction:column;gap:2px"><b>Coste de maquinaria en ${esc(db.campanaActiva)} (amortización y gasóleo)</b><span><b>${eur(tot)}</b> en ${fmtN(sum(conCoste, o => o.ha))} ha trabajadas${ha ? ` · ${eur(tot / ha, 2)} por ha de la explotación (${fmtN(ha)} ha)` : ''}</span><span class="muted">Solo cuenta las labores apuntadas con un equipo. El gasóleo sale al precio de los albaranes del almacén.</span></div>`;
     }
     return h;
   }
@@ -3009,7 +3059,10 @@
       const c = costeEquipo(v); const r = parseNum(v.rendimiento);
       const filas = c.partes.map(([n, x]) => `<span>${esc(n)}: ${eur(x, 2)} por hora</span>`).join('');
       const pha = r > 0 && c.partes.length ? c.porHora / r : null;
-      return `<b>Coste de amortización</b>${filas}${c.faltan.length ? `<span class="neg">Falta en la ficha de la máquina: ${esc(c.faltan.join(', '))}</span>` : ''}${pha != null ? `<span>Total ${eur(c.porHora, 2)}/h ÷ ${fmtN(r)} ha/h = <b>${eur(pha, 2)} por hectárea</b></span>` : '<span class="muted">Pon el rendimiento para calcular el coste por hectárea.</span>'}`;
+      const gl = parseNum(v.gasoleo); const pr = precioGasoleo(hoyISO());
+      const gas = gl > 0 ? (pr != null ? `<span>Gasóleo: ${fmtN(gl)} L/ha × ${fmtN(pr, 3)} €/L = <b>${eur(gl * pr, 2)} por hectárea</b></span>` : `<span class="neg">Gasóleo: sin precio. Mete en el almacén un albarán de gasóleo con su precio.</span>`) : '';
+      const tot = pha != null && gl > 0 && pr != null ? `<span><b>Total: ${eur(pha + gl * pr, 2)} por hectárea</b></span>` : '';
+      return `<b>Coste de amortización</b>${filas}${c.faltan.length ? `<span class="neg">Falta en la ficha de la máquina: ${esc(c.faltan.join(', '))}</span>` : ''}${pha != null ? `<span>Total ${eur(c.porHora, 2)}/h ÷ ${fmtN(r)} ha/h = <b>${eur(pha, 2)} por hectárea</b></span>` : '<span class="muted">Pon el rendimiento para calcular el coste por hectárea.</span>'}${gas}${tot}`;
     };
     formulario({
       titulo: e ? esc(e.nombre) : 'Nuevo equipo de trabajo',
@@ -3019,7 +3072,8 @@
         { k: 'labor', label: 'Para la labor', type: 'select', opts: () => [['', '—'], ...TIPOS_LABOR.filter(t => t !== 'Otro').map(t => [t, t])], hint: 'Al apuntar esa labor, el equipo saldrá puesto.' },
         { k: 'tractorId', label: 'Tractor', type: 'select', half: 1, opts: () => optsMaq(true, e && e.tractorId) },
         { k: 'aperoId', label: 'Apero', type: 'select', half: 1, opts: () => optsMaq(false, e && e.aperoId) },
-        { k: 'rendimiento', label: 'Rendimiento medio (ha/hora)', type: 'num', req: 1, placeholder: 'Ej.: 3,5', hint: 'Las hectáreas que hace en una hora de trabajo, contando giros y cargas.' },
+        { k: 'rendimiento', label: 'Rendimiento medio (ha/hora)', type: 'num', req: 1, half: 1, placeholder: 'Ej.: 3,5', hint: 'Hectáreas en una hora, contando giros y cargas.' },
+        { k: 'gasoleo', label: 'Gasóleo (L/ha)', type: 'num', half: 1, placeholder: 'Ej.: 6', hint: 'Litros que gasta por hectárea.' },
         { k: 'notas', label: 'Notas', type: 'textarea' }
       ],
       extra: `<div class="card pad small" id="eqInfo" style="display:flex;flex-direction:column;gap:2px"></div>`,
