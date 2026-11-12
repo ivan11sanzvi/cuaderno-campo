@@ -42,6 +42,9 @@ Habla con el usuario en español, con lenguaje sencillo y sin tecnicismos: es ag
 - Cambiar el nombre en la ficha lo cambia en todo (`renombrarTitular`). El NIF se valida (DNI, NIE o CIF, `nifValido`). El carné de aplicador avisa 90 días antes de caducar.
 - `db.maquinas` guarda las máquinas: `{titular, tipo, nombre, marca, modelo, matricula, roma, anio, potencia, anchura, deposito, contador, itv, iteaf, seguroCompania, seguroVence, fechaCompra, precioCompra, baja, notas}`. Avisa de ITV (tractor, cosechadora, remolque, vehículo), ITEAF (pulverizador, abonadora) y seguro. Pensado para calcular más adelante costes por hectárea, mantenimiento y gasóleo.
 - Son datos personales: solo en el móvil y en las copias de seguridad, **nunca** en el repositorio.
+- Las labores guardan `tractorId` (tractor, cosechadora o vehículo), `aperoId` y, en tratamientos, `aplicador` (titular). Las cosechas guardan `maquinaId` (cosechadora). Cualquier máquina vale en cualquier finca: se guarda la máquina real que se usó (de quien sea).
+- `maqPorDefecto(tipo)` propone la última usada en ese tipo de labor (`db.ultMaq`) o la única de ese tipo; `db.ultAplicador` el último aplicador. `trabajoMaquina(id, campaña)` da hectáreas por labor y por dueño de la tierra.
+- Voz: `maquinasDichas` reconoce nombre, marca, modelo o «la sulfatadora (de Tomás)» si no hay duda, y los quita de la frase antes de buscar la labor.
 
 ## Fitosanitarios y normativa
 - `fitos.json` se genera con `herramientas/actualizar_fitos.py`. Lee el Registro del MAPA (`servicio.mapa.gob.es/regfiweb`): la lista de productos de cada cultivo y la tabla «Usos y Dosis Autorizados» de cada ficha PDF.
