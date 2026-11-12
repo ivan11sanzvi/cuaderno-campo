@@ -45,7 +45,7 @@ Habla con el usuario en español, con lenguaje sencillo y sin tecnicismos: es ag
 - Las labores guardan `tractorId` (tractor, cosechadora o vehículo), `aperoId` y, en tratamientos, `aplicador` (titular). Las cosechas guardan `maquinaId` (cosechadora). Cualquier máquina vale en cualquier finca: se guarda la máquina real que se usó (de quien sea).
 - `maqPorDefecto(tipo)` propone la última usada en ese tipo de labor (`db.ultMaq`) o la única de ese tipo; `db.ultAplicador` el último aplicador. `trabajoMaquina(id, campaña)` da hectáreas por labor y por dueño de la tierra.
 - `db.equipos`: equipos de trabajo `{nombre, labor, tractorId, aperoId, rendimiento (ha/h)}`. Salen en Maquinaria → Todos. La labor guarda `equipoId` y al elegir el tipo de labor se propone el equipo de esa labor.
-- Coste de amortización: `costeHoraMaq` = (precioCompra − valorResidual) / horasVida; `costeEquipo` = suma €/h ÷ rendimiento = €/ha; `usoEquipos(campaña)` da ha, horas y € por equipo. Solo cuentan las labores con equipo; no se apunta como gasto en Cuentas.
+- Coste de amortización: `costeHoraMaq` = (precioCompra − valorResidual) / horasVida; `costeEquipo` = suma €/h ÷ rendimiento = €/ha; `usoEquipos(campaña)` da ha, horas y € por equipo. Solo cuentan las labores con equipo. `costeMaqLabor(l)` se calcula al vuelo (no se guarda) y se suma a los gastos de la finca en `statsFinca`/`statsGrupo`/`statsCampana` (campo `maq`), al margen por hectárea y a Cuentas como «Maquinaria propia (amortización)», sin crear movimientos.
 - Voz: `maquinasDichas` reconoce nombre, marca, modelo o «la sulfatadora (de Tomás)» si no hay duda, y los quita de la frase antes de buscar la labor.
 
 ## Fitosanitarios y normativa
