@@ -2,7 +2,7 @@
 (function () {
   // ---------- Constantes ----------
   const KEY = 'cuadernoCampo.v1';
-  const VERSION = '1.3.0';
+  const VERSION = '1.4.0';
   const TIPOS_LABOR = ['Labrado', 'Siembra', 'Abonado', 'Tratamiento', 'Rodillo', 'Cosecha', 'Empacado', 'Otro'];
   const CON_DOSIS = ['Siembra', 'Abonado', 'Tratamiento'];
   const UNIDADES = ['kg/ha', 'L/ha', 'g/ha', 'cc/ha', 'kg', 'L'];
@@ -336,7 +336,16 @@
   const ui = { tab: 'fincas', fincaId: null, grupo: null, buscar: '', titular: '', abiertos: new Set(), filtroLabor: { finca: '', tipo: '' }, filtroMov: 'todos', alm: { vista: 'inventario', titular: '' }, resumenVista: 'campana', vistaFincas: 'lista', enfocar: null, enfocarGrupo: null, mapaAjustado: false };
   const capas = [];
   const profundidad = () => capas.length + (ui.grupo ? 1 : 0) + (ui.fincaId ? 1 : 0);
-  function empujar() { try { history.pushState({ d: profundidad() }, ''); } catch (e) { /* ignorar */ } }
+  // Si hay un «atrás» en curso (history.go es asíncrono), las ventanas nuevas esperan a que termine;
+  // si no, el historial se descuadra y al cerrar se saldría de la app.
+  let ignorarPop = 0;
+  const pendientes = []; let relojPend = null;
+  function soltarPendientes() { clearTimeout(relojPend); relojPend = null; ignorarPop = 0; pendientes.splice(0).forEach(d => { try { history.pushState({ d }, ''); } catch (e) { /* ignorar */ } }); }
+  function empujar() {
+    const d = profundidad();
+    if (ignorarPop > 0) { pendientes.push(d); clearTimeout(relojPend); relojPend = setTimeout(soltarPendientes, 600); return; }
+    try { history.pushState({ d }, ''); } catch (e) { /* ignorar */ }
+  }
   function deshacerHasta(d) {
     while (profundidad() > d) {
       if (capas.length) { const c = capas.pop(); c.el.remove(); }
@@ -345,14 +354,13 @@
     }
   }
   // Cerrar desde la app: se cierra al momento y se ignora el popstate que provoca history.go.
-  let ignorarPop = 0;
   function volverA(d) {
     const n = profundidad() - d; if (n <= 0) return;
     deshacerHasta(d);
     try { ignorarPop++; history.go(-n); } catch (e) { ignorarPop = 0; }
   }
   window.addEventListener('popstate', e => {
-    if (ignorarPop > 0) { ignorarPop--; return; }
+    if (ignorarPop > 0) { ignorarPop--; if (!ignorarPop && pendientes.length) soltarPendientes(); return; }
     deshacerHasta((e.state && e.state.d) || 0); // botón atrás del teléfono
   });
   try { history.replaceState({ d: 0 }, ''); } catch (e) { /* ignorar */ }
@@ -365,6 +373,7 @@
     carpeta: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M3 6h6l2 2h10v11H3z"/></svg>',
     camara: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M4 7h3l2-3h6l2 3h3v12H4z"/><circle cx="12" cy="13" r="3.5"/></svg>',
     clip: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 11l-8 8a5 5 0 0 1-7-7l8-8a3.5 3.5 0 0 1 5 5l-8 8a2 2 0 0 1-3-3l7-7"/></svg>',
+    mic: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg>',
     chev: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>',
     edit: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/></svg>'
   };
@@ -1075,6 +1084,43 @@
     return h;
   }
 
+  // Guarda una labor (una por parcela; con varias comparten «lote»). La usan el formulario y el asistente de voz.
+  function registrarLabor(v, ctx = {}) {
+    const l = ctx.l || null, miembros = ctx.miembros || [], propio = ctx.propio || {};
+    const fs = v.fincas.map(finca).filter(Boolean);
+    const p = producto(v.prodAlm);
+    const r = p ? revisarLabor(Object.assign({}, v, { _propio: propio })) : null;
+    const ids = new Set(miembros.map(x => x.id));
+    db.labores = db.labores.filter(x => !ids.has(x.id));
+    db.movimientos = db.movimientos.filter(m => !ids.has(m.laborId));
+    const lote = fs.length > 1 ? (l && l.lote) || uid() : null;
+    const costes = repartir(v.coste, fs);
+    fs.forEach((f, i) => {
+      const x = Object.assign({}, v, { id: i === 0 && l ? l.id : uid(), fincaId: f.id, coste: costes[i], superficie: fs.length > 1 ? null : v.superficie });
+      delete x.fincas; delete x.prodAlm; delete x._propio; delete x.cultivoSiembra; delete x.variedadSiembra; if (lote) x.lote = lote; else delete x.lote;
+      delete x.consumo; delete x.avisos; delete x.productoId;
+      if (p) {
+        x.productoId = p.id; x.producto = p.nombre; if (p.registro) x.registro = p.registro;
+        const q = gastoEnParcela(p, f, v, fs);
+        if (q != null) x.consumo = { productoId: p.id, cantidad: Math.round(q * 1000) / 1000, unidad: p.unidad, titular: titularDe(f.id) };
+        const cu = cultivoDe(f.id, x.campana) || '';
+        const pc = r && r.porCultivo.find(z => z.cu === cu);
+        const av = [...(pc ? pc.r.graves : []), ...(r ? r.graves.filter(g => / solo tiene /.test(g) && g.startsWith(titularDe(f.id) || 'El titular')) : [])];
+        if (av.length) x.avisos = av;
+  }
+      db.labores.push(x);
+      if (x.coste > 0) db.movimientos.push({ id: uid(), laborId: x.id, tipo: 'gasto', fecha: x.fecha, fincaId: x.fincaId, campana: x.campana, categoria: CAT_LABOR[x.tipo] || 'Servicios contratados', concepto: x.tipo + (x.producto ? ' · ' + x.producto : ''), importe: x.coste, lote: lote || undefined });
+      if (x.tipo === 'Siembra' && v.cultivoSiembra) {
+        db.siembras = db.siembras.filter(s => !(s.fincaId === x.fincaId && s.campana === x.campana));
+        db.siembras.push({ id: uid(), fincaId: x.fincaId, campana: x.campana, cultivo: v.cultivoSiembra, variedad: v.variedadSiembra || '' });
+      } else if (x.tipo === 'Siembra' && !siembraDe(x.fincaId, x.campana)) {
+        const cu = db.cultivos.find(c => (x.producto || '').toLowerCase().includes(c.toLowerCase()));
+        if (cu) db.siembras.push({ id: uid(), fincaId: x.fincaId, campana: x.campana, cultivo: cu, variedad: '' });
+  }
+    });
+      
+  }
+
   function formLabor(id, pre = {}) {
     const l = id ? db.labores.find(x => x.id === id) : null;
     if (!db.fincas.length) { toast('Primero añade una finca'); return; }
@@ -1087,7 +1133,8 @@
     const propio = {}; miembros.forEach(x => { if (x.consumo) propio[x.consumo.titular] = (propio[x.consumo.titular] || 0) + (+x.consumo.cantidad || 0); });
     const ini = l
       ? Object.assign({}, l, { fincas: miembros.map(x => x.fincaId), prodAlm: l.productoId || '', coste: miembros.some(x => x.coste) ? Math.round(sum(miembros, x => x.coste) * 100) / 100 : null })
-      : { fecha: hoyISO(), tipo: 'Labrado', fincas: idsIniciales(pre), unidad: 'kg/ha', campana: db.campanaActiva, prodAlm: '' };
+      : Object.assign({ fecha: hoyISO(), tipo: 'Labrado', fincas: idsIniciales(pre), unidad: 'kg/ha', campana: db.campanaActiva, prodAlm: '' }, pre.valores || {});
+    if (l && l.tipo === 'Siembra') { const s = siembraDe(l.fincaId, l.campana); if (s) { ini.cultivoSiembra = s.cultivo; ini.variedadSiembra = s.variedad || ''; } }
     let ultimoProd = ini.prodAlm;
     cargarFitos().then(d => { FITOS = d; if (refrescarInfo) refrescarInfo(); }).catch(() => {});
     let refrescarInfo = null;
@@ -1100,6 +1147,8 @@
         { k: 'fincas', label: 'Fincas', type: 'fincas', req: 1, hint: 'Marca una o varias. Al marcar una finca agrupada se marcan todas sus parcelas.' },
         { k: 'prodAlm', label: 'Producto del almacén', sinOpcional: 1, type: 'select', dyn: 1, opts: v => opcionesAlmacen(v, l && l.productoId), show: v => !!TIPO_DE_LABOR[v.tipo] && !(viejo && !v.prodAlm && v.tipo === 'Tratamiento' && l.producto) },
         { k: 'producto', label: 'Producto, variedad o apero', placeholder: 'Ej.: cultivador, vertedera', show: v => !(TIPO_DE_LABOR[v.tipo] && v.prodAlm) && (v.tipo !== 'Tratamiento' || viejo) },
+        { k: 'cultivoSiembra', label: 'Cultivo sembrado', type: 'select', half: 1, opts: () => [['', 'No cambiar'], ...db.cultivos.map(c => [c, c])], show: v => v.tipo === 'Siembra', hint: 'Se asigna a las parcelas en la campaña.' },
+        { k: 'variedadSiembra', label: 'Variedad', half: 1, placeholder: 'Ej.: Marcopolo', show: v => v.tipo === 'Siembra' },
         { k: 'dosis', label: 'Dosis', type: 'num', half: 1, show: conDosis },
         { k: 'unidad', label: 'Unidad', type: 'select', half: 1, opts: () => UNIDADES.map(u => [u, u]), show: conDosis },
         { k: 'registro', label: 'Nº de registro', half: 1, show: v => trat(v) && !v.prodAlm, placeholder: 'Registro del producto' },
@@ -1129,36 +1178,7 @@
         if (!r.graves.length) return Promise.resolve(true);
         return confirmar('⚠ Revisa antes de guardar', `<ul class="avisos-lista">${r.graves.map(g => `<li>${esc(g)}</li>`).join('')}</ul>Si lo guardas, la labor quedará marcada para revisar en el cuaderno.`, 'Guardar igualmente').then(x => x.ok);
       },
-      guardar(v) {
-        const fs = v.fincas.map(finca).filter(Boolean);
-        const p = producto(v.prodAlm);
-        const r = p ? revisarLabor(Object.assign({}, v, { _propio: propio })) : null;
-        const ids = new Set(miembros.map(x => x.id));
-        db.labores = db.labores.filter(x => !ids.has(x.id));
-        db.movimientos = db.movimientos.filter(m => !ids.has(m.laborId));
-        const lote = fs.length > 1 ? (l && l.lote) || uid() : null;
-        const costes = repartir(v.coste, fs);
-        fs.forEach((f, i) => {
-          const x = Object.assign({}, v, { id: i === 0 && l ? l.id : uid(), fincaId: f.id, coste: costes[i], superficie: fs.length > 1 ? null : v.superficie });
-          delete x.fincas; delete x.prodAlm; delete x._propio; if (lote) x.lote = lote; else delete x.lote;
-          delete x.consumo; delete x.avisos; delete x.productoId;
-          if (p) {
-            x.productoId = p.id; x.producto = p.nombre; if (p.registro) x.registro = p.registro;
-            const q = gastoEnParcela(p, f, v, fs);
-            if (q != null) x.consumo = { productoId: p.id, cantidad: Math.round(q * 1000) / 1000, unidad: p.unidad, titular: titularDe(f.id) };
-            const cu = cultivoDe(f.id, x.campana) || '';
-            const pc = r && r.porCultivo.find(z => z.cu === cu);
-            const av = [...(pc ? pc.r.graves : []), ...(r ? r.graves.filter(g => / solo tiene /.test(g) && g.startsWith(titularDe(f.id) || 'El titular')) : [])];
-            if (av.length) x.avisos = av;
-          }
-          db.labores.push(x);
-          if (x.coste > 0) db.movimientos.push({ id: uid(), laborId: x.id, tipo: 'gasto', fecha: x.fecha, fincaId: x.fincaId, campana: x.campana, categoria: CAT_LABOR[x.tipo] || 'Servicios contratados', concepto: x.tipo + (x.producto ? ' · ' + x.producto : ''), importe: x.coste, lote: lote || undefined });
-          if (x.tipo === 'Siembra' && !siembraDe(x.fincaId, x.campana)) {
-            const cu = db.cultivos.find(c => (x.producto || '').toLowerCase().includes(c.toLowerCase()));
-            if (cu) db.siembras.push({ id: uid(), fincaId: x.fincaId, campana: x.campana, cultivo: cu, variedad: '' });
-          }
-        });
-      },
+      guardar(v) { registrarLabor(v, { l, miembros, propio }); },
       textoBorrar: miembros.length > 1 ? `Se borrará esta labor en las ${miembros.length} parcelas y, si tenía coste, también sus gastos. Lo gastado del almacén vuelve al inventario.` : 'Se borrará la labor y, si tenía coste, también su gasto. Lo gastado del almacén vuelve al inventario.',
       borrar: l && (() => { const ids = new Set(miembros.map(x => x.id)); db.labores = db.labores.filter(x => !ids.has(x.id)); db.movimientos = db.movimientos.filter(m => !ids.has(m.laborId)); })
     });
@@ -1171,6 +1191,16 @@
     }
   }
 
+  function registrarMov(v, ctx = {}) {
+    const m = ctx.m || null, miembros = ctx.miembros || [];
+    const fs = (v.fincas || []).map(finca).filter(Boolean);
+    db.movimientos = db.movimientos.filter(x => !miembros.includes(x));
+    const base = Object.assign({}, v); delete base.fincas;
+    if (!fs.length) { db.movimientos.push(Object.assign({ id: m ? m.id : uid() }, base, { fincaId: '' })); return; }
+    const lote = fs.length > 1 ? (m && m.lote) || uid() : null;
+    const imp = repartir(v.importe, fs), kg = v.kilos ? repartir(v.kilos, fs) : fs.map(() => null);
+    fs.forEach((f, i) => { const x = Object.assign({ id: i === 0 && m ? m.id : uid() }, base, { fincaId: f.id, importe: imp[i], kilos: kg[i] }); if (lote) x.lote = lote; db.movimientos.push(x); });
+  }
   function formMov(id, pre = {}) {
     const m = id ? db.movimientos.find(x => x.id === id) : null;
     if (m && m.laborId && db.labores.some(l => l.id === m.laborId)) { formLabor(m.laborId); return; }
@@ -1179,7 +1209,7 @@
     const venta = v => v.categoria === 'Venta de grano' || v.categoria === 'Venta de paja';
     const ini = m
       ? Object.assign({}, m, { fincas: miembros.map(x => x.fincaId).filter(id2 => finca(id2)), importe: Math.round(sum(miembros, x => x.importe) * 100) / 100, kilos: miembros.some(x => x.kilos) ? sum(miembros, x => x.kilos) : null })
-      : { tipo, fecha: hoyISO(), categoria: CAT[tipo][0], fincas: pre.grupo || pre.finca ? idsIniciales(pre) : [], campana: db.campanaActiva };
+      : Object.assign({ tipo, fecha: hoyISO(), categoria: CAT[tipo][0], fincas: pre.grupo || pre.finca ? idsIniciales(pre) : [], campana: db.campanaActiva }, pre.valores || {});
     formulario({
       titulo: m ? (miembros.length > 1 ? `Editar apunte (${miembros.length} parcelas)` : 'Editar apunte') : (tipo === 'ingreso' ? 'Nuevo ingreso' : 'Nuevo gasto'),
       valores: ini,
@@ -1202,25 +1232,28 @@
       },
       guardar(v) {
         if (v.importe <= 0) return 'El importe tiene que ser mayor que cero';
-        const fs = v.fincas.map(finca).filter(Boolean);
-        db.movimientos = db.movimientos.filter(x => !miembros.includes(x));
-        const base = Object.assign({}, v); delete base.fincas;
-        if (!fs.length) { db.movimientos.push(Object.assign({ id: m ? m.id : uid() }, base, { fincaId: '' })); return; }
-        const lote = fs.length > 1 ? (m && m.lote) || uid() : null;
-        const imp = repartir(v.importe, fs), kg = v.kilos ? repartir(v.kilos, fs) : fs.map(() => null);
-        fs.forEach((f, i) => { const x = Object.assign({ id: i === 0 && m ? m.id : uid() }, base, { fincaId: f.id, importe: imp[i], kilos: kg[i] }); if (lote) x.lote = lote; db.movimientos.push(x); });
+        registrarMov(v, { m, miembros });
       },
       borrar: m && (() => { db.movimientos = db.movimientos.filter(x => !miembros.includes(x)); })
     });
   }
 
+  function registrarCosecha(v, ctx = {}) {
+    const x = ctx.x || null, miembros = ctx.miembros || [];
+    const fs = v.fincas.map(finca).filter(Boolean);
+    db.cosechas = db.cosechas.filter(c => !miembros.includes(c));
+    const lote = fs.length > 1 ? (x && x.lote) || uid() : null;
+    const kgs = repartir(v.kg, fs);
+    const base = Object.assign({}, v); delete base.fincas;
+    fs.forEach((f, i) => { const c = Object.assign({ id: i === 0 && x ? x.id : uid() }, base, { fincaId: f.id, kg: kgs[i] }); if (lote) c.lote = lote; db.cosechas.push(c); });
+  }
   function formCosecha(id, pre = {}) {
     const x = id ? db.cosechas.find(c => c.id === id) : null;
     if (!db.fincas.length) { toast('Primero añade una finca'); return; }
     const miembros = x ? miembrosLote(db.cosechas, x) : [];
     const ini = x
       ? Object.assign({}, x, { fincas: miembros.map(y => y.fincaId), kg: Math.round(sum(miembros, y => y.kg)) })
-      : { fecha: hoyISO(), fincas: idsIniciales(pre), campana: db.campanaActiva };
+      : Object.assign({ fecha: hoyISO(), fincas: idsIniciales(pre), campana: db.campanaActiva }, pre.valores || {});
     formulario({
       titulo: x ? (miembros.length > 1 ? `Editar cosecha (${miembros.length} parcelas)` : 'Editar cosecha') : 'Apuntar cosecha',
       valores: ini,
@@ -1234,12 +1267,7 @@
       ],
       guardar(v) {
         if (v.kg <= 0) return 'Los kilos tienen que ser mayores que cero';
-        const fs = v.fincas.map(finca).filter(Boolean);
-        db.cosechas = db.cosechas.filter(c => !miembros.includes(c));
-        const lote = fs.length > 1 ? (x && x.lote) || uid() : null;
-        const kgs = repartir(v.kg, fs);
-        const base = Object.assign({}, v); delete base.fincas;
-        fs.forEach((f, i) => { const c = Object.assign({ id: i === 0 && x ? x.id : uid() }, base, { fincaId: f.id, kg: kgs[i] }); if (lote) c.lote = lote; db.cosechas.push(c); });
+        registrarCosecha(v, { x, miembros });
       },
       borrar: x && (() => { db.cosechas = db.cosechas.filter(c => !miembros.includes(c)); })
     });
@@ -1966,11 +1994,12 @@
   }
 
   // Albarán o factura
-  function formDocumento(tipo, id) {
+  function formDocumento(tipo, id, pre) {
     const doc = id ? db.documentos.find(x => x.id === id) : null;
     if (doc) tipo = doc.tipo;
     const tits = titularesTodos();
     const v = doc ? JSON.parse(JSON.stringify(doc)) : { tipo, titular: ui.alm.titular || (tits.length === 1 ? tits[0] : ''), fecha: hoyISO(), proveedor: '', numero: '', lineas: [], archivos: [], albaranes: [], iva: tipo === 'factura' ? 10 : null, notas: '' };
+    if (!doc && pre) Object.assign(v, pre);
     const nuevosArch = []; const quitarArch = [];
     const esFac = tipo === 'factura';
     const proveedores = [...new Set(db.documentos.map(x => x.proveedor).filter(Boolean))];
@@ -2227,6 +2256,477 @@
     if (ok) toast('Excel de PAC y seguro creado');
   }
 
+  // ---------- Asistente de voz: entiende frases como «acabo de sembrar la Sarrana de trigo a 180 kilos» ----------
+  // Todo se hace en el teléfono, sin inteligencia artificial: palabras clave + nombres de tus fincas, cultivos y productos.
+  function normVoz(s) {
+    let t = String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+    t = t.replace(/(\d)\.(\d{3})(?!\d)/g, '$1$2').replace(/(\d)\.(\d{3})(?!\d)/g, '$1$2'); // 20.000 -> 20000
+    t = t.replace(/(\d),(\d)/g, '$1.$2');                                                  // 1,5 -> 1.5
+    t = t.replace(/€/g, ' euros ').replace(/%/g, ' por ciento ').replace(/º|ª/g, ' ');
+    t = t.replace(/[^a-z0-9.\/ ]+/g, ' ').replace(/(^|[^\d])\.|\.(?!\d)/g, '$1 ');
+    return cifras(t.replace(/\s+/g, ' ').trim());
+  }
+  const NUM_PAL = { cero: 0, un: 1, uno: 1, una: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7, ocho: 8, nueve: 9, diez: 10, once: 11, doce: 12, trece: 13, catorce: 14, quince: 15, dieciseis: 16, diecisiete: 17, dieciocho: 18, diecinueve: 19, veinte: 20, veintiun: 21, veintiuno: 21, veintiuna: 21, veintidos: 22, veintitres: 23, veinticuatro: 24, veinticinco: 25, veintiseis: 26, veintisiete: 27, veintiocho: 28, veintinueve: 29, treinta: 30, cuarenta: 40, cincuenta: 50, sesenta: 60, setenta: 70, ochenta: 80, noventa: 90, cien: 100, ciento: 100, doscientos: 200, doscientas: 200, trescientos: 300, trescientas: 300, cuatrocientos: 400, cuatrocientas: 400, quinientos: 500, quinientas: 500, seiscientos: 600, seiscientas: 600, setecientos: 700, setecientas: 700, ochocientos: 800, ochocientas: 800, novecientos: 900, novecientas: 900 };
+  // «ciento ochenta y cinco» -> 185 · «dos mil quinientos» -> 2500 · «litro y medio» -> 1.5 · «uno coma cinco» -> 1.5
+  function cifras(t) {
+    const w = t.split(' '); const out = []; let i = 0;
+    const esNum = x => x in NUM_PAL || /^\d+(\.\d+)?$/.test(x);
+    while (i < w.length) {
+      const x = w[i];
+      if ((x in NUM_PAL && !(['un', 'una', 'uno'].includes(x) && !esNum(w[i + 1] || '') && w[i + 1] !== 'mil' && !/^(kilo|litro|euro|hectarea|tonelada|gramo|centimetro|mililitro)/.test(w[i + 1] || ''))) || (x === 'mil' && out.length && /^\d/.test(out[out.length - 1]))) {
+        let total = 0, cur = 0, j = i;
+        if (x === 'mil') { total = +out.pop() * 1000; j++; }
+        while (j < w.length) {
+          const y = w[j];
+          if (y in NUM_PAL) { cur += NUM_PAL[y]; j++; }
+          else if (y === 'mil') { total += (cur || 1) * 1000; cur = 0; j++; }
+          else if (y === 'y' && NUM_PAL[w[j + 1]] < 10) j++;
+          else break;
+        }
+        let val = total + cur;
+        if (w[j] === 'coma' && w[j + 1] != null && esNum(w[j + 1])) { val = parseFloat(val + '.' + (w[j + 1] in NUM_PAL ? NUM_PAL[w[j + 1]] : w[j + 1])); j += 2; }
+        out.push(String(val)); i = j;
+      } else if (/^\d+(\.\d+)?$/.test(x) && w[i + 1] === 'mil') { out.push(String(+x * 1000)); i += 2; }
+      else if (/^\d+$/.test(x) && w[i + 1] === 'coma' && /^\d+$/.test(w[i + 2] || '')) { out.push(x + '.' + w[i + 2]); i += 3; }
+      else if ((x === 'medio' || x === 'media') && !/^\d/.test(out[out.length - 1] || '')) { out.push('0.5'); i++; }
+      else if (x === 'y' && (w[i + 1] === 'medio' || w[i + 1] === 'media') && /^\d/.test(out[out.length - 1] || '')) { out[out.length - 1] = String(+out[out.length - 1] + 0.5); i += 2; }
+      else { out.push(x); i++; }
+    }
+    return out.join(' ');
+  }
+  // Parecido entre palabras (para cuando el dictado escribe «serrana» en vez de «Sarrana»)
+  function lev(a, b) {
+    if (a === b) return 0; const m = a.length, n = b.length; if (!m || !n) return m || n;
+    let prev = Array.from({ length: n + 1 }, (_, k) => k);
+    for (let i = 1; i <= m; i++) { const cur = [i]; for (let k = 1; k <= n; k++) cur[k] = Math.min(prev[k] + 1, cur[k - 1] + 1, prev[k - 1] + (a[i - 1] === b[k - 1] ? 0 : 1)); prev = cur; }
+    return prev[n];
+  }
+  const parecido = (a, b) => 1 - lev(a, b) / Math.max(a.length, b.length, 1);
+  const PALABRAS_VACIAS = new Set(['la', 'el', 'los', 'las', 'de', 'del', 'en', 'a', 'al', 'y', 'con', 'que', 'he', 'ha', 'hemos', 'acabo', 'acabamos', 'hoy', 'ayer', 'por', 'para', 'finca', 'fincas', 'parcela', 'parcelas', 'toda', 'todas', 'todo']);
+  // Busca en la frase los nombres de una lista: [{n: 'sarrana clemente', ...}]
+  function buscarNombres(texto, cands, umbral = 0.82) {
+    const w = texto.split(' '); const hits = [];
+    for (const c of cands) {
+      if (!c.n) continue;
+      const k = c.n.split(' ').length; let best = 0, pos = -1;
+      for (let i = 0; i + k <= w.length; i++) {
+        if (PALABRAS_VACIAS.has(w[i])) continue;
+        const s = parecido(w.slice(i, i + k).join(' '), c.n); if (s > best) { best = s; pos = i; }
+      }
+      const min = c.n.length <= 4 ? 1 : c.n.length <= 6 ? 0.83 : umbral;
+      if (best >= min) hits.push({ c, score: best, i: pos, k });
+    }
+    hits.sort((a, b) => b.k - a.k || b.score - a.score || b.c.n.length - a.c.n.length);
+    const usados = new Set(); const out = [];
+    for (const h of hits) { const r = Array.from({ length: h.k }, (_, x) => x + h.i); if (r.some(x => usados.has(x))) continue; r.forEach(x => usados.add(x)); out.push(h); }
+    return out.sort((a, b) => a.i - b.i);
+  }
+  const quitarTramos = (texto, hits) => { const w = texto.split(' '); hits.forEach(h => { for (let x = h.i; x < h.i + h.k; x++) w[x] = '_'; }); return w.join(' '); };
+
+  const DIAS = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'];
+  const MESES_V = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+  function fechaDicha(t) {
+    const d = new Date(); const iso = x => new Date(x - x.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+    if (/\banteayer\b/.test(t)) { d.setDate(d.getDate() - 2); return iso(d); }
+    if (/\bayer\b/.test(t)) { d.setDate(d.getDate() - 1); return iso(d); }
+    let m = t.match(/\b(\d{1,2}) de (enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre)(?: de (\d{4}))?\b/);
+    if (m) { const mes = m[2] === 'setiembre' ? 8 : MESES_V.indexOf(m[2]); let y = m[3] ? +m[3] : d.getFullYear(); let f = new Date(y, mes, +m[1]); if (!m[3] && f > d) f = new Date(y - 1, mes, +m[1]); return iso(f); }
+    m = t.match(/\b(\d{1,2})\/(\d{1,2})(?:\/(\d{2,4}))?\b/);
+    if (m) { let y = m[3] ? (+m[3] < 100 ? 2000 + +m[3] : +m[3]) : d.getFullYear(); let f = new Date(y, +m[2] - 1, +m[1]); if (!m[3] && f > d) f = new Date(y - 1, +m[2] - 1, +m[1]); return iso(f); }
+    m = t.match(/\b(lunes|martes|miercoles|jueves|viernes|sabado|domingo)\b/);
+    if (m) { let diff = (d.getDay() - DIAS.indexOf(m[1]) + 7) % 7; if (diff === 0) diff = 7; d.setDate(d.getDate() - diff); return iso(d); }
+    return hoyISO();
+  }
+
+  const VERBOS = [
+    ['Siembra', /\b(sembr|siembr)\w*/],
+    ['Cosecha', /\b(cosech|segad|trill|recolect)\w*/],
+    ['Tratamiento', /\b(sulfat|fumig|herbicid|fungicid|insecticid|pulveriz|tratad|trate|tratar|tratamiento|tratando)\w*/],
+    ['Abonado', /\b(abon|cobertera|purin|estercol)\w*/],
+    ['Rodillo', /\b(rodillo|rular|rulado|rule|rulao|rulo)\b/],
+    ['Empacado', /\b(empac|alpac|empaque)\w*/],
+    ['Labrado', /\b(are|aro|arado|arando|arar|aramos|arao|labr\w*|cultivador|grade\w*|gradas?|vertedera|chisel|subsol\w*|binad\w*|alzad\w*|alzar|desbroz\w*|escarific\w*)\b/]
+  ];
+  const VERBO_NEUTRO = /\b(eche|echado|echar|echamos|echao|aplicad\w*|aplique|aplicar|dado|di|dar|metido|meti)\b/;
+  const UNIDAD_RE = '(kilogramos?|kilos?|kg|toneladas?|tn|t|litros?|l|centimetros cubicos|centimetros?|cc|centilitros?|mililitros?|ml|gramos?|gr|g)';
+  function cantidadesDichas(t) {
+    const out = []; const re = new RegExp(`\\b(\\d+(?:\\.\\d+)?) ${UNIDAD_RE}\\b(?: (?:por|la|por la|cada|/) ?(hectarea|ha))?`, 'g');
+    let m;
+    while ((m = re.exec(t))) {
+      const u = m[2]; let base, q = +m[1];
+      if (/^(kilo|kg)/.test(u)) base = 'kg';
+      else if (/^(tonelada|tn|t)$|^tonelada/.test(u)) { base = 'kg'; q *= 1000; }
+      else if (/^(litro|l)$|^litro/.test(u)) base = 'L';
+      else if (/^centilitro/.test(u)) { base = 'cc'; q *= 10; }
+      else if (/^(centimetro|cc|mililitro|ml)/.test(u)) base = 'cc';
+      else base = 'g';
+      out.push({ q, base, ha: !!m[3], i: m.index, txt: m[0] });
+    }
+    return out;
+  }
+  const dineroDicho = t => { const m = t.match(/\b(\d+(?:\.\d+)?) euros?\b/); return m ? +m[1] : null; };
+
+  function candidatosFinca() {
+    const m = new Map();
+    const add = (n, fs, tipo, nombre) => { n = normVoz(n); if (!n || n.length < 3) return; const o = m.get(n) || { n, fs: new Set(), tipo, nombre }; fs.forEach(f => o.fs.add(f)); m.set(n, o); };
+    listaGrupos().forEach((fs, g) => { add(g, fs, 'g', g); const sin = g.replace(/\s*\(.*\)\s*$/, ''); if (sin !== g) add(sin, fs, 'g', g); });
+    db.fincas.forEach(f => {
+      const b = nombreBase(f.nombre);
+      if (!grupoDe(f) && b && norm(b) !== norm(f.municipio || '') && norm(b) !== 'parcela') add(b, [f], 'f', b);
+      if (!grupoDe(f) && f.nombre && !/\d+\s*-\s*\d+/.test(f.nombre)) add(f.nombre, [f], 'f', f.nombre);
+    });
+    return [...m.values()].map(o => Object.assign(o, { fs: [...o.fs] }));
+  }
+  const candidatosTitular = () => titularesTodos().map(t => ({ n: normVoz(t), t }));
+  const candidatosCultivo = () => db.cultivos.map(c => ({ n: normVoz(c), c })).concat([{ n: 'lentejas', c: 'Lenteja' }, { n: 'anis', c: 'Anís dulce' }, { n: 'garbanzos', c: 'Garbanzo' }].filter(x => db.cultivos.includes(x.c)));
+  function candidatosProducto(tipo) {
+    const out = [];
+    db.productos.filter(p => !tipo || p.tipo === tipo).forEach(p => {
+      out.push({ n: normVoz(p.nombre), p });
+      const w1 = normVoz(p.nombre).split(' ')[0]; if (w1.length >= 5 && w1 !== normVoz(p.nombre) && !/^(semilla|trigo|cebada|avena)$/.test(w1)) out.push({ n: w1, p });
+    });
+    return out;
+  }
+  // Parcelas dichas por número: «la parcela 180», «polígono 663 parcela 180»
+  function parcelasPorNumero(t, dentro) {
+    const out = []; const re = /\b(?:poligono (\d+) )?parcelas? (\d+)(?: (?:recinto|rec) (\d+))?/g; let m;
+    while ((m = re.exec(t))) { const po = m[1] ? +m[1] : null, pa = +m[2];
+      const fs = (dentro && dentro.length ? dentro : db.fincas).filter(f => +f.parcela === pa && (po == null || +f.poligono === po));
+      out.push({ po, pa, fs, i: m.index }); }
+    return out;
+  }
+
+  function interpretar(texto) {
+    const t = normVoz(texto);
+    const R = { texto, t, intencion: '', fecha: fechaDicha(t), dudas: [], avisos: [] };
+    if (!t) return R;
+    if (/\b(nueva finca|nueva parcela|finca nueva|parcela nueva|dar de alta|da de alta|dame de alta|alta (de )?(la |una )?(finca|parcela)|anad\w* (la |una )?(finca|parcela)|crea\w* (la |una )?(finca|parcela))\b/.test(t)) return interpretarFinca(t, R);
+    if (/\balbaran/.test(t)) return interpretarDocumento(t, R, 'albaran');
+    if (/\bfactura/.test(t) && !/\b(sembr|sulfat|arad|labr)/.test(t)) return interpretarDocumento(t, R, 'factura');
+    if (/\bsemilla|para sembrar\b/.test(t) && /\b(cosecha|propia|nuestra|guard|apart|reserv|dej)\w*/.test(t) && !/\b(he sembrado|sembre|acabo de sembrar)\b/.test(t)) return interpretarSemilla(t, R);
+    const verbo = VERBOS.map(([tipo, re]) => { const m = t.match(re); return m ? { tipo, i: m.index } : null; }).filter(Boolean).sort((a, b) => a.i - b.i);
+    if (verbo.length && verbo[0].tipo === 'Cosecha' && cantidadesDichas(t).some(c => c.base === 'kg')) return interpretarCosecha(t, R);
+    if (!verbo.length && /\b(vendid\w*|venta|vend[io]|vendemos|cobrad\w*|cobre|ingreso|me han pagado|me han ingresado|pago de la pac)\b/.test(t)) return interpretarMov(t, R, 'ingreso');
+    if (!verbo.length && (/\b(gasto|he pagado|pagad\w*|pague|pagamos|compra|comprado)\b/.test(t) || dineroDicho(t) != null)) return interpretarMov(t, R, 'gasto');
+    if (verbo.length || VERBO_NEUTRO.test(t)) return interpretarLabor(t, R, verbo);
+    R.dudas.push('No sé qué quieres apuntar. Empieza con lo que has hecho: «he sembrado…», «he sulfatado…», «albarán de…», «gasto de…».');
+    return R;
+  }
+
+  // Fincas de la frase: nombres, números de parcela, «las de trigo», «las de Tomás» y lo que va detrás de «excepto»
+  function fincasDichas(t, opts = {}) {
+    const corte = t.search(/\b(excepto|menos|salvo|sin contar|quitando|pero no|no en)\b/);
+    let inc = corte >= 0 ? t.slice(0, corte) : t; const exc = corte >= 0 ? t.slice(corte) : '';
+    if (opts.quitar) inc = opts.quitar(inc);
+    const nombres = buscarNombres(inc, candidatosFinca());
+    let fs = [...new Set(nombres.flatMap(h => h.c.fs))];
+    const porNum = parcelasPorNumero(inc, fs.length ? null : null);
+    porNum.forEach(p => { if (p.fs.length === 1 || (p.fs.length > 1 && fs.length)) { const dentro = fs.length ? p.fs.filter(f => fs.includes(f)) : p.fs; (dentro.length ? dentro : p.fs).forEach(f => { if (!fs.includes(f)) fs.push(f); }); } else if (p.fs.length > 1) opts.dudas && opts.dudas.push(`Hay ${p.fs.length} parcelas con el número ${p.pa}: di también el polígono o el nombre de la finca.`); else opts.dudas && opts.dudas.push(`No tengo ninguna parcela ${p.po ? p.po + '-' : ''}${p.pa}.`); });
+    const titInc = buscarNombres(quitarTramos(inc, nombres), candidatosTitular(), 0.85).map(h => h.c.t);
+    const cultInc = opts.cultivoFiltro || null;
+    if (!fs.length && (cultInc || titInc.length)) fs = db.fincas.filter(f => (!cultInc || norm(cultivoDe(f.id, db.campanaActiva) || '') === norm(cultInc)) && (!titInc.length || titInc.includes(String(f.titular || '').trim())));
+    else if (fs.length && titInc.length && /\b(parte|las de|la de|lo de)\b/.test(inc)) fs = fs.filter(f => titInc.includes(String(f.titular || '').trim()));
+    const quitadas = [];
+    if (exc) {
+      const exN = buscarNombres(exc, candidatosFinca()).flatMap(h => h.c.fs);
+      const exT = buscarNombres(exc, candidatosTitular(), 0.85).map(h => h.c.t);
+      const exP = parcelasPorNumero(exc, fs).flatMap(p => p.fs);
+      fs = fs.filter(f => { const q = exN.includes(f) || exP.includes(f) || exT.includes(String(f.titular || '').trim()); if (q) quitadas.push(f); return !q; });
+      if (/\brecinto\b/.test(exc)) opts.dudas && opts.dudas.push('No puedo quitar un recinto suelto de una parcela: quita la parcela entera o ajusta la superficie al revisar.');
+      if (!quitadas.length) opts.dudas && opts.dudas.push('No he encontrado lo que dices después de «excepto».');
+    }
+    return { fs, quitadas, nombres: nombres.map(h => h.c.nombre), titulares: titInc };
+  }
+
+  function interpretarLabor(t, R, verbo) {
+    R.intencion = 'labor';
+    let tipo = verbo.length ? verbo[0].tipo : '';
+    if (verbo.length > 1 && verbo[1].tipo !== tipo) R.dudas.push(`Has dicho varias labores; apunto «${tipo}». Dicta las otras por separado.`);
+    // producto del almacén
+    const tipoProd = TIPO_DE_LABOR[tipo] || null;
+    let prodHits = buscarNombres(t, candidatosProducto(tipoProd));
+    if (!prodHits.length && !tipoProd) prodHits = buscarNombres(t, candidatosProducto(null));
+    let p = prodHits.length ? prodHits[0].c.p : null;
+    if (!tipo && p) tipo = { Fitosanitario: 'Tratamiento', Abono: 'Abonado', Semilla: 'Siembra' }[p.tipo] || '';
+    if (!tipo && /\b(urea|nitrato|abono|npk|nac|estiercol|basura|fosfato|potasa)\b/.test(t)) tipo = 'Abonado';
+    if (!tipo) { R.dudas.push('No sé qué labor es: di «sembrado», «arado», «sulfatado», «abonado», «rodillo», «cosechado»…'); tipo = 'Otro'; }
+    let resto = quitarTramos(t, prodHits);
+    // cultivo
+    const cultHits = buscarNombres(resto, candidatosCultivo(), 0.85);
+    const cultivo = cultHits.length ? cultHits[0].c.c : '';
+    resto = quitarTramos(resto, cultHits);
+    const { fs, quitadas, nombres } = fincasDichas(resto, { dudas: R.dudas, cultivoFiltro: tipo !== 'Siembra' && /\b(las|los|todas?|todos?) (de|del) /.test(t) ? cultivo : null });
+    if (!fs.length) R.dudas.push('No sé en qué finca: di su nombre (por ejemplo «la Sarrana») o «parcela 180».');
+    // semilla: si no la has dicho, la del cultivo que tengas en el almacén
+    if (tipo === 'Siembra' && !p && cultivo) {
+      const tits = [...new Set(fs.map(f => titularDe(f.id)))];
+      const sem = db.productos.filter(x => x.tipo === 'Semilla' && norm(x.nombre).includes(norm(cultivo))).map(x => ({ x, ex: sum(tits, ti => Math.max(0, existencias(x.id, ti))) })).sort((a, b) => b.ex - a.ex);
+      if (sem.length) p = sem[0].x;
+      else R.avisos.push(`No hay semilla de ${cultivo.toLowerCase()} en el almacén: la siembra se apunta sin descontar nada. Puedes darla de alta con un albarán o diciendo «guardar … kilos de ${cultivo.toLowerCase()} de la cosecha como semilla».`);
+    }
+    if (tipo === 'Tratamiento' && !p) {
+      const palabras = resto.split(' ').filter(w => w.length >= 5 && w !== '_');
+      const reg = FITOS ? FITOS.productos.find(r => palabras.some(w => parecido(normVoz(r.n).split(' ')[0], w) > 0.85)) : null;
+      R.bloqueo = reg ? `«${reg.n}» no está en el almacén. Sube primero su albarán para poder usarlo.` : 'No encuentro el fitosanitario en el almacén. Di su nombre tal como está en el almacén, o súbelo con su albarán.';
+    }
+    // dosis
+    const cant = cantidadesDichas(t);
+    let dosis = null, unidad = null;
+    if (cant.length) {
+      const c = cant.find(x => x.ha) || cant[0];
+      const total = /\b(en total|total|entre todo|en todas)\b/.test(t);
+      if (total) { dosis = c.q; unidad = c.base === 'L' ? 'L' : c.base === 'kg' ? 'kg' : c.base === 'cc' ? 'L' : 'kg'; if (c.base === 'cc') dosis = c.q / 1000; if (c.base === 'g') dosis = c.q / 1000; }
+      else { dosis = c.q; unidad = { kg: 'kg/ha', L: 'L/ha', cc: 'cc/ha', g: 'g/ha' }[c.base]; }
+      if (!CON_DOSIS.includes(tipo)) { dosis = null; unidad = null; }
+    }
+    const haM = t.match(/\b(\d+(?:\.\d+)?) (?:hectareas?|ha)\b/);
+    const motivo = (t.match(/\bcontra (?:la |el |los |las )?([a-z ]{3,40}?)(?= a \d| con | en | por | y |$|\d)/) || [])[1] || '';
+    const variedad = (t.match(/\bvariedad ([a-z0-9]+(?: [a-z0-9]+)?)/) || [])[1] || '';
+    const apero = !p && !CON_DOSIS.includes(tipo) ? ((t.match(/\bcon (?:el |la |los |las )?([a-z]+(?: [a-z]+)?)/) || [])[1] || '') : '';
+    R.labor = {
+      fecha: R.fecha, tipo, fincas: fs.map(f => f.id), prodAlm: p ? p.id : '', producto: apero ? apero.charAt(0).toUpperCase() + apero.slice(1) : '',
+      dosis, unidad: unidad || (tipo === 'Siembra' || tipo === 'Abonado' ? 'kg/ha' : 'L/ha'), motivo: motivo.trim(), superficie: fs.length === 1 && haM ? +haM[1] : null,
+      coste: dineroDicho(t), campana: db.campanaActiva, notas: '', cultivoSiembra: tipo === 'Siembra' ? cultivo : '', variedadSiembra: variedad ? variedad.charAt(0).toUpperCase() + variedad.slice(1) : ''
+    };
+    R.quitadas = quitadas; R.nombresFinca = nombres;
+    if (tipo === 'Siembra' && !cultivo) R.dudas.push('No has dicho el cultivo: la siembra se apunta sin cambiar el cultivo de las parcelas.');
+    if (CON_DOSIS.includes(tipo) && dosis == null && p) R.dudas.push('No has dicho la dosis: no se descuenta nada del almacén.');
+    return R;
+  }
+
+  function interpretarCosecha(t, R) {
+    R.intencion = 'cosecha';
+    const { fs, quitadas, nombres } = fincasDichas(t, { dudas: R.dudas });
+    const c = cantidadesDichas(t).find(x => x.base === 'kg');
+    const hum = t.match(/\bhumedad (?:de |del )?(\d+(?:\.\d+)?)/);
+    R.cosecha = { fecha: R.fecha, fincas: fs.map(f => f.id), kg: c ? c.q : null, humedad: hum ? +hum[1] : null, campana: db.campanaActiva, notas: '' };
+    R.quitadas = quitadas; R.nombresFinca = nombres;
+    if (!fs.length) R.dudas.push('No sé de qué finca es la cosecha.');
+    return R;
+  }
+
+  function interpretarSemilla(t, R) {
+    R.intencion = 'semilla';
+    const cult = buscarNombres(t, candidatosCultivo(), 0.85); const tit = buscarNombres(t, candidatosTitular(), 0.85);
+    const c = cantidadesDichas(t).find(x => x.base === 'kg');
+    R.semilla = { cultivo: cult.length ? cult[0].c.c : '', titular: tit.length ? tit[0].c.t : (titularesTodos().length === 1 ? titularesTodos()[0] : ''), kg: c ? c.q : null, fecha: R.fecha };
+    if (!R.semilla.cultivo) R.dudas.push('¿De qué cultivo es la semilla?');
+    if (!R.semilla.titular) R.dudas.push('¿Para qué titular? Di «para Iván», «de Tomás»…');
+    if (!R.semilla.kg) R.dudas.push('¿Cuántos kilos?');
+    return R;
+  }
+
+  function interpretarMov(t, R, tipo) {
+    R.intencion = tipo;
+    const cat = tipo === 'ingreso'
+      ? (/\b(pac|ayuda|subvencion|pago basico)\b/.test(t) ? 'Subvención PAC' : /\bpaja\b/.test(t) ? 'Venta de paja' : /\b(trigo|cebada|avena|grano|titarro|lenteja|girasol|colza|centeno)\b/.test(t) ? 'Venta de grano' : 'Otros ingresos')
+      : (/\b(gasoleo|gasoil|combustible)\b/.test(t) ? 'Gasóleo' : /\bseguro\b/.test(t) ? 'Seguro' : /\b(arriendo|arrendamiento|renta)\b/.test(t) ? 'Arrendamiento' : /\b(reparacion|taller|rueda|recambio|tractor|maquina|averia|itv)\w*/.test(t) ? 'Maquinaria y reparaciones' : /\bsemilla/.test(t) ? 'Semilla' : /\b(abono|urea|nitrato)\b/.test(t) ? 'Abono' : /\b(herbicida|fungicida|insecticida|fitosanitario)\w*/.test(t) ? 'Fitosanitarios' : /\b(cosechadora|empacadora|transporte|servicio)\w*/.test(t) ? 'Servicios contratados' : 'Otros gastos');
+    const kg = cantidadesDichas(t).find(x => x.base === 'kg');
+    const precio = (t.match(/\ba (\d+(?:\.\d+)?)(?: euros?)?(?: el| por| cada)? (?:kilo|kg)\b/) || [])[1];
+    let importe = (t.match(/\b(\d+(?:\.\d+)?) euros?\b(?! (?:el|por|cada) (?:kilo|kg))/) || [])[1];
+    importe = importe ? +importe : (kg && precio ? Math.round(kg.q * +precio * 100) / 100 : null);
+    const sinNum = t.replace(/\d+(\.\d+)?/g, ' ');
+    const { fs } = /\b(finca|parcela)\b/.test(t) || buscarNombres(sinNum, candidatosFinca()).length ? fincasDichas(sinNum, {}) : { fs: [] };
+    R.mov = { tipo, fecha: R.fecha, categoria: cat, concepto: R.texto.trim().replace(/^./, x => x.toUpperCase()).slice(0, 80), kilos: kg ? kg.q : null, precio: precio ? +precio : null, importe, fincas: fs.map(f => f.id), campana: db.campanaActiva, notas: '' };
+    if (!importe) R.dudas.push('No has dicho el importe en euros.');
+    return R;
+  }
+
+  function lineasDichas(t) {
+    // «20 litros de accresto a 30 euros el litro y 1000 kilos de urea»
+    const lineas = []; const cants = cantidadesDichas(t);
+    cants.forEach((c, k) => {
+      const fin = k + 1 < cants.length ? cants[k + 1].i : t.length;
+      const trozo = t.slice(c.i + c.txt.length, fin);
+      const nombre = (trozo.match(/^\s*(?:de |del )?(.+?)(?= a \d| por \d| para |,| y \d|$)/) || [])[1] || '';
+      const precio = (trozo.match(/\ba (\d+(?:\.\d+)?)(?: euros?)?(?: el| por| cada)? ?(?:kilo|kg|litro|l|unidad|tonelada)?/) || [])[1];
+      const imp = (trozo.match(/\bpor (\d+(?:\.\d+)?) euros?/) || [])[1];
+      lineas.push({ q: c.q, base: c.base, nombre: nombre.replace(/\b(y|para|el|la)\s*$/, '').trim(), precio: precio ? +precio : null, importe: imp ? +imp : null });
+    });
+    return lineas;
+  }
+  function productoParaLinea(l) {
+    const n = normVoz(l.nombre); if (!n) return null;
+    const mio = buscarNombres(n, candidatosProducto(null), 0.8)[0];
+    if (mio) return { p: mio.c.p };
+    if (FITOS) {
+      const w = n.split(' ')[0];
+      const r = FITOS.productos.filter(x => parecido(normVoz(x.n), n) > 0.82 || parecido(normVoz(x.n).split(' ')[0], w) > 0.88).sort((a, b) => (b.e === 'Vigente') - (a.e === 'Vigente'))[0];
+      if (r) return { nuevo: { nombre: r.n, tipo: 'Fitosanitario', unidad: unidadDeFormulado(r.f), regId: r.id, registro: r.r, formulado: r.f } };
+    }
+    const cu = db.cultivos.find(c => n.includes(norm(c)));
+    const tipo = /\b(urea|nitrato|abono|npk|nac|fosfato|potasa|sulfato|complejo)\b/.test(n) ? 'Abono' : (/\bsemilla|para sembrar\b/.test(n) || cu) ? 'Semilla' : 'Otro';
+    const nombre = tipo === 'Semilla' && cu && !/sembrar|semilla/.test(n) ? `${cu} para sembrar` : l.nombre.replace(/^./, x => x.toUpperCase());
+    return { nuevo: { nombre, tipo, unidad: l.base === 'L' || l.base === 'cc' ? 'L' : 'kg' } };
+  }
+  function interpretarDocumento(t, R, tipo) {
+    R.intencion = tipo;
+    const tits = candidatosTitular();
+    const tit = buscarNombres(t, tits, 0.85);
+    let proveedor = (t.match(new RegExp(`\\b${tipo === 'albaran' ? 'albaran' : 'factura'}(?: (?:numero|n) \\w+)? (?:de|del) (?:la |el |los )?([a-z ]+?)(?= para | numero | n \\d|,| \\d| de \\d|$)`)) || [])[1] || '';
+    if (proveedor && tits.some(x => parecido(x.n, proveedor) > 0.85)) proveedor = '';
+    const numero = (t.match(/\b(?:numero|n|num) (\w*\d\w*)/) || [])[1] || '';
+    const pre = { titular: tit.length ? tit[0].c.t : '', fecha: R.fecha, proveedor: proveedor.replace(/\b\w/g, x => x.toUpperCase()).trim(), numero: numero.toUpperCase(), lineas: [] };
+    R.lineasNuevas = [];
+    const desde = t.search(/\d+(?:\.\d+)? (kilo|kg|litro|l |tonelada|gramo|centimetro|cc|ml|mililitro)/);
+    const ls = desde >= 0 ? lineasDichas(t.slice(desde)) : [];
+    ls.forEach(l => {
+      const r = productoParaLinea(l); if (!r) return;
+      R.lineasNuevas.push({ l, r });
+    });
+    if (tipo === 'factura') {
+      const base = (t.match(/\bbase(?: imponible)?(?: de)? (\d+(?:\.\d+)?)/) || [])[1];
+      const iva = (t.match(/\biva(?: del| de)? (\d+(?:\.\d+)?)/) || [])[1];
+      const total = (t.match(/\btotal(?: de)? (\d+(?:\.\d+)?)/) || [])[1];
+      Object.assign(pre, { base: base ? +base : null, iva: iva ? +iva : 10, total: total ? +total : (base ? Math.round(+base * (1 + (iva ? +iva : 10) / 100) * 100) / 100 : null) });
+    }
+    R.doc = pre;
+    if (!pre.titular) R.dudas.push('¿En qué carpeta lo guardo? Di «para Iván», «de Tomás»…');
+    if (tipo === 'albaran' && !ls.length) R.dudas.push('No he entendido los productos: di «20 litros de Accresto», «1.000 kilos de urea»…');
+    return R;
+  }
+  function interpretarFinca(t, R) {
+    R.intencion = 'finca';
+    const nombre = (t.match(/\b(?:finca|parcela)(?: nueva)? (?:que se llama |llamada |de nombre )?([a-z][a-z ]{1,40}?)(?= poligono| parcela| recinto| en | de \d| con | titular| para |,|\d|$)/) || [])[1] || '';
+    const po = (t.match(/\bpoligono (\d+)/) || [])[1], pa = (t.match(/\bparcela (\d+)/) || [])[1], rec = (t.match(/\brecintos? (\d+(?: y \d+)*)/) || [])[1];
+    const ha = (t.match(/\b(\d+(?:\.\d+)?) (?:hectareas?|ha)\b/) || [])[1];
+    const pueblos = [...new Set(db.fincas.map(f => f.municipio).filter(Boolean))];
+    const pu = buscarNombres(t, pueblos.map(x => ({ n: normVoz(x), x })), 0.85)[0];
+    const ref = pu ? db.fincas.find(f => f.municipio === pu.c.x && f.codMunicipio) : null;
+    const tit = buscarNombres(t, candidatosTitular(), 0.85)[0];
+    const grupo = nombre ? [...listaGrupos().keys()].find(g => norm(g) === norm(nombre)) : '';
+    R.finca = { nombre: nombre ? nombre.trim().replace(/\b\w/g, x => x.toUpperCase()) + (po && pa ? ` ${po}-${pa}` : '') : (po && pa && pu ? `${pu.c.x} ${po}-${pa}` : ''), grupo: grupo || '', titular: tit ? tit.c.t : '', municipio: pu ? pu.c.x : '', provincia: ref ? ref.provincia : '', codMunicipio: ref ? ref.codMunicipio : '', agregado: 0, zona: 0, poligono: po || '', parcela: pa || '', recinto: rec ? rec.replace(/ y /g, ', ') : '', superficie: ha ? +ha : null };
+    if (!po || !pa) R.dudas.push('Para situarla en el mapa di el polígono y la parcela.');
+    return R;
+  }
+
+  // ---------- Tarjeta de confirmación ----------
+  function tarjetaVoz(R) {
+    const fila = (k, v) => v ? `<dt>${k}</dt><dd>${v}</dd>` : '';
+    const listaParc = (ids, quit) => { const fs = ids.map(finca).filter(Boolean); if (!fs.length) return '<span class="neg">Ninguna</span>';
+      const g = new Set(fs.map(grupoDe)); const nombre = g.size === 1 && [...g][0] && fincasDeGrupo([...g][0]).length === fs.length ? [...g][0] : '';
+      return `${nombre ? `<b>${esc(nombre)}</b> · ` : ''}${fs.length} parcela${fs.length === 1 ? '' : 's'} · ${fmtN(sum(fs, f => f.superficie))} ha<div class="voz-parc">${fs.map(f => `<span>${esc(f.nombre)}${f.titular ? ` <i>${esc(f.titular)}</i>` : ''}</span>`).join('')}${(quit || []).map(f => `<span class="tachada">${esc(f.nombre)}</span>`).join('')}</div>`; };
+    let h = ''; let puedeGuardar = false; let abrir = '';
+    if (R.intencion === 'labor') {
+      const v = R.labor; const p = producto(v.prodAlm);
+      h += `<dl class="kv">${fila('Labor', esc(v.tipo))}${fila('Fecha', fmtFecha(v.fecha))}${fila('Fincas', listaParc(v.fincas, R.quitadas))}${v.cultivoSiembra ? fila('Cultivo', chip(v.cultivoSiembra) + (v.variedadSiembra ? ' ' + esc(v.variedadSiembra) : '') + ` <span class="small muted">en ${esc(v.campana)}</span>`) : ''}${fila('Producto', p ? esc(p.nombre) : esc(v.producto))}${fila('Dosis', v.dosis != null ? `${fmtN(v.dosis, 4)} ${esc(v.unidad)}` : '')}${fila('Contra', esc(v.motivo))}${fila('Coste', v.coste ? eur(v.coste, 2) : '')}</dl>`;
+      if (p) h += `<div class="fito-info">${infoLaborHTML(Object.assign({}, v))}</div>`;
+      puedeGuardar = v.fincas.length > 0 && !R.bloqueo && v.tipo !== 'Otro';
+      abrir = 'labor';
+    } else if (R.intencion === 'cosecha') {
+      const v = R.cosecha; const fs = v.fincas.map(finca).filter(Boolean); const ha = sum(fs, f => f.superficie);
+      h += `<dl class="kv">${fila('Cosecha', v.kg ? fmtKg(v.kg) : '<span class="neg">sin kilos</span>')}${fila('Fecha', fmtFecha(v.fecha))}${fila('Fincas', listaParc(v.fincas, R.quitadas))}${fila('Rendimiento', v.kg && ha ? `${fmtN(v.kg / ha, 0)} kg/ha` : '')}${fila('Humedad', v.humedad != null ? fmtN(v.humedad, 1) + ' %' : '')}</dl>
+        <p class="small muted" style="margin:0">Se apunta la cosecha y la labor «Cosecha» en el cuaderno.</p>`;
+      puedeGuardar = fs.length > 0 && v.kg > 0; abrir = 'cosecha';
+    } else if (R.intencion === 'gasto' || R.intencion === 'ingreso') {
+      const v = R.mov;
+      h += `<dl class="kv">${fila(v.tipo === 'gasto' ? 'Gasto' : 'Ingreso', v.importe ? `<b class="${v.tipo === 'gasto' ? 'neg' : 'pos'}">${eur(v.importe, 2)}</b>` : '<span class="neg">sin importe</span>')}${fila('Categoría', esc(v.categoria))}${fila('Fecha', fmtFecha(v.fecha))}${fila('Kilos', v.kilos ? fmtKg(v.kilos) : '')}${fila('Precio', v.precio ? `${fmtN(v.precio, 4)} €/kg` : '')}${fila('Fincas', v.fincas.length ? listaParc(v.fincas) : 'General (sin finca)')}${fila('Concepto', esc(v.concepto))}</dl>`;
+      puedeGuardar = v.importe > 0; abrir = 'mov';
+    } else if (R.intencion === 'semilla') {
+      const v = R.semilla;
+      h += `<dl class="kv">${fila('Semilla propia', v.cultivo ? `${esc(v.cultivo)} para sembrar` : '?')}${fila('Kilos', v.kg ? fmtKg(v.kg) : '?')}${fila('Titular', esc(v.titular) || '?')}${fila('Fecha', fmtFecha(v.fecha))}</dl><p class="small muted" style="margin:0">Se suma al almacén del titular como semilla de vuestra cosecha.</p>`;
+      puedeGuardar = !!(v.cultivo && v.kg && v.titular);
+    } else if (R.intencion === 'albaran' || R.intencion === 'factura') {
+      const v = R.doc;
+      h += `<dl class="kv">${fila(R.intencion === 'albaran' ? 'Albarán' : 'Factura', esc(v.proveedor || 'sin proveedor') + (v.numero ? ' · nº ' + esc(v.numero) : ''))}${fila('Carpeta', esc(v.titular) || '<span class="neg">?</span>')}${fila('Fecha', fmtFecha(v.fecha))}${R.intencion === 'factura' ? fila('Base', v.base != null ? eur(v.base, 2) : '') + fila('IVA', v.iva != null ? fmtN(v.iva) + ' %' : '') + fila('Total', v.total != null ? eur(v.total, 2) : '') : ''}</dl>
+        ${R.lineasNuevas.length ? `<div class="list">${R.lineasNuevas.map(({ l, r }) => { const pn = r.p || r.nuevo; return `<div class="row"><div class="main"><div class="t">${esc(pn.nombre)}</div><div class="s">${esc(pn.tipo)}${r.nuevo ? ' · producto nuevo' : ''}${pn.registro ? ' · Nº reg. ' + esc(pn.registro) : ''}</div></div><div class="end">${fmtN(l.base === 'cc' ? l.q / 1000 : l.q, 3)} ${esc(pn.unidad)}${l.precio ? `<div class="small muted">${fmtN(l.precio, 4)} €</div>` : ''}</div></div>`; }).join('')}</div>` : ''}
+        <p class="small muted" style="margin:0">Al abrirlo podrás añadir la foto o el PDF y revisar antes de guardar.</p>`;
+      abrir = R.intencion;
+    } else if (R.intencion === 'finca') {
+      const v = R.finca;
+      h += `<dl class="kv">${fila('Finca nueva', esc(v.nombre) || '?')}${fila('Pueblo', esc(v.municipio))}${fila('SIGPAC', v.poligono ? `Pol. ${esc(v.poligono)} · Parc. ${esc(v.parcela)}${v.recinto ? ' · Rec. ' + esc(v.recinto) : ''}` : '')}${fila('Superficie', v.superficie ? fmtN(v.superficie) + ' ha' : '')}${fila('Titular', esc(v.titular))}${fila('Finca agrupada', esc(v.grupo))}</dl><p class="small muted" style="margin:0">Al abrirla podrás completar lo que falte.</p>`;
+      abrir = 'finca';
+    }
+    if (R.bloqueo) h += `<div class="aviso-norma"><b>⚠ ${esc(R.bloqueo)}</b></div>`;
+    const notas = [...R.avisos, ...R.dudas];
+    if (notas.length) h += `<ul class="small notas voz-dudas">${notas.map(x => `<li>${esc(x)}</li>`).join('')}</ul>`;
+    const botones = `${puedeGuardar ? '<button type="button" class="btn primary" data-v="guardar">Guardar</button>' : ''}${abrir ? `<button type="button" class="btn${puedeGuardar ? '' : ' primary'}" data-v="abrir">${puedeGuardar ? 'Corregir' : 'Abrir y revisar'}</button>` : ''}`;
+    return { html: h ? `<div class="card pad voz-tarjeta"><div class="tag">Esto es lo que he entendido</div>${h}<div class="btns" style="justify-content:flex-start">${botones}</div></div>` : (notas.length ? `<div class="card pad voz-tarjeta"><ul class="small notas voz-dudas">${notas.map(x => `<li>${esc(x)}</li>`).join('')}</ul></div>` : ''), puedeGuardar };
+  }
+
+  // Ejecuta lo entendido
+  async function guardarVoz(R) {
+    if (R.intencion === 'labor') {
+      const v = Object.assign({}, R.labor);
+      if (v.prodAlm) {
+        const r = revisarLabor(v);
+        if (r.graves.length) { const c = await confirmar('⚠ Revisa antes de guardar', `<ul class="avisos-lista">${r.graves.map(g => `<li>${esc(g)}</li>`).join('')}</ul>Si lo guardas, la labor quedará marcada para revisar en el cuaderno.`, 'Guardar igualmente'); if (!c.ok) return false; }
+      }
+      registrarLabor(v); return `${v.tipo} apuntada en ${v.fincas.length} parcela${v.fincas.length === 1 ? '' : 's'}`;
+    }
+    if (R.intencion === 'cosecha') {
+      const v = R.cosecha; registrarCosecha(v);
+      registrarLabor({ fecha: v.fecha, tipo: 'Cosecha', fincas: v.fincas, campana: v.campana, notas: '', producto: '', dosis: null, unidad: '', coste: null });
+      return `Cosecha de ${fmtKg(v.kg)} apuntada`;
+    }
+    if (R.intencion === 'gasto' || R.intencion === 'ingreso') { registrarMov(Object.assign({}, R.mov)); return R.intencion === 'gasto' ? 'Gasto apuntado' : 'Ingreso apuntado'; }
+    if (R.intencion === 'semilla') {
+      const v = R.semilla; const nombre = `${v.cultivo} para sembrar`;
+      let p = db.productos.find(x => x.tipo === 'Semilla' && norm(x.nombre) === norm(nombre));
+      if (!p) { p = { id: uid(), nombre, tipo: 'Semilla', unidad: 'kg' }; db.productos.push(p); }
+      db.ajustes.push({ id: uid(), productoId: p.id, titular: v.titular, cantidad: v.kg, fecha: v.fecha, motivo: 'Semilla de la cosecha propia' });
+      return `${fmtKg(v.kg)} de ${nombre.toLowerCase()} para ${v.titular}`;
+    }
+    return false;
+  }
+  function abrirVoz(R) {
+    if (R.intencion === 'labor') formLabor(null, { valores: Object.assign({}, R.labor) });
+    else if (R.intencion === 'cosecha') formCosecha(null, { valores: Object.assign({}, R.cosecha) });
+    else if (R.intencion === 'gasto' || R.intencion === 'ingreso') formMov(null, { tipo: R.mov.tipo, valores: Object.assign({}, R.mov) });
+    else if (R.intencion === 'albaran' || R.intencion === 'factura') {
+      const pre = Object.assign({}, R.doc);
+      pre.lineas = R.lineasNuevas.map(({ l, r }) => {
+        let p = r.p; if (!p) { p = db.productos.find(x => norm(x.nombre) === norm(r.nuevo.nombre)) || Object.assign({ id: uid() }, r.nuevo); if (!db.productos.includes(p)) db.productos.push(p); }
+        const q = l.base === 'cc' ? l.q / 1000 : l.base === 'g' && p.unidad === 'kg' ? l.q / 1000 : l.q;
+        return { productoId: p.id, cantidad: q, precio: l.precio, importe: l.importe != null ? l.importe : (l.precio ? Math.round(q * l.precio * 100) / 100 : null) };
+      });
+      guardar(false);
+      formDocumento(R.intencion, null, pre);
+    } else if (R.intencion === 'finca') formFinca(null, Object.assign({}, R.finca));
+  }
+
+  const EJEMPLOS_VOZ = ['Acabo de sembrar la Sarrana de trigo a 180 kilos', 'He sulfatado la Sarrana con Accresto a 200 centímetros contra avena loca', 'Ayer aré Consejera', 'He cosechado Consejera, 14.000 kilos', 'Albarán de la cooperativa para Iván: 20 litros de Accresto a 30 euros el litro', 'Guardar 5.000 kilos de trigo de la cosecha como semilla para Iván', 'Gasto de gasóleo 300 euros', 'Nueva finca Los Prados en Lerma polígono 663 parcela 180, 3,5 hectáreas, titular Iván'];
+  function hojaVoz() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    cargarFitos().then(d => { FITOS = d; }).catch(() => {});
+    abrirCapa(`<div class="sheet" role="dialog" aria-modal="true">${cabecera('Asistente')}<div class="body">
+      <div class="voz-cab"><button type="button" class="voz-mic" id="vozMic" aria-label="Hablar">${ico.mic}</button><div class="voz-estado" id="vozEstado">Pulsa el micrófono y di lo que has hecho.</div></div>
+      <div class="field"><textarea id="vozTxt" rows="3" placeholder="O escríbelo aquí: «He sembrado la Sarrana de trigo a 180 kilos»" aria-label="Lo que has dicho"></textarea></div>
+      <button type="button" class="btn block" id="vozEntender">Entender</button>
+      <div id="vozRes"></div>
+      <details class="voz-ej"><summary>Ejemplos de lo que puedes decir</summary><div class="chips">${EJEMPLOS_VOZ.map(e => `<button type="button" class="chip none" data-ej="${esc(e)}">${esc(e)}</button>`).join('')}</div>
+        <p class="small muted">Puedes decir «excepto la parte de Tomás» o «menos la parcela 180», y la fecha («ayer», «el lunes», «el 5 de noviembre»). Sin cobertura, usa el micrófono del teclado del móvil.</p></details>
+      </div></div>`, (el, d) => {
+      const ta = el.querySelector('#vozTxt'), est = el.querySelector('#vozEstado'), res = el.querySelector('#vozRes'), mic = el.querySelector('#vozMic');
+      let R = null, rec = null, escuchando = false;
+      const entender = () => {
+        if (!ta.value.trim()) { res.innerHTML = ''; return; }
+        R = interpretar(ta.value);
+        res.innerHTML = tarjetaVoz(R).html;
+      };
+      el.querySelector('#vozEntender').addEventListener('click', entender);
+      ta.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); entender(); } });
+      el.addEventListener('click', async e => {
+        const ej = e.target.closest('[data-ej]'); if (ej) { ta.value = ej.dataset.ej; entender(); return; }
+        const b = e.target.closest('[data-v]'); if (!b || !R) return;
+        if (b.dataset.v === 'guardar') {
+          const r = await guardarVoz(R); if (!r) return;
+          guardar(); volverA(d - 1); render(); toast(r);
+        } else if (b.dataset.v === 'abrir') { const RR = R; volverA(d - 1); abrirVoz(RR); }
+      });
+      mic.addEventListener('click', () => {
+        if (escuchando && rec) { rec.stop(); return; }
+        if (!SR) { est.textContent = 'Este navegador no deja dictar aquí. Pulsa el micrófono del teclado y habla.'; ta.focus(); return; }
+        rec = new SR(); rec.lang = 'es-ES'; rec.interimResults = true; rec.maxAlternatives = 1; rec.continuous = false;
+        rec.onstart = () => { escuchando = true; mic.classList.add('on'); est.textContent = 'Te escucho…'; ta.value = ''; res.innerHTML = ''; };
+        rec.onresult = e => { let txt = ''; for (const r of e.results) txt += r[0].transcript; ta.value = txt; };
+        rec.onerror = e => { est.textContent = e.error === 'not-allowed' || e.error === 'service-not-allowed' ? 'Da permiso al micrófono para poder dictar.' : e.error === 'network' ? 'Para dictar aquí hace falta cobertura. Sin cobertura, usa el micrófono del teclado.' : e.error === 'no-speech' ? 'No te he oído. Pulsa y habla otra vez.' : 'No te he entendido. Prueba otra vez.'; };
+        rec.onend = () => { escuchando = false; mic.classList.remove('on'); if (ta.value.trim()) { est.textContent = 'Revisa lo que he entendido:'; entender(); } else if (est.textContent === 'Te escucho…') est.textContent = 'Pulsa el micrófono y di lo que has hecho.'; };
+        try { rec.start(); } catch (err) { est.textContent = 'No se ha podido usar el micrófono.'; }
+      });
+    });
+  }
+
   // ---------- Eventos ----------
   const acciones = {
     verFinca: b => { ui.fincaId = b.dataset.id; empujar(); render(); window.scrollTo(0, 0); },
@@ -2299,6 +2799,7 @@
     if (e.target.id === 'fLabTipo') { ui.filtroLabor.tipo = e.target.value; render(); }
   });
   $('#cfgBtn').addEventListener('click', hojaAjustes);
+  $('#vozBtn').addEventListener('click', hojaVoz);
   $('#campBtn').addEventListener('click', hojaCampanas);
 
   let toastT;

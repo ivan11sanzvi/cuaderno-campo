@@ -311,3 +311,24 @@ label.btn { cursor: pointer; }
 .big-n { font: 700 1.6rem/1 var(--font-head); }
 tr.tot td { font-weight: 700; background: var(--surface-2); }
 .lnk { background: none; border: 0; padding: 0; color: var(--accent); font-weight: 600; text-align: left; text-decoration: underline; }
+
+/* Asistente de voz */
+.fab-voz { position: fixed; z-index: 6; left: max(16px, env(safe-area-inset-left, 0px)); bottom: calc(76px + env(safe-area-inset-bottom, 0px)); width: 58px; height: 58px; border-radius: 50%; border: 0; background: var(--straw); color: #1b1503; display: grid; place-items: center; box-shadow: 0 6px 18px rgba(0, 0, 0, .25); }
+.fab-voz svg { width: 28px; height: 28px; }
+.voz-cab { display: flex; align-items: center; gap: 14px; }
+.voz-mic { width: 76px; height: 76px; border-radius: 50%; border: 0; background: var(--accent); color: var(--accent-ink); display: grid; place-items: center; flex: none; box-shadow: 0 4px 14px rgba(0, 0, 0, .2); }
+.voz-mic svg { width: 36px; height: 36px; }
+.voz-mic.on { background: var(--neg); color: #fff; animation: latido 1.2s ease-in-out infinite; }
+@keyframes latido { 50% { transform: scale(1.08); box-shadow: 0 0 0 10px color-mix(in srgb, var(--neg) 25%, transparent); } }
+@media (prefers-reduced-motion: reduce) { .voz-mic.on { animation: none; } }
+.voz-estado { font-weight: 600; }
+.voz-tarjeta { display: flex; flex-direction: column; gap: 10px; }
+.voz-tarjeta .kv dd { text-align: left; font-weight: 600; }
+.voz-tarjeta .kv { grid-template-columns: auto 1fr; }
+.voz-parc { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.voz-parc span { font-size: .78rem; font-weight: 600; background: var(--surface-2); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; }
+.voz-parc span i { font-style: normal; color: var(--muted); font-weight: 500; }
+.voz-parc .tachada { text-decoration: line-through; color: var(--muted); }
+.voz-dudas { color: var(--warn-ink); background: var(--warn-bg); border-radius: 8px; padding: 8px 10px 8px 26px; margin: 0; }
+.voz-ej summary { cursor: pointer; font-weight: 650; color: var(--accent); padding: 6px 0; }
+.voz-ej .chip { cursor: pointer; text-align: left; white-space: normal; }

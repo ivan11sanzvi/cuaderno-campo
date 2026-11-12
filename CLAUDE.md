@@ -43,6 +43,15 @@ Habla con el usuario en español, con lenguaje sencillo y sin tecnicismos: es ag
 - En una labor de Tratamiento el producto sale **solo del almacén** del titular. Se comprueban la autorización en el cultivo, la dosis máxima, el estado y la caducidad, y si hay existencias suficientes. Si hay problemas se pide confirmar, y la labor guarda `avisos` y sale marcada «⚠ Revisar normativa».
 - Conviene regenerar `fitos.json` de vez en cuando, porque el Registro cambia cada semana.
 
+## Asistente de voz
+- Es el botón amarillo del micrófono, abajo a la izquierda (`hojaVoz`). El dictado usa Web Speech API en `es-ES`, que necesita cobertura; sin cobertura sirve el micrófono del teclado.
+- Funciona **sin IA**: `interpretar(texto)` aplica `normVoz` (números dichos con palabras → cifras), palabras clave (`VERBOS`) y búsqueda aproximada de nombres (`buscarNombres`, Levenshtein) de fincas, titulares, cultivos y productos.
+- Entiende labores, cosechas, albaranes, facturas, fincas nuevas, gastos, ingresos y semilla propia.
+- Fincas: se aplica la finca agrupada entera, salvo lo que vaya tras «excepto / menos / salvo» (parcelas por número, titulares u otras fincas). También entiende «las de trigo de Tomás».
+- Siempre enseña una tarjeta de confirmación. **Guardar** usa `registrarLabor` / `registrarCosecha` / `registrarMov`, con las mismas comprobaciones de normativa que el formulario. **Corregir** abre el formulario relleno.
+- Siembra: asigna el cultivo (`cultivoSiembra`) y descuenta la semilla «<Cultivo> para sembrar» del almacén de cada titular. La semilla propia entra como ajuste.
+- Historial: `empujar()` espera si hay un `history.go` pendiente (`pendientes`). Sin eso, al cerrar una ventana y abrir otra seguidas, la app se salía al pulsar atrás.
+
 ## Excel
 - La importación reconoce títulos parecidos («Paraje», «Pol.», «Sup. (ha)», «Propietario», «Superficie declarable PAC», «Término»…) y admite varias campañas en columnas: bloques CULTIVO / BASURA / LABOREO con el año encima.
 - Las filas se juntan por parcela SIGPAC. Las parcelas con el mismo nombre en el mismo pueblo forman una finca agrupada, salvo los nombres de la lista «no agrupar» (por defecto «Cambio»).
