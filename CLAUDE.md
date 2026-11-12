@@ -30,7 +30,7 @@ Habla con el usuario en español, con lenguaje sencillo y sin tecnicismos: es ag
 - «Lindan» se calcula con los contornos SIGPAC guardados en `f.geo` (vértice a menos de 5 m del borde de la otra parcela).
 
 ## Almacén, albaranes y facturas
-- `db.productos` es el catálogo de productos: `{nombre, tipo: Fitosanitario|Abono|Semilla|Otro, unidad: L|kg|t|ud, regId, registro}`.
+- `db.productos` es el catálogo de productos: `{nombre, tipo: Fitosanitario|Abono|Semilla|Combustible|Otro, unidad: L|kg|t|ud, regId, registro, n, p, k, densidad}`. `n/p/k` es la riqueza del abono en % de N, P₂O₅ y K₂O; se pone en cada línea de abono del albarán (`riquezaDeNombre` la propone desde «8-15-15», urea, NAC…).
 - `db.documentos` guarda los albaranes y facturas: `{tipo: albaran|factura, titular, fecha, proveedor, numero, lineas: [{productoId, cantidad, precio, importe}], archivos: [ids], albaranes (solo facturas), base, iva, total}`.
 - `db.ajustes` guarda las regularizaciones de existencias.
 - El inventario es **por titular**: entradas de albaranes − `labor.consumo` + ajustes. En `movimientosProducto(pid, tit)`, `null` significa todos los titulares y `''` sin titular.
@@ -48,6 +48,10 @@ Habla con el usuario en español, con lenguaje sencillo y sin tecnicismos: es ag
 - Coste de amortización: `costeHoraMaq` = (precioCompra − valorResidual) / horasVida; `costeEquipo` = suma €/h ÷ rendimiento = €/ha; `usoEquipos(campaña)` da ha, horas y € por equipo. Solo cuentan las labores con equipo. `costeMaqLabor(l)` se calcula al vuelo (no se guarda) y se suma a los gastos de la finca en `statsFinca`/`statsGrupo`/`statsCampana` (campo `maq`), al margen por hectárea y a Cuentas como «Maquinaria propia (amortización)», sin crear movimientos.
 - Gasóleo: el equipo lleva `gasoleo` (L/ha). `litrosLabor` = L/ha × ha. El gasóleo (`gasoleoAlm`: tipo «Combustible» o nombre gasóleo/gasoil, en L) es común a los titulares: `repartoGasoleo()` gasta por orden de fecha lo que entró antes (albarán más antiguo, sea de quien sea) y cada litro lleva el precio de su albarán. Las salidas salen al vuelo en `movimientosProducto`. Se suma a la finca; en el total de Cuentas no, porque ya está con la factura.
 - Voz: `maquinasDichas` reconoce nombre, marca, modelo o «la sulfatadora (de Tomás)» si no hay duda, y los quita de la frase antes de buscar la labor.
+
+## Abonado y cuaderno oficial
+- `ufLabor(l)` = kg de abono/ha × riqueza / 100 (UF/ha de N, P₂O₅, K₂O); `abonadoFinca(fid, c)`. Resumen → «Abonado» (`vAbonado`) por cultivo y por finca; también en la ficha de la parcela.
+- Cuaderno de campo oficial: Explotación → Agricultores → «Descargar» (`hojaCuaderno`, `datosCuaderno`, `excelCuaderno`). Excel por titular y campaña con 7 hojas: datos generales (titular, aplicadores ROPO, equipos ROMA/ITEAF), parcelas con nº de orden, tratamientos, fertilización, otras labores, cosecha y compras. Antes de descargar avisa de lo que falta.
 
 ## Fitosanitarios y normativa
 - `fitos.json` se genera con `herramientas/actualizar_fitos.py`. Lee el Registro del MAPA (`servicio.mapa.gob.es/regfiweb`): la lista de productos de cada cultivo y la tabla «Usos y Dosis Autorizados» de cada ficha PDF.
