@@ -37,6 +37,12 @@ Habla con el usuario en español, con lenguaje sencillo y sin tecnicismos: es ag
 - Las fotos y los PDF van en IndexedDB (`cuadernoCampoArchivos`, almacén `archivos`). Las fotos se reducen a 1800 px. La copia de seguridad JSON los incluye en base64 (`archivos`).
 - Una factura cuadra si la base (sin IVA) coincide con la suma de sus albaranes (±0,50 €) y las cantidades por producto también.
 
+## Explotación: agricultores y maquinaria
+- Pestaña «Explotación». `db.titulares` guarda la ficha de cada agricultor: `{nombre (el de la app), nombreCompleto, nif, explotacion, ropo, ropoNivel, ropoCaduca, telefono, email, direccion, notas}`. Se empareja por nombre con el `titular` de parcelas, albaranes, etc.
+- Cambiar el nombre en la ficha lo cambia en todo (`renombrarTitular`). El NIF se valida (DNI, NIE o CIF, `nifValido`). El carné de aplicador avisa 90 días antes de caducar.
+- `db.maquinas` guarda las máquinas: `{titular, tipo, nombre, marca, modelo, matricula, roma, anio, potencia, anchura, deposito, contador, itv, iteaf, seguroCompania, seguroVence, fechaCompra, precioCompra, baja, notas}`. Avisa de ITV (tractor, cosechadora, remolque, vehículo), ITEAF (pulverizador, abonadora) y seguro. Pensado para calcular más adelante costes por hectárea, mantenimiento y gasóleo.
+- Son datos personales: solo en el móvil y en las copias de seguridad, **nunca** en el repositorio.
+
 ## Fitosanitarios y normativa
 - `fitos.json` se genera con `herramientas/actualizar_fitos.py`. Lee el Registro del MAPA (`servicio.mapa.gob.es/regfiweb`): la lista de productos de cada cultivo y la tabla «Usos y Dosis Autorizados» de cada ficha PDF.
 - `fitos.json` trae **todos** los productos del Registro (3.103) para reconocer cualquier albarán. Solo los de los cultivos de la explotación (y de las categorías generales «Herbáceas extensivas/intensivas», «Rastrojeras» y «Márgenes de cultivos») llevan `c` (cultivos autorizados) y `u` (dosis).

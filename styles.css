@@ -70,13 +70,13 @@ main {
 
 .tabs {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 6; background: var(--surface); border-top: 1px solid var(--line);
-  display: grid; grid-template-columns: repeat(6, 1fr);
+  display: grid; grid-template-columns: repeat(7, 1fr);
   padding-bottom: env(safe-area-inset-bottom, 0px);
   padding-left: env(safe-area-inset-left, 0px); padding-right: env(safe-area-inset-right, 0px);
 }
 .tabs button {
   background: none; border: 0; padding: 8px 2px 10px; display: flex; flex-direction: column; align-items: center; gap: 2px;
-  color: var(--muted); font-size: .68rem; font-weight: 600; min-height: 60px; min-width: 0;
+  color: var(--muted); font-size: .62rem; font-weight: 600; min-height: 60px; min-width: 0; overflow: hidden; text-overflow: ellipsis;
 }
 .tabs button svg { width: 24px; height: 24px; }
 .tabs button[aria-current="page"] { color: var(--accent); }
@@ -335,3 +335,6 @@ tr.tot td { font-weight: 700; background: var(--surface-2); }
 
 .camp-row { padding: 0 10px 0 0; gap: 6px; }
 .camp-row > .row { border-top: 0; flex: 1; }
+
+/* Explotación: agricultores y maquinaria */
+.row.baja { opacity: .6; }

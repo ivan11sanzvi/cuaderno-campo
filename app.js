@@ -2,7 +2,7 @@
 (function () {
   // ---------- Constantes ----------
   const KEY = 'cuadernoCampo.v1';
-  const VERSION = '1.4.3';
+  const VERSION = '1.5.0';
   const TIPOS_LABOR = ['Labrado', 'Siembra', 'Abonado', 'Tratamiento', 'Rodillo', 'Cosecha', 'Empacado', 'Otro'];
   const CON_DOSIS = ['Siembra', 'Abonado', 'Tratamiento'];
   const UNIDADES = ['kg/ha', 'L/ha', 'g/ha', 'cc/ha', 'kg', 'L'];
@@ -18,7 +18,7 @@
   const HUES = { Trigo: 40, Cebada: 55, Titarro: 150, Lenteja: 18, 'Anís dulce': 85, Cilantro: 120, Esparceta: 320, Barbecho: 30 };
   const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
   const MESES_L = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
-  const TITULOS = { fincas: 'Fincas', cuaderno: 'Cuaderno de campo', cuentas: 'Cuentas', cosechas: 'Cosechas', almacen: 'Almacén', resumen: 'Resumen' };
+  const TITULOS = { fincas: 'Fincas', cuaderno: 'Cuaderno de campo', cuentas: 'Cuentas', cosechas: 'Cosechas', almacen: 'Almacén', explotacion: 'Explotación', resumen: 'Resumen' };
   // Servicios públicos: SIGPAC (FEGA) y ortofoto PNOA (IGN).
   const SIGPAC = 'https://sigpac-hubcloud.es';
   const PNOA = 'https://tms-pnoa-ma.idee.es/1.0.0/pnoa-ma/{z}/{x}/{y}.jpeg';
@@ -61,12 +61,12 @@
   // ---------- Datos ----------
   function nuevoDB() {
     const c = campanaDe(hoyISO());
-    return { v: 1, campanaActiva: c, campanas: [c], cultivos: CULTIVOS_BASE.slice(), fincas: [], siembras: [], labores: [], movimientos: [], cosechas: [], productos: [], documentos: [], ajustes: [], ultimaCopia: null, ultimoCambio: null, ejemplo: false };
+    return { v: 1, campanaActiva: c, campanas: [c], cultivos: CULTIVOS_BASE.slice(), fincas: [], siembras: [], labores: [], movimientos: [], cosechas: [], productos: [], documentos: [], ajustes: [], titulares: [], maquinas: [], ultimaCopia: null, ultimoCambio: null, ejemplo: false };
   }
   function normalizar(d) {
     const base = nuevoDB();
     const o = Object.assign(base, d && typeof d === 'object' ? d : {});
-    for (const k of ['campanas', 'fincas', 'siembras', 'labores', 'movimientos', 'cosechas', 'productos', 'documentos', 'ajustes']) if (!Array.isArray(o[k])) o[k] = [];
+    for (const k of ['campanas', 'fincas', 'siembras', 'labores', 'movimientos', 'cosechas', 'productos', 'documentos', 'ajustes', 'titulares', 'maquinas']) if (!Array.isArray(o[k])) o[k] = [];
     if (!Array.isArray(o.cultivos) || !o.cultivos.length) o.cultivos = CULTIVOS_BASE.slice();
     if (!o.campanaActiva) o.campanaActiva = campanaDe(hoyISO());
     if (!o.campanas.includes(o.campanaActiva)) o.campanas.push(o.campanaActiva);
@@ -333,7 +333,7 @@
   }
 
   // ---------- Estado de la interfaz y navegación (botón atrás de Android) ----------
-  const ui = { tab: 'fincas', fincaId: null, grupo: null, buscar: '', titular: '', abiertos: new Set(), filtroLabor: { finca: '', tipo: '' }, filtroMov: 'todos', alm: { vista: 'inventario', titular: '' }, resumenVista: 'campana', vistaFincas: 'lista', enfocar: null, enfocarGrupo: null, mapaAjustado: false };
+  const ui = { tab: 'fincas', fincaId: null, grupo: null, buscar: '', titular: '', abiertos: new Set(), filtroLabor: { finca: '', tipo: '' }, filtroMov: 'todos', alm: { vista: 'inventario', titular: '' }, exp: { vista: 'agricultores', titular: '' }, resumenVista: 'campana', vistaFincas: 'lista', enfocar: null, enfocarGrupo: null, mapaAjustado: false };
   const capas = [];
   const profundidad = () => capas.length + (ui.grupo ? 1 : 0) + (ui.fincaId ? 1 : 0);
   // Si hay un «atrás» en curso (history.go es asíncrono), las ventanas nuevas esperan a que termine;
@@ -769,9 +769,9 @@
     $('#title').textContent = ui.fincaId ? 'Parcela' : ui.grupo ? 'Finca agrupada' : TITULOS[ui.tab];
     document.querySelectorAll('.tabs button').forEach(b => b.setAttribute('aria-current', b.dataset.tab === ui.tab ? 'page' : 'false'));
     const main = $('#main');
-    main.innerHTML = ui.fincaId ? vDetalle(ui.fincaId) : ui.grupo ? vGrupo(ui.grupo) : ({ fincas: vFincas, cuaderno: vCuaderno, cuentas: vCuentas, cosechas: vCosechas, almacen: vAlmacen, resumen: vResumen }[ui.tab])();
-    const fab = { fincas: ['nuevaFinca', 'Finca'], cuaderno: ['nuevaLabor', 'Labor'], cuentas: ['nuevoMov', 'Apunte'], cosechas: ['nuevaCosecha', 'Cosecha'], almacen: ui.alm.vista === 'factura' ? ['nuevoDoc" data-k="factura', 'Factura'] : ['nuevoDoc" data-k="albaran', 'Albarán'] }[ui.tab];
-    const mostrarFab = fab && !ui.fincaId && !ui.grupo && (db.fincas.length || ui.tab === 'almacen') && !(ui.tab === 'fincas' && ui.vistaFincas === 'mapa');
+    main.innerHTML = ui.fincaId ? vDetalle(ui.fincaId) : ui.grupo ? vGrupo(ui.grupo) : ({ fincas: vFincas, cuaderno: vCuaderno, cuentas: vCuentas, cosechas: vCosechas, almacen: vAlmacen, explotacion: vExplotacion, resumen: vResumen }[ui.tab])();
+    const fab = { fincas: ['nuevaFinca', 'Finca'], cuaderno: ['nuevaLabor', 'Labor'], cuentas: ['nuevoMov', 'Apunte'], cosechas: ['nuevaCosecha', 'Cosecha'], almacen: ui.alm.vista === 'factura' ? ['nuevoDoc" data-k="factura', 'Factura'] : ['nuevoDoc" data-k="albaran', 'Albarán'], explotacion: ui.exp.vista === 'maquinaria' ? ['nuevaMaquina', 'Máquina'] : ['nuevoAgricultor', 'Agricultor'] }[ui.tab];
+    const mostrarFab = fab && !ui.fincaId && !ui.grupo && (db.fincas.length || ui.tab === 'almacen' || ui.tab === 'explotacion') && !(ui.tab === 'fincas' && ui.vistaFincas === 'mapa');
     $('#fabSlot').innerHTML = mostrarFab ? `<button class="fab" data-act="${fab[0]}">${ico.plus}${fab[1]}</button>` : '';
     montarMapa();
   }
@@ -1887,7 +1887,7 @@
   const UNI_PROD = ['L', 'kg', 't', 'ud'];
   const TIPO_DE_LABOR = { Tratamiento: 'Fitosanitario', Abonado: 'Abono', Siembra: 'Semilla' };
   const producto = id => db.productos.find(p => p.id === id);
-  const titularesTodos = () => [...new Set([...titulares(), ...db.documentos.map(d => d.titular), ...db.ajustes.map(a => a.titular)].map(t => String(t || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
+  const titularesTodos = () => [...new Set([...titulares(), ...db.titulares.map(t => t.nombre), ...db.maquinas.map(m => m.titular), ...db.documentos.map(d => d.titular), ...db.ajustes.map(a => a.titular)].map(t => String(t || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
   const titularDe = fid => String((finca(fid) || {}).titular || '').trim();
   function movimientosProducto(pid, tit) {
     const out = [];
@@ -2812,6 +2812,166 @@
     });
   }
 
+  // ---------- Explotación: datos de cada agricultor (titular) y su maquinaria ----------
+  const NIVELES_ROPO = ['Básico', 'Cualificado', 'Fumigador', 'Piloto aplicador'];
+  const TIPOS_MAQ = ['Tractor', 'Cosechadora', 'Sembradora', 'Pulverizador', 'Abonadora', 'Cultivador', 'Grada', 'Arado', 'Chísel', 'Rodillo', 'Remolque', 'Empacadora', 'Vehículo', 'Otro'];
+  const CON_ITV = ['Tractor', 'Cosechadora', 'Remolque', 'Vehículo'];
+  const CON_ITEAF = ['Pulverizador', 'Abonadora'];
+  const CON_ANCHURA = ['Cosechadora', 'Sembradora', 'Pulverizador', 'Abonadora', 'Cultivador', 'Grada', 'Arado', 'Chísel', 'Rodillo'];
+  const fichaTitular = n => db.titulares.find(t => norm(t.nombre) === norm(n)) || null;
+  // Comprueba la letra de control de un DNI, NIE o CIF. null = vacío
+  function nifValido(s) {
+    const v = String(s || '').toUpperCase().replace(/[\s.\-]/g, ''); if (!v) return null;
+    const L = 'TRWAGMYFPDXBNJZSQVHLCKE';
+    let m = v.match(/^(\d{8})([A-Z])$/); if (m) return L[+m[1] % 23] === m[2];
+    m = v.match(/^([XYZ])(\d{7})([A-Z])$/); if (m) return L[+('XYZ'.indexOf(m[1]) + m[2]) % 23] === m[3];
+    m = v.match(/^([ABCDEFGHJNPQRSUVW])(\d{7})([0-9A-J])$/);
+    if (m) { let a = 0, b = 0; for (let i = 0; i < 7; i++) { const n = +m[2][i]; if (i % 2 === 0) { const x = n * 2; a += Math.floor(x / 10) + x % 10; } else b += n; } const c = (10 - (a + b) % 10) % 10; return m[3] === String(c) || m[3] === 'JABCDEFGHI'[c]; }
+    return false;
+  }
+  // Fecha de caducidad o vencimiento: vencida, pronto (menos de N días) o al día
+  function estadoFecha(iso, dias = 60) {
+    if (!iso) return null;
+    const hoy = hoyISO(); if (iso < hoy) return 'vencido';
+    const lim = new Date(); lim.setDate(lim.getDate() + dias);
+    return iso <= new Date(lim - lim.getTimezoneOffset() * 60000).toISOString().slice(0, 10) ? 'pronto' : 'ok';
+  }
+  const vencidoDe = txt => /^(ITV|Inspecci)/.test(txt) ? 'vencida' : 'vencido';
+  const pillFecha = (txt, iso, dias) => { const e = estadoFecha(iso, dias); if (!e) return ''; return `<span class="pill ${e === 'vencido' ? 'neg' : e === 'pronto' ? 'warn' : 'pos'}">${txt} ${e === 'vencido' ? vencidoDe(txt) : e === 'pronto' ? 'vence' : 'hasta'} ${fmtFecha(iso)}</span>`; };
+  function avisosMaquina(m) {
+    const out = [];
+    if (CON_ITV.includes(m.tipo)) out.push(['ITV', m.itv, 30]);
+    if (CON_ITEAF.includes(m.tipo)) out.push(['Inspección ITEAF', m.iteaf, 60]);
+    if (m.seguroVence) out.push(['Seguro', m.seguroVence, 30]);
+    return out;
+  }
+  // Cambiar el nombre de un titular lo cambia en todo lo suyo
+  function renombrarTitular(viejo, nuevo) {
+    if (!viejo || !nuevo || viejo === nuevo) return;
+    const es = x => String(x || '').trim() === viejo;
+    db.fincas.forEach(f => { if (es(f.titular)) f.titular = nuevo; });
+    db.documentos.forEach(d => { if (es(d.titular)) d.titular = nuevo; });
+    db.ajustes.forEach(a => { if (es(a.titular)) a.titular = nuevo; });
+    db.labores.forEach(l => { if (l.consumo && es(l.consumo.titular)) l.consumo.titular = nuevo; });
+    db.maquinas.forEach(m => { if (es(m.titular)) m.titular = nuevo; });
+    if (ui.alm.titular === viejo) ui.alm.titular = nuevo;
+    if (ui.exp.titular === viejo) ui.exp.titular = nuevo;
+    if (ui.titular === viejo) ui.titular = nuevo;
+  }
+
+  function vExplotacion() {
+    const e = ui.exp;
+    let h = `<div class="segs" role="group" aria-label="Apartado">${[['agricultores', 'Agricultores'], ['maquinaria', 'Maquinaria']].map(([k, t]) => `<button data-act="expVista" data-k="${k}" aria-pressed="${e.vista === k}">${t}</button>`).join('')}</div>`;
+    return h + (e.vista === 'maquinaria' ? vMaquinaria() : vAgricultores());
+  }
+  function vAgricultores() {
+    const ts = titularesTodos();
+    if (!ts.length) return vacio('Aún no hay agricultores', 'Añade los datos de cada titular: NIF, nº de explotación y carné de aplicador (ROPO).', '<button class="btn primary" data-act="nuevoAgricultor">Añadir agricultor</button>');
+    const avisos = ts.map(fichaTitular).filter(f => f && ['vencido', 'pronto'].includes(estadoFecha(f.ropoCaduca, 90)));
+    let h = avisos.length ? `<div class="banner"><p>${avisos.map(f => `Carné de aplicador de <b>${esc(f.nombre)}</b> ${estadoFecha(f.ropoCaduca, 90) === 'vencido' ? 'caducado el' : 'caduca el'} ${fmtFecha(f.ropoCaduca)}.`).join(' ')}</p></div>` : '';
+    h += '<div class="list">' + ts.map(n => {
+      const f = fichaTitular(n); const fs = fincasTitular(n); const nm = db.maquinas.filter(m => m.titular === n && !m.baja).length;
+      const datos = f ? [f.nif ? `NIF ${f.nif}` : '', f.explotacion ? `Explotación ${f.explotacion}` : '', f.ropo ? `ROPO ${f.ropo}` : ''].filter(Boolean).join(' · ') : '';
+      const falta = !f || !f.nif || !f.explotacion || !f.ropo;
+      return `<button class="row" data-act="editAgricultor" data-n="${esc(n)}"><div class="main"><div class="t">${esc(f && f.nombreCompleto ? f.nombreCompleto : n)}${f && f.nombreCompleto && norm(f.nombreCompleto) !== norm(n) ? ` <span class="small muted">(${esc(n)})</span>` : ''}</div>
+        <div class="s">${esc([`${fs.length} parcela${fs.length === 1 ? '' : 's'} · ${fmtN(sum(fs, x => x.superficie))} ha`, nm ? `${nm} máquina${nm === 1 ? '' : 's'}` : ''].filter(Boolean).join(' · '))}</div>
+        ${datos ? `<div class="s">${esc(datos)}</div>` : ''}<div class="chips" style="margin-top:4px">${f ? pillFecha('Carné', f.ropoCaduca, 90) : ''}${falta ? '<span class="pill warn">Faltan datos</span>' : ''}</div></div></button>`;
+    }).join('') + '</div><p class="note">Toca un agricultor para completar o corregir sus datos. Se guardan solo en este teléfono y en tus copias de seguridad.</p>';
+    return h;
+  }
+  function vMaquinaria() {
+    const tits = titularesTodos(); const tit = ui.exp.titular;
+    let h = tits.length ? `<div class="carpetas" role="group" aria-label="Maquinaria de">${[['', 'Todos'], ...tits.map(t => [t, t])].map(([k, t]) => `<button data-act="expTitular" data-k="${esc(k)}" aria-pressed="${tit === k}">${k ? ico.carpeta : ''}${esc(t)}</button>`).join('')}</div>` : '';
+    const ms = db.maquinas.filter(m => !tit || m.titular === tit);
+    if (!ms.length) return h + vacio('Sin maquinaria', 'Da de alta los tractores y aperos de cada titular: matrícula, ROMA, ITV, inspección ITEAF y seguro. Más adelante servirá para calcular costes por hectárea, mantenimiento y gasóleo.', '<button class="btn primary" data-act="nuevaMaquina">Añadir máquina</button>');
+    const alertas = ms.filter(m => !m.baja).flatMap(m => avisosMaquina(m).filter(([, iso, dd]) => ['vencido', 'pronto'].includes(estadoFecha(iso, dd))).map(([t, iso, dd]) => `${esc(m.nombre)}: ${t} ${estadoFecha(iso, dd) === 'vencido' ? vencidoDe(t) + ' el' : 'vence el'} ${fmtFecha(iso)}`));
+    if (alertas.length) h += `<div class="banner"><p>${alertas.join('<br>')}</p></div>`;
+    const orden = (a, b) => TIPOS_MAQ.indexOf(a.tipo) - TIPOS_MAQ.indexOf(b.tipo) || a.nombre.localeCompare(b.nombre, 'es', { numeric: true });
+    const fila = m => `<button class="row${m.baja ? ' baja' : ''}" data-act="editMaquina" data-id="${m.id}"><div class="main"><div class="t">${esc(m.nombre)}${m.baja ? ' <span class="pill muted">De baja</span>' : ''}</div>
+      <div class="s">${esc([m.tipo, [m.marca, m.modelo].filter(Boolean).join(' '), m.anio, m.potencia ? `${fmtN(m.potencia, 0)} CV` : '', m.anchura ? `${fmtN(m.anchura, 2)} m` : '', m.deposito ? `${fmtN(m.deposito, 0)} L` : '', tit ? '' : m.titular].filter(Boolean).join(' · '))}</div>
+      ${m.matricula || m.roma ? `<div class="s">${esc([m.matricula ? 'Matrícula ' + m.matricula : '', m.roma ? 'ROMA ' + m.roma : ''].filter(Boolean).join(' · '))}</div>` : ''}
+      ${m.baja ? '' : `<div class="chips" style="margin-top:4px">${avisosMaquina(m).map(([t, iso, dd]) => iso ? pillFecha(t, iso, dd) : `<span class="pill muted">${t}: sin fecha</span>`).join('')}</div>`}</div>
+      ${m.contador ? `<div class="end small muted">${fmtN(m.contador, 0)} h</div>` : ''}</button>`;
+    const tipos = [...new Set(ms.map(m => m.tipo))].sort((a, b) => TIPOS_MAQ.indexOf(a) - TIPOS_MAQ.indexOf(b));
+    h += tipos.map(t => `<h2 class="sec">${esc(t)}</h2><div class="list">${ms.filter(m => m.tipo === t).sort(orden).map(fila).join('')}</div>`).join('');
+    return h;
+  }
+
+  function formAgricultor(nombre) {
+    const f = nombre ? fichaTitular(nombre) : null;
+    const viejo = f ? f.nombre : nombre || '';
+    const fs = viejo ? fincasTitular(viejo) : [];
+    const maqs = viejo ? db.maquinas.filter(m => m.titular === viejo) : [];
+    const resumen = viejo ? `<div class="card pad small" style="display:flex;flex-direction:column;gap:4px"><b>En la app</b><span>${fs.length} parcela${fs.length === 1 ? '' : 's'} · ${fmtN(sum(fs, x => x.superficie))} ha${maqs.length ? ` · ${maqs.length} máquina${maqs.length === 1 ? '' : 's'}` : ''}</span>${fs.length ? `<button type="button" class="btn sm" data-act="filtrarTitular" data-k="${esc(viejo)}">Ver sus parcelas</button>` : ''}</div>` : '';
+    formulario({
+      titulo: f || nombre ? `Agricultor: ${esc(viejo)}` : 'Nuevo agricultor',
+      valores: f ? Object.assign({}, f) : { nombre: nombre || '' },
+      campos: [
+        { k: 'nombre', label: 'Nombre en la app', req: 1, half: 1, placeholder: 'Ej.: Ivan', hint: 'El que usas en parcelas y albaranes.' },
+        { k: 'nombreCompleto', label: 'Nombre completo o razón social', half: 1, placeholder: 'Nombre y apellidos' },
+        { k: 'nif', label: 'NIF', half: 1, placeholder: 'Ej.: 12345678Z', hint: 'DNI, NIE o CIF. La app comprueba la letra.' },
+        { k: 'explotacion', label: 'Nº de explotación', half: 1, placeholder: 'Registro de explotaciones (REACyL)' },
+        { k: 'ropo', label: 'Nº de inscripción ROPO', placeholder: 'Registro Oficial de Productores y Operadores' },
+        { k: 'ropoNivel', label: 'Carné de aplicador', type: 'select', half: 1, opts: () => [['', '—'], ...NIVELES_ROPO.map(x => [x, x])] },
+        { k: 'ropoCaduca', label: 'Caduca el', type: 'date', half: 1, hint: 'Te avisa 3 meses antes.' },
+        { k: 'telefono', label: 'Teléfono', type: 'tel', half: 1 },
+        { k: 'email', label: 'Correo', type: 'email', half: 1 },
+        { k: 'direccion', label: 'Dirección' },
+        { k: 'notas', label: 'Notas', type: 'textarea', placeholder: 'Banco, cuenta, gestoría, cooperativa…' }
+      ],
+      extra: resumen,
+      guardar(v) {
+        v.nif = String(v.nif || '').toUpperCase().replace(/[\s.\-]/g, '');
+        if (nifValido(v.nif) === false) return 'El NIF no es correcto: revisa los números y la letra';
+        if (v.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v.email)) return 'El correo no parece correcto';
+        const otro = fichaTitular(v.nombre);
+        if (otro && otro !== f) return `Ya hay un agricultor llamado «${otro.nombre}»`;
+        if (viejo && viejo !== v.nombre) renombrarTitular(viejo, v.nombre);
+        if (f) Object.assign(f, v); else db.titulares.push(Object.assign({ id: uid() }, v));
+      },
+      textoBorrar: 'Se borrará la ficha de este agricultor (NIF, ROPO…). Sus parcelas, albaranes y máquinas no se tocan.',
+      borrar: f && (() => { db.titulares = db.titulares.filter(x => x !== f); })
+    });
+  }
+
+  function formMaquina(id) {
+    const m = id ? db.maquinas.find(x => x.id === id) : null;
+    const ts = titularesTodos();
+    formulario({
+      titulo: m ? esc(m.nombre) : 'Nueva máquina',
+      valores: m ? Object.assign({}, m, { baja: m.baja ? 'si' : 'no' }) : { titular: ui.exp.titular || (ts.length === 1 ? ts[0] : ''), tipo: 'Tractor', baja: 'no' },
+      campos: [
+        { k: 'titular', label: 'Titular', req: 1, half: 1, lista: titularesTodos, placeholder: 'Ej.: Ivan' },
+        { k: 'tipo', label: 'Tipo', type: 'select', req: 1, half: 1, opts: () => TIPOS_MAQ.map(t => [t, t]) },
+        { k: 'nombre', label: 'Nombre', req: 1, placeholder: 'Cómo la llamáis: «el John Deere grande», «sulfatadora nueva»…' },
+        { k: 'marca', label: 'Marca', half: 1, placeholder: 'Ej.: John Deere' },
+        { k: 'modelo', label: 'Modelo', half: 1, placeholder: 'Ej.: 6155R' },
+        { k: 'matricula', label: 'Matrícula', half: 1, placeholder: 'Ej.: E1234BCD' },
+        { k: 'roma', label: 'Nº ROMA', half: 1, placeholder: 'Registro Oficial de Maquinaria Agrícola' },
+        { k: 'anio', label: 'Año', type: 'num', half: 1, placeholder: 'Ej.: 2018' },
+        { k: 'potencia', label: 'Potencia (CV)', type: 'num', half: 1, show: v => ['Tractor', 'Cosechadora', 'Vehículo'].includes(v.tipo) },
+        { k: 'anchura', label: 'Anchura de trabajo (m)', type: 'num', half: 1, show: v => CON_ANCHURA.includes(v.tipo), placeholder: 'Ej.: 24' },
+        { k: 'deposito', label: 'Depósito (L)', type: 'num', miles: 1, half: 1, show: v => ['Pulverizador', 'Abonadora'].includes(v.tipo) },
+        { k: 'contador', label: 'Horas de contador', type: 'num', miles: 1, half: 1, show: v => ['Tractor', 'Cosechadora', 'Vehículo'].includes(v.tipo), placeholder: 'Ej.: 4.250' },
+        { k: 'itv', label: 'Próxima ITV', type: 'date', half: 1, show: v => CON_ITV.includes(v.tipo) },
+        { k: 'iteaf', label: 'Próxima inspección ITEAF', type: 'date', half: 1, show: v => CON_ITEAF.includes(v.tipo), hint: 'Inspección de equipos de aplicación de fitosanitarios.' },
+        { k: 'seguroCompania', label: 'Seguro (compañía)', half: 1 },
+        { k: 'seguroVence', label: 'Seguro vence el', type: 'date', half: 1 },
+        { k: 'fechaCompra', label: 'Fecha de compra', type: 'date', half: 1 },
+        { k: 'precioCompra', label: 'Precio de compra (€)', type: 'num', miles: 1, half: 1, hint: 'Servirá para calcular su coste por hectárea.' },
+        { k: 'baja', label: 'Estado', type: 'select', opts: () => [['no', 'En uso'], ['si', 'Vendida o de baja']] },
+        { k: 'notas', label: 'Notas', type: 'textarea', placeholder: 'Taller, recambios, averías conocidas…' }
+      ],
+      guardar(v) {
+        if (v.anio && (v.anio < 1900 || v.anio > new Date().getFullYear() + 1)) return 'El año no parece correcto';
+        const x = Object.assign({}, v, { baja: v.baja === 'si', matricula: String(v.matricula || '').toUpperCase().replace(/\s/g, '') });
+        if (m) Object.assign(m, x); else db.maquinas.push(Object.assign({ id: uid() }, x));
+      },
+      textoBorrar: 'Se borrará la máquina. Si la has vendido, mejor márcala «Vendida o de baja» para conservar su historial.',
+      borrar: m && (() => { db.maquinas = db.maquinas.filter(x => x !== m); })
+    });
+  }
+
   // ---------- Eventos ----------
   const acciones = {
     verFinca: b => { ui.fincaId = b.dataset.id; empujar(); render(); window.scrollTo(0, 0); },
@@ -2844,6 +3004,12 @@
     editCosecha: b => formCosecha(b.dataset.id),
     filtroMov: b => { ui.filtroMov = b.dataset.k; render(); },
     almVista: b => { ui.alm.vista = b.dataset.k; render(); },
+    expVista: b => { ui.exp.vista = b.dataset.k; render(); },
+    expTitular: b => { ui.exp.titular = b.dataset.k; render(); },
+    nuevoAgricultor: () => formAgricultor(null),
+    editAgricultor: b => formAgricultor(b.dataset.n),
+    nuevaMaquina: () => formMaquina(null),
+    editMaquina: b => formMaquina(b.dataset.id),
     almTitular: b => { ui.alm.titular = b.dataset.k; render(); },
     nuevoDoc: b => formDocumento(b.dataset.k || 'albaran'),
     editDoc: b => formDocumento(null, b.dataset.id),
