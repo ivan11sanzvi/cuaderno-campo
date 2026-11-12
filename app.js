@@ -2,7 +2,7 @@
 (function () {
   // ---------- Constantes ----------
   const KEY = 'cuadernoCampo.v1';
-  const VERSION = '1.9.0';
+  const VERSION = '1.9.1';
   const TIPOS_LABOR = ['Labrado', 'Siembra', 'Abonado', 'Tratamiento', 'Rodillo', 'Cosecha', 'Empacado', 'Otro'];
   const CON_DOSIS = ['Siembra', 'Abonado', 'Tratamiento'];
   const UNIDADES = ['kg/ha', 'L/ha', 'g/ha', 'cc/ha', 'kg', 'L'];
@@ -306,8 +306,8 @@
     return Math.round(c.porHa * haLabor(l) * 100) / 100;
   }
   // ---------- Gasóleo ----------
-  // Litros = L/ha del equipo × hectáreas. Salen del almacén del dueño del tractor.
-  // Precio = el de los últimos albaranes que forman las existencias que había ese día (lo último que entró es lo que queda).
+  // Litros = L/ha del equipo × hectáreas. El gasóleo es de los tres: se gasta primero lo que entró antes
+  // (el albarán más antiguo, sea de quien sea), y cuando se acaba, el siguiente. Cada litro lleva el precio de su albarán.
   const esGasoleo = p => p && p.unidad === 'L' && (p.tipo === 'Combustible' || /gas[oó]le?o|gas-?oil/i.test(p.nombre));
   function gasoleoAlm() {
     const ps = db.productos.filter(esGasoleo); if (ps.length <= 1) return ps[0] || null;
@@ -315,28 +315,43 @@
     return ps.sort((a, b) => n(b) - n(a))[0];
   }
   const litrosLabor = l => { const e = equipo(l.equipoId); return e && +e.gasoleo > 0 ? Math.round(+e.gasoleo * haLabor(l) * 100) / 100 : 0; };
-  const titularGasoleo = l => { const e = equipo(l.equipoId); const m = e && (maquina(e.tractorId) || maquina(e.aperoId)); return m ? m.titular || '' : titularDe(l.fincaId); };
-  let cacheGas = { k: '', m: new Map() };
-  function precioGasoleo(fecha) {
+  let cacheGas = { k: '', r: null };
+  function repartoGasoleo() {
     const g = gasoleoAlm(); if (!g) return null;
     const k = `${db.ultimoCambio}|${db.labores.length}|${db.documentos.length}|${db.ajustes.length}|${db.equipos.length}|${g.id}`;
-    if (cacheGas.k !== k) cacheGas = { k, m: new Map() };
-    const f = fecha || hoyISO(); if (cacheGas.m.has(f)) return cacheGas.m.get(f);
-    const entradas = []; db.documentos.filter(d => d.tipo === 'albaran').forEach(d => (d.lineas || []).forEach(x => { const q = +x.cantidad || 0; const imp = +x.importe || (+x.precio ? +x.precio * q : 0); if (x.productoId === g.id && q > 0 && imp > 0) entradas.push({ fecha: d.fecha || '', q, imp }); }));
-    let r = null;
-    if (entradas.length) {
-      const antes = entradas.filter(x => x.fecha <= f).sort((a, b) => b.fecha.localeCompare(a.fecha));
-      if (!antes.length) r = sum(entradas, x => x.imp) / sum(entradas, x => x.q);
-      else {
-        const stock = sum(movimientosProducto(g.id, null).filter(m => (m.fecha || '') <= f), m => m.cant);
-        let q = 0, imp = 0;
-        for (const x of antes) { const tomar = stock > 0 ? Math.min(x.q, stock - q) : x.q; if (tomar <= 0) break; q += tomar; imp += x.imp / x.q * tomar; if (stock <= 0) break; }
-        r = q > 0 ? imp / q : sum(antes, x => x.imp) / sum(antes, x => x.q);
-      }
+    if (cacheGas.k === k) return cacheGas.r;
+    const ev = [];
+    db.documentos.filter(d => d.tipo === 'albaran').forEach(d => (d.lineas || []).forEach(x => { const q = +x.cantidad || 0; if (x.productoId !== g.id || q <= 0) return; const imp = +x.importe || (+x.precio ? +x.precio * q : 0); ev.push({ f: d.fecha || '', o: 0, q, t: d.titular || '', pu: imp > 0 ? imp / q : null }); }));
+    db.ajustes.filter(a => a.productoId === g.id).forEach(a => { const q = +a.cantidad || 0; if (q > 0) ev.push({ f: a.fecha || '', o: 0, q, t: a.titular || '', pu: null }); else if (q < 0) ev.push({ f: a.fecha || '', o: 1, q: -q, t: a.titular || '' }); });
+    db.labores.forEach(l => { const q = litrosLabor(l); if (q) ev.push({ f: l.fecha || '', o: 2, q, l }); });
+    ev.sort((a, b) => a.f.localeCompare(b.f) || a.o - b.o);
+    const conPrecio = ev.filter(e => e.o === 0 && e.pu != null);
+    const medio = conPrecio.length ? sum(conPrecio, e => e.pu * e.q) / sum(conPrecio, e => e.q) : null;
+    const cola = []; const porLabor = new Map(); let ultimo = medio;
+    const tomar = (q, soloDe) => {
+      const partes = [];
+      for (const x of cola) { if (q <= 1e-9) break; if (x.q <= 1e-9 || (soloDe != null && x.t !== soloDe)) continue; const c = Math.min(x.q, q); x.q -= c; q -= c; partes.push({ t: x.t, q: c, pu: x.pu }); }
+      return { partes, falta: q > 1e-9 ? q : 0 };
+    };
+    for (const e of ev) {
+      if (e.o === 0) { const pu = e.pu != null ? e.pu : ultimo; cola.push({ t: e.t, q: e.q, pu }); if (e.pu != null) ultimo = e.pu; continue; }
+      if (e.o === 1) { tomar(e.q, e.t); continue; }
+      const r = tomar(e.q, null);
+      if (r.falta) r.partes.push({ t: titularDe(e.l.fincaId), q: r.falta, pu: ultimo, falta: true });
+      const m = new Map(); r.partes.forEach(p => { const o = m.get(p.t) || { t: p.t, q: 0, imp: 0, sinPrecio: false }; o.q += p.q; if (p.pu != null) o.imp += p.q * p.pu; else o.sinPrecio = true; m.set(p.t, o); });
+      porLabor.set(e.l.id, { partes: [...m.values()], falta: r.falta, coste: r.partes.every(p => p.pu != null) ? sum(r.partes, p => p.q * p.pu) : (medio != null ? sum(r.partes, p => p.q * (p.pu != null ? p.pu : medio)) : null) });
     }
-    cacheGas.m.set(f, r); return r;
+    const r = { g, porLabor, cola: cola.filter(x => x.q > 1e-9), medio, ultimo };
+    cacheGas = { k, r }; return r;
   }
-  function costeGasLabor(l) { const q = litrosLabor(l); if (!q) return null; const p = precioGasoleo(l.fecha); return p == null ? null : Math.round(q * p * 100) / 100; }
+  // Precio de los próximos litros que se gastarán (lo más antiguo que queda)
+  function precioGasoleo(litros = 1) {
+    const R = repartoGasoleo(); if (!R) return null;
+    let q = 0, imp = 0;
+    for (const x of R.cola) { if (q >= litros) break; const c = Math.min(x.q, litros - q); if (x.pu == null) continue; q += c; imp += c * x.pu; }
+    return q > 0 ? imp / q : R.ultimo;
+  }
+  function costeGasLabor(l) { if (!litrosLabor(l)) return null; const R = repartoGasoleo(); const x = R && R.porLabor.get(l.id); return x && x.coste != null ? Math.round(x.coste * 100) / 100 : null; }
   function statsFinca(fid, c) {
     const f = finca(fid); const ha = (f && f.superficie) || 0;
     const kg = sum(db.cosechas.filter(x => x.fincaId === fid && x.campana === c), x => x.kg);
@@ -1233,10 +1248,11 @@
           const ha = fs.length === 1 && sup > 0 ? sup : sum(fs, f => +f.superficie || 0);
           let txt = !e ? 'Con equipo, la app suma a la finca el coste de la maquinaria.' : ce.porHa == null ? `<span class="neg">Faltan datos para la amortización: ${esc(ce.faltan.join(', ') || 'rendimiento')}.</span>` : `Amortización: ${eur(ce.porHa, 2)}/ha${ha ? ` × ${fmtN(ha)} ha = <b>${eur(ce.porHa * ha, 2)}</b>` : ''}.`;
           if (e && +e.gasoleo > 0 && ha) {
-            const q = +e.gasoleo * ha; const pr = precioGasoleo(v.fecha); const g = gasoleoAlm();
-            const t = titularGasoleo({ equipoId: e.id, fincaId: fs[0] && fs[0].id });
-            txt += `<br>Gasóleo: ${fmtN(e.gasoleo)} L/ha × ${fmtN(ha)} ha = <b>${fmtN(q, 0)} L</b>${pr != null ? ` × ${fmtN(pr, 3)} €/L = <b>${eur(q * pr, 2)}</b>` : ' <span class="neg">(sin precio: falta el albarán del gasóleo con su precio)</span>'}${g ? `, del almacén de ${esc(t || '—')}` : ''}.`;
-            if (g) { const ex = existencias(g.id, t) + (l ? sum(miembros.filter(x => titularGasoleo(x) === t), litrosLabor) : 0); if (ex < q) txt += ` <span class="neg">Solo le quedan ${fmtN(ex, 0)} L.</span>`; }
+            const q = +e.gasoleo * ha; const g = gasoleoAlm();
+            const yaGastado = l ? sum(miembros, litrosLabor) : 0;
+            const pr = l && yaGastado ? (sum(miembros, x => costeGasLabor(x) || 0) / yaGastado || precioGasoleo(q)) : precioGasoleo(q);
+            txt += `<br>Gasóleo: ${fmtN(e.gasoleo)} L/ha × ${fmtN(ha)} ha = <b>${fmtN(q, 0)} L</b>${pr != null ? ` × ${fmtN(pr, 3)} €/L = <b>${eur(q * pr, 2)}</b>` : ' <span class="neg">(sin precio: falta el albarán del gasóleo con su precio)</span>'}${g ? ', del gasóleo común (primero el más antiguo)' : ''}.`;
+            if (g) { const ex = existencias(g.id, null) + yaGastado; if (ex < q) txt += ` <span class="neg">Solo quedan ${fmtN(ex, 0)} L entre todos.</span>`; }
           }
           if (e) txt += '<br>Se suma a los gastos de la finca.';
           hEq.innerHTML = txt;
@@ -1977,7 +1993,7 @@
     db.labores.filter(l => l.consumo && l.consumo.productoId === pid && (tit == null || l.consumo.titular === tit)).forEach(l => out.push({ fecha: l.fecha, cant: -(+l.consumo.cantidad || 0), txt: `${l.tipo} · ${(finca(l.fincaId) || {}).nombre || ''}`, titular: l.consumo.titular, labor: l.id }));
     db.ajustes.filter(a => a.productoId === pid && (tit == null || a.titular === tit)).forEach(a => out.push({ fecha: a.fecha, cant: +a.cantidad || 0, txt: `Ajuste${a.motivo ? ' · ' + a.motivo : ''}`, titular: a.titular, ajuste: a.id }));
     const g = gasoleoAlm();
-    if (g && g.id === pid) db.labores.forEach(l => { const q = litrosLabor(l); if (!q) return; const t = titularGasoleo(l); if (tit == null || t === tit) out.push({ fecha: l.fecha, cant: -q, txt: `Gasóleo · ${l.tipo} · ${(finca(l.fincaId) || {}).nombre || ''}`, titular: t, labor: l.id }); });
+    if (g && g.id === pid) { const R = repartoGasoleo(); db.labores.forEach(l => { const x = R.porLabor.get(l.id); if (!x) return; x.partes.forEach(pt => { if (tit == null || pt.t === tit) out.push({ fecha: l.fecha, cant: -Math.round(pt.q * 1000) / 1000, txt: `Gasóleo · ${l.tipo} · ${(finca(l.fincaId) || {}).nombre || ''}${pt.t ? '' : ''}`, titular: pt.t, labor: l.id }); }); }); }
     return out.sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
   }
   const existencias = (pid, tit) => Math.round(sum(movimientosProducto(pid, tit), m => m.cant) * 1000) / 1000;
@@ -1987,7 +2003,7 @@
     db.documentos.filter(d => d.tipo === 'albaran' && (tit == null || d.titular === tit)).forEach(d => (d.lineas || []).forEach(l => ids.add(l.productoId)));
     db.labores.forEach(l => { if (l.consumo && (tit == null || l.consumo.titular === tit)) ids.add(l.consumo.productoId); });
     db.ajustes.forEach(a => { if (tit == null || a.titular === tit) ids.add(a.productoId); });
-    const g = gasoleoAlm(); if (g && db.labores.some(l => litrosLabor(l) && (tit == null || titularGasoleo(l) === tit))) ids.add(g.id);
+    const g = gasoleoAlm(); const R = g && repartoGasoleo(); if (R && [...R.porLabor.values()].some(x => x.partes.some(pt => tit == null || pt.t === tit))) ids.add(g.id);
     return [...ids].map(producto).filter(Boolean).sort((a, b) => a.nombre.localeCompare(b.nombre, 'es'));
   }
   const totalDoc = d => Math.round(sum(d.lineas || [], l => l.importe) * 100) / 100;
@@ -3032,7 +3048,7 @@
       o.ha += l.superficie > 0 ? +l.superficie : +((finca(l.fincaId) || {}).superficie) || 0; o.n++;
     });
     db.labores.forEach(l => { const o = out.get(l.equipoId); if (!o || (campana && l.campana !== campana)) return; o.litros = (o.litros || 0) + litrosLabor(l); o.gas = (o.gas || 0) + (costeGasLabor(l) || 0); });
-    const pr = precioGasoleo(hoyISO());
+    const pr = precioGasoleo(100);
     out.forEach(o => { const c = costeEquipo(o.e); o.horas = +o.e.rendimiento > 0 ? o.ha / +o.e.rendimiento : null; o.gasHa = +o.e.gasoleo > 0 && pr != null ? +o.e.gasoleo * pr : 0; o.porHa = c.porHa != null ? c.porHa + o.gasHa : null; o.coste = c.porHa != null ? o.ha * c.porHa + (o.gas || 0) : null; o.faltan = c.faltan; });
     return [...out.values()];
   }
@@ -3059,7 +3075,7 @@
       const c = costeEquipo(v); const r = parseNum(v.rendimiento);
       const filas = c.partes.map(([n, x]) => `<span>${esc(n)}: ${eur(x, 2)} por hora</span>`).join('');
       const pha = r > 0 && c.partes.length ? c.porHora / r : null;
-      const gl = parseNum(v.gasoleo); const pr = precioGasoleo(hoyISO());
+      const gl = parseNum(v.gasoleo); const pr = precioGasoleo(100);
       const gas = gl > 0 ? (pr != null ? `<span>Gasóleo: ${fmtN(gl)} L/ha × ${fmtN(pr, 3)} €/L = <b>${eur(gl * pr, 2)} por hectárea</b></span>` : `<span class="neg">Gasóleo: sin precio. Mete en el almacén un albarán de gasóleo con su precio.</span>`) : '';
       const tot = pha != null && gl > 0 && pr != null ? `<span><b>Total: ${eur(pha + gl * pr, 2)} por hectárea</b></span>` : '';
       return `<b>Coste de amortización</b>${filas}${c.faltan.length ? `<span class="neg">Falta en la ficha de la máquina: ${esc(c.faltan.join(', '))}</span>` : ''}${pha != null ? `<span>Total ${eur(c.porHora, 2)}/h ÷ ${fmtN(r)} ha/h = <b>${eur(pha, 2)} por hectárea</b></span>` : '<span class="muted">Pon el rendimiento para calcular el coste por hectárea.</span>'}${gas}${tot}`;
