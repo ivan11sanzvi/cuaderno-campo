@@ -15,7 +15,8 @@ os.makedirs(CACHE, exist_ok=True)
 CULTIVOS = ['Trigo', 'Cebada', 'Avena', 'Centeno', 'Triticale', 'Cereales de invierno / primavera',
             'Lenteja', 'Garbanzo', 'Guisante para grano', 'Almorta', 'Leguminosas de grano',
             'Yeros', 'Veza', 'Esparceta', 'Alfalfa', 'Leguminosas forrajeras',
-            'Anís, matalauva', 'Cilantro', 'Girasol', 'Colza', 'Camelina', 'Barbechos', 'Chopos y álamos']
+            'Anís, matalauva', 'Cilantro', 'Girasol', 'Colza', 'Camelina', 'Barbechos', 'Chopos y álamos',
+            'Herbáceas extensivas', 'Herbáceas intensivas', 'Rastrojeras', 'Márgenes de cultivos']
 
 
 def get(url, data=None, binary=False, tries=4):
@@ -147,6 +148,10 @@ def main():
     if previo:
         for p in json.load(open(previo))['productos']:
             for c in p['c']: por_cultivo.setdefault(c, set()).add(str(p['id']))
+        for c in CULTIVOS:  # solo los cultivos nuevos
+            if c in por_cultivo: continue
+            idc = id_cultivo(c); ids = productos_de(idc); por_cultivo[c] = ids
+            print(c, idc, len(ids), flush=True)
     else:
         for c in CULTIVOS:
             idc = id_cultivo(c); ids = productos_de(idc); por_cultivo[c] = ids
@@ -184,6 +189,11 @@ def main():
                            'cad': p.get('StrFechaCaducidad', ''), 'lv': p.get('StrFechaLimiteVenta', ''),
                            'c': sorted(c for c, ids in por_cultivo.items() if pid in ids), 'u': u})
             if n % 50 == 0: print('leídas', n, 'errores', errores, flush=True)
+    ya = {str(x['id']) for x in salida}
+    for pid, p in prod.items():  # resto del Registro: para reconocer cualquier producto de un albarán
+        if pid in ya: continue
+        salida.append({'id': int(pid), 'r': p.get('NumRegistro', ''), 'n': p.get('Nombre', ''), 'f': p.get('Formulado', ''), 'e': p.get('Estado', ''),
+                       'cad': p.get('StrFechaCaducidad', ''), 'lv': p.get('StrFechaLimiteVenta', ''), 'c': [], 'u': {}})
     json.dump({'fecha': fecha, 'fuente': 'Registro de Productos Fitosanitarios (MAPA)', 'cultivos': CULTIVOS, 'productos': salida}, open(OUT, 'w'), ensure_ascii=False, separators=(',', ':'))
     print('OK', len(salida), 'productos; errores', errores, 'tamaño', os.path.getsize(OUT), flush=True)
 

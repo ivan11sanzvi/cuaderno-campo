@@ -39,7 +39,8 @@ Habla con el usuario en español, con lenguaje sencillo y sin tecnicismos: es ag
 
 ## Fitosanitarios y normativa
 - `fitos.json` se genera con `herramientas/actualizar_fitos.py`. Lee el Registro del MAPA (`servicio.mapa.gob.es/regfiweb`): la lista de productos de cada cultivo y la tabla «Usos y Dosis Autorizados» de cada ficha PDF.
-- Los cultivos de la app se comparan con los del Registro mediante `CULTIVO_REG`. El titarro no está en el Registro: se compara con almorta y leguminosas de grano.
+- `fitos.json` trae **todos** los productos del Registro (3.103) para reconocer cualquier albarán. Solo los de los cultivos de la explotación (y de las categorías generales «Herbáceas extensivas/intensivas», «Rastrojeras» y «Márgenes de cultivos») llevan `c` (cultivos autorizados) y `u` (dosis).
+- Los cultivos de la app se comparan con los del Registro mediante `CULTIVO_REG`. Un cultivo de campo cuenta también como «Herbáceas extensivas»; el anís y el cilantro, como «Herbáceas intensivas». El titarro no está en el Registro: se compara con almorta y leguminosas de grano.
 - En una labor de Tratamiento el producto sale **solo del almacén** del titular. Se comprueban la autorización en el cultivo, la dosis máxima, el estado y la caducidad, y si hay existencias suficientes. Si hay problemas se pide confirmar, y la labor guarda `avisos` y sale marcada «⚠ Revisar normativa».
 - Conviene regenerar `fitos.json` de vez en cuando, porque el Registro cambia cada semana.
 
@@ -48,7 +49,7 @@ Habla con el usuario en español, con lenguaje sencillo y sin tecnicismos: es ag
 - Funciona **sin IA**: `interpretar(texto)` aplica `normVoz` (números dichos con palabras → cifras), palabras clave (`VERBOS`) y búsqueda aproximada de nombres (`buscarNombres`, Levenshtein) de fincas, titulares, cultivos y productos.
 - Entiende labores, cosechas, albaranes, facturas, fincas nuevas, gastos, ingresos y semilla propia.
 - Fincas: se aplica la finca agrupada entera, salvo lo que vaya tras «excepto / menos / salvo» (parcelas por número, titulares u otras fincas). También entiende «las de trigo de Tomás».
-- Albaranes dictados: el producto se busca primero por el nº de registro dicho (`fitoPorRegistro`), y si no, por nombre comparando sin espacios ni guiones (`mejorPorNombre`: «U46 de comple» ≈ «U-46 D COMPLET»). El proveedor sale de «empresa/proveedor X», «albarán de X» o «compra a X», y se reconocen los ya usados. «Compro/compra» con cantidades se entiende como albarán.
+- Albaranes dictados: el producto se busca primero por el nº de registro dicho (`fitoPorRegistro`), y si no, por nombre comparando sin espacios ni guiones (`mejorPorNombre`: «U46 de comple» ≈ «U-46 D COMPLET»). El proveedor sale de «empresa/proveedor X», «albarán de X» o «compra a X», y se reconocen los ya usados. «Compro/compra» con cantidades se entiende como albarán. También admite la forma ordenada «proveedor X producto Y cantidad 80 litros precio Z» (`lineasEstructuradas`).
 - Siempre enseña una tarjeta de confirmación. **Guardar** usa `registrarLabor` / `registrarCosecha` / `registrarMov`, con las mismas comprobaciones de normativa que el formulario. **Corregir** abre el formulario relleno.
 - Siembra: asigna el cultivo (`cultivoSiembra`) y descuenta la semilla «<Cultivo> para sembrar» del almacén de cada titular. La semilla propia entra como ajuste.
 - Historial: `empujar()` espera si hay un `history.go` pendiente (`pendientes`). Sin eso, al cerrar una ventana y abrir otra seguidas, la app se salía al pulsar atrás.

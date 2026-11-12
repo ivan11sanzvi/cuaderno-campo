@@ -2,7 +2,7 @@
 (function () {
   // ---------- Constantes ----------
   const KEY = 'cuadernoCampo.v1';
-  const VERSION = '1.4.2';
+  const VERSION = '1.4.3';
   const TIPOS_LABOR = ['Labrado', 'Siembra', 'Abonado', 'Tratamiento', 'Rodillo', 'Cosecha', 'Empacado', 'Otro'];
   const CON_DOSIS = ['Siembra', 'Abonado', 'Tratamiento'];
   const UNIDADES = ['kg/ha', 'L/ha', 'g/ha', 'cc/ha', 'kg', 'L'];
@@ -1825,15 +1825,17 @@
   let FITOS = null; // se rellena al cargar
   const regProducto = p => (p && p.regId && FITOS) ? FITOS.porId.get(p.regId) : null;
   // Con qué cultivos del Registro se compara cada cultivo de la app
+  // (también la categoría general: «Herbáceas extensivas» incluye cereales, leguminosas, forrajeras y oleaginosas)
+  const HE = 'Herbáceas extensivas', HI = 'Herbáceas intensivas';
   const CULTIVO_REG = {
-    trigo: ['Trigo', 'Cereales de invierno / primavera'], cebada: ['Cebada', 'Cereales de invierno / primavera'],
-    avena: ['Avena', 'Cereales de invierno / primavera'], 'avena forrajera': ['Avena', 'Cereales de invierno / primavera'],
-    centeno: ['Centeno', 'Cereales de invierno / primavera'], triticale: ['Triticale', 'Cereales de invierno / primavera'],
-    lenteja: ['Lenteja', 'Leguminosas de grano'], garbanzo: ['Garbanzo', 'Leguminosas de grano'], guisante: ['Guisante para grano', 'Leguminosas de grano'],
-    titarro: ['Almorta', 'Leguminosas de grano'], yeros: ['Yeros', 'Leguminosas forrajeras'], veza: ['Veza', 'Leguminosas forrajeras'],
-    esparceta: ['Esparceta', 'Leguminosas forrajeras'], alfalfa: ['Alfalfa', 'Leguminosas forrajeras'],
-    'anis dulce': ['Anís, matalauva'], anis: ['Anís, matalauva'], cilantro: ['Cilantro'], girasol: ['Girasol'], colza: ['Colza'], camelina: ['Camelina'],
-    barbecho: ['Barbechos'], chopo: ['Chopos y álamos']
+    trigo: ['Trigo', 'Cereales de invierno / primavera', HE], cebada: ['Cebada', 'Cereales de invierno / primavera', HE],
+    avena: ['Avena', 'Cereales de invierno / primavera', HE], 'avena forrajera': ['Avena', 'Cereales de invierno / primavera', HE],
+    centeno: ['Centeno', 'Cereales de invierno / primavera', HE], triticale: ['Triticale', 'Cereales de invierno / primavera', HE],
+    lenteja: ['Lenteja', 'Leguminosas de grano', HE], garbanzo: ['Garbanzo', 'Leguminosas de grano', HE], guisante: ['Guisante para grano', 'Leguminosas de grano', HE],
+    titarro: ['Almorta', 'Leguminosas de grano', HE], yeros: ['Yeros', 'Leguminosas forrajeras', HE], veza: ['Veza', 'Leguminosas forrajeras', HE],
+    esparceta: ['Esparceta', 'Leguminosas forrajeras', HE], alfalfa: ['Alfalfa', 'Leguminosas forrajeras', HE],
+    'anis dulce': ['Anís, matalauva', HI], anis: ['Anís, matalauva', HI], cilantro: ['Cilantro', HI], girasol: ['Girasol', HE], colza: ['Colza', HE], camelina: ['Camelina', HE],
+    barbecho: ['Barbechos', 'Rastrojeras'], chopo: ['Chopos y álamos']
   };
   const regDeCultivo = cu => CULTIVO_REG[norm(cu)] || null;
   const fechaDMY = s => { const m = String(s || '').match(/^(\d{2})-(\d{2})-(\d{4})$/); return m ? `${m[3]}-${m[2]}-${m[1]}` : ''; };
@@ -1970,7 +1972,7 @@
         if (q.length >= 2 && FITOS) {
           const yaReg = new Set(db.productos.map(p => p.regId));
           const hits = FITOS.productos.filter(p => !yaReg.has(p.id) && norm(p.n + ' ' + p.r).includes(q)).slice(0, 25);
-          h += `<h2 class="sec">Registro oficial de fitosanitarios</h2>${hits.length ? `<div class="list">${hits.map(p => `<button class="row" data-ep="reg" data-id="${p.id}"><div class="main"><div class="t">${esc(p.n)}</div><div class="s">${esc(['Nº reg. ' + p.r, p.f, p.e].filter(Boolean).join(' · '))}</div></div><span class="pill ${p.e === 'Vigente' ? 'pos' : 'neg'}">${esc(p.e)}</span></button>`).join('')}</div>` : '<p class="note">Ningún fitosanitario autorizado en tus cultivos coincide.</p>'}`;
+          h += `<h2 class="sec">Registro oficial de fitosanitarios</h2>${hits.length ? `<div class="list">${hits.map(p => `<button class="row" data-ep="reg" data-id="${p.id}"><div class="main"><div class="t">${esc(p.n)}</div><div class="s">${esc(['Nº reg. ' + p.r, p.f, p.e].filter(Boolean).join(' · '))}</div></div><span class="pill ${p.e === 'Vigente' ? 'pos' : 'neg'}">${esc(p.e)}</span></button>`).join('')}</div>` : '<p class="note">Ningún producto del Registro coincide.</p>'}`;
         } else if (q.length >= 2 && !FITOS) h += '<p class="note">Cargando el Registro de fitosanitarios…</p>';
         if (q.length >= 2) h += `<div class="card pad nuevo-prod"><div class="tag">Crear producto nuevo</div><b>${esc(inp.value.trim())}</b>
           <div class="grid2"><div class="field"><label for="epTipo">Tipo</label><select id="epTipo">${TIPOS_PROD.map(t => `<option${t === (tipoPref && tipoPref !== 'Fitosanitario' ? tipoPref : 'Abono') ? ' selected' : ''}>${t}</option>`).join('')}</select></div>
@@ -2606,6 +2608,16 @@
     });
     return lineas;
   }
+  // Forma ordenada: «producto ES-00599 cantidad 80 litros precio 6 euros, producto urea cantidad 1000 kilos»
+  function lineasEstructuradas(t) {
+    return t.split(/\bproductos?\b/).slice(1).map(seg => {
+      const nombre = (seg.match(/^\s*(?:de |del |el |la )?(.+?)(?= cantidad| precio| importe| a \d| por \d|,| \d+(?:\.\d+)? (?:kilos?|kg|litros?|l|toneladas?|gramos?|cc|ml)\b|$)/) || [])[1] || '';
+      const c = cantidadesDichas(seg)[0];
+      const precio = (seg.match(/\bprecio(?: de| unitario)? (\d+(?:\.\d+)?)/) || seg.match(/\ba (\d+(?:\.\d+)?) euros?/) || [])[1];
+      const imp = (seg.match(/\b(?:importe|por|total)(?: de)? (\d+(?:\.\d+)?) euros?/) || [])[1];
+      return c ? { q: c.q, base: c.base, nombre: nombre.trim(), precio: precio ? +precio : null, importe: imp ? +imp : null, reg: fitoPorRegistro(seg) } : null;
+    }).filter(Boolean);
+  }
   function productoParaLinea(l) {
     const deRegistro = r => { const ya = db.productos.find(p => p.regId === r.id); return ya ? { p: ya } : { nuevo: { nombre: r.n, tipo: 'Fitosanitario', unidad: unidadDeFormulado(r.f), regId: r.id, registro: r.r, formulado: r.f } }; };
     if (l.reg) return deRegistro(l.reg);
@@ -2628,7 +2640,7 @@
     const tit = buscarNombres(t, tits, 0.85);
     const palabraDoc = tipo === 'albaran' ? 'albaran' : 'factura';
     // proveedor: «a la empresa Terrastar», «proveedor X», «albarán de la cooperativa», o uno que ya hayas usado
-    const finProv = '(?= para | numero | n \\d|,| \\d| de \\d| con | por | el dia| y |$)';
+    const finProv = '(?= para | numero | n \\d|,| \\d| de \\d| con | por | el dia| y | producto| cantidad| precio| importe| a nombre| nombre| titular| fecha|$)';
     let proveedor = (t.match(new RegExp(`\\b(?:empresa|proveedor|casa comercial|distribuidor|distribuidora|comercial)(?: de| del)? (?:la |el |los )?([a-z0-9 ]+?)${finProv}`)) || [])[1]
       || (t.match(new RegExp(`\\b${palabraDoc}(?: (?:numero|n) \\w+)? (?:de|del) (?:la |el |los )?([a-z ]+?)${finProv}`)) || [])[1]
       || (t.match(new RegExp(`\\b(?:compra|compro|compre|comprado|compramos)\\b.*? a (?:la |el |los )?(?!\\d)([a-z][a-z0-9 ]+?)${finProv}`)) || [])[1] || '';
@@ -2642,7 +2654,7 @@
     const pre = { titular: tit.length ? tit[0].c.t : '', fecha: R.fecha, proveedor: prevProv ? proveedor : proveedor.replace(/\b\w/g, x => x.toUpperCase()).trim(), numero: numero.toUpperCase(), lineas: [] };
     R.lineasNuevas = [];
     const desde = t.search(/\d+(?:\.\d+)? (kilo|kg|litro|l |l$|tonelada|gramo|centimetro|cc|ml|mililitro)/);
-    const ls = desde >= 0 ? lineasDichas(t.slice(desde)) : [];
+    const ls = /\bproductos?\b/.test(t) ? lineasEstructuradas(t) : desde >= 0 ? lineasDichas(t.slice(desde)) : [];
     ls.forEach(l => {
       const r = productoParaLinea(l); if (!r) return;
       R.lineasNuevas.push({ l, r });
