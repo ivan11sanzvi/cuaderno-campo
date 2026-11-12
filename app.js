@@ -2,7 +2,7 @@
 (function () {
   // ---------- Constantes ----------
   const KEY = 'cuadernoCampo.v1';
-  const VERSION = '1.4.0';
+  const VERSION = '1.4.1';
   const TIPOS_LABOR = ['Labrado', 'Siembra', 'Abonado', 'Tratamiento', 'Rodillo', 'Cosecha', 'Empacado', 'Otro'];
   const CON_DOSIS = ['Siembra', 'Abonado', 'Tratamiento'];
   const UNIDADES = ['kg/ha', 'L/ha', 'g/ha', 'cc/ha', 'kg', 'L'];
@@ -40,7 +40,7 @@
   const hue = c => { if (c in HUES) return HUES[c]; let h = 0; for (const ch of String(c)) h = (h * 31 + ch.charCodeAt(0)) % 360; return h; };
   const fmtN = (v, d = 2) => (v == null || isNaN(v)) ? '—' : new Intl.NumberFormat('es-ES', { maximumFractionDigits: d, useGrouping: 'always' }).format(v);
   const eur = (v, d = 0) => (v == null || isNaN(v)) ? '—' : new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR', minimumFractionDigits: d, maximumFractionDigits: d, useGrouping: 'always' }).format(v);
-  const fmtKg = v => (v == null || isNaN(v)) ? '—' : (v >= 10000 ? fmtN(v / 1000, 1) + ' t' : fmtN(v, 0) + ' kg');
+  const fmtKg = v => (v == null || isNaN(v)) ? '—' : fmtN(v, 2) + ' kg'; // siempre en kilos exactos
   const fmtFecha = iso => { if (!iso) return ''; const [y, m, d] = iso.split('-'); return `${+d} ${MESES[+m - 1]} ${y}`; };
   const numStr = v => (v == null || v === '' || isNaN(v)) ? '' : String(v).replace('.', ',');
   const sum = (arr, f) => arr.reduce((a, x) => a + (+f(x) || 0), 0);
@@ -1325,9 +1325,13 @@
   function hojaCampanas() {
     abrirCapa(`<div class="sheet" role="dialog" aria-modal="true">${cabecera('Campaña')}<div class="body">
       <p class="note">Elige la campaña con la que trabajas. Todo lo que apuntes irá a ella por defecto.</p>
-      <div class="list">${listaCampanas().map(c => `<button class="row" data-camp="${c}"><div class="main"><div class="t">${c}</div></div>${c === db.campanaActiva ? '<span class="tag">Activa</span>' : ''}</button>`).join('')}</div>
+      <div class="list">${listaCampanas().map(c => { const vacia = c !== db.campanaActiva && !['siembras', 'labores', 'movimientos', 'cosechas'].some(k => db[k].some(x => x.campana === c));
+        return `<div class="row camp-row"><button class="row" data-camp="${c}"><div class="main"><div class="t">${c}</div></div>${c === db.campanaActiva ? '<span class="tag">Activa</span>' : ''}</button>${vacia ? `<button class="btn sm" data-quitarc="${c}">Quitar</button>` : ''}</div>`; }).join('')}</div>
+      <p class="small muted" style="margin:0">Solo se pueden quitar las campañas que no tienen nada apuntado.</p>
       <button class="btn block" data-nueva>${ico.plus} Añadir campaña ${siguienteCampana(listaCampanas()[0])}</button></div></div>`, (el, d) => {
       el.addEventListener('click', e => {
+        const q = e.target.closest('[data-quitarc]');
+        if (q) { db.campanas = db.campanas.filter(c => c !== q.dataset.quitarc); guardar(); volverA(d - 1); render(); toast('Campaña ' + q.dataset.quitarc + ' quitada'); return; }
         const b = e.target.closest('[data-camp]');
         if (b) { db.campanaActiva = b.dataset.camp; guardar(false); volverA(d - 1); render(); return; }
         if (e.target.closest('[data-nueva]')) {
@@ -1932,6 +1936,8 @@
         h += `${grupos.length > 1 ? `<h2 class="sec">${esc(t)}</h2>` : ''}<div class="list">${ps.map(p => { const ex = existencias(p.id, t || null); const reg = regProducto(p);
           return `<button class="row" data-act="verProducto" data-id="${p.id}" data-t="${esc(t)}"><div class="main"><div class="t">${esc(p.nombre)}</div><div class="s">${esc([p.tipo, p.registro ? 'Nº reg. ' + p.registro : '', reg && reg.e !== 'Vigente' ? reg.e : ''].filter(Boolean).join(' · '))}</div></div><div class="end big ${ex < 0 ? 'neg' : ex === 0 ? 'muted' : ''}">${fmtCant(ex, p.unidad)}</div></button>`; }).join('')}</div>`;
       }
+      const huerfanos = !tit ? db.productos.filter(p => !movimientosProducto(p.id).length) : [];
+      if (huerfanos.length) { algo = true; h += `<h2 class="sec">Sin movimientos</h2><div class="list">${huerfanos.map(p => `<button class="row" data-act="verProducto" data-id="${p.id}" data-t=""><div class="main"><div class="t">${esc(p.nombre)}</div><div class="s">${esc(p.tipo)} · sin albaranes ni labores</div></div><div class="end small muted">Tocar para borrar</div></button>`).join('')}</div>`; }
       if (!algo) h += vacio('El almacén está vacío', 'Sube el albarán de lo que compras (fitosanitarios, abono, semilla) y aquí verás lo que le queda a cada titular. Al apuntar un tratamiento se descuenta solo.', '<button class="btn primary" data-act="nuevoDoc" data-k="albaran">Subir albarán</button>');
       return h;
     }
@@ -2122,6 +2128,23 @@
   }
 
   // Ficha de un producto del almacén
+  function formAjuste(id) {
+    const a = db.ajustes.find(x => x.id === id); if (!a) return;
+    const p = producto(a.productoId) || { nombre: '¿?', unidad: '' };
+    formulario({
+      titulo: `Ajuste de ${esc(p.nombre)}`,
+      valores: a,
+      campos: [
+        { k: 'titular', label: 'Titular', req: 1, lista: titularesTodos },
+        { k: 'cantidad', label: `Cantidad (${p.unidad})`, type: 'num', miles: 1, req: 1, hint: 'Positiva si entra en el almacén (por ejemplo semilla de vuestra cosecha); negativa si sale.' },
+        { k: 'fecha', label: 'Fecha', type: 'date', req: 1 },
+        { k: 'motivo', label: 'Motivo' }
+      ],
+      guardar(v) { if (!v.cantidad) return 'La cantidad no puede ser cero'; Object.assign(a, v); },
+      textoBorrar: 'Se borrará este ajuste y las existencias volverán a calcularse sin él.',
+      borrar: () => { db.ajustes = db.ajustes.filter(x => x !== a); }
+    });
+  }
   function hojaProducto(pid, tit) {
     const p = producto(pid); if (!p) return;
     cargarFitos().then(dd => { FITOS = dd; }).catch(() => {});
@@ -2135,12 +2158,29 @@
         ${reg ? `<p class="small" style="margin:0">${esc(reg.f)}</p><div><div class="tag">En tus cultivos de ${db.campanaActiva}</div><div class="chips">${autoriz || '<span class="small muted">Sin cultivos asignados</span>'}</div></div><a class="btn sm" href="${urlFicha(reg.id)}" target="_blank" rel="noopener">Ver ficha oficial (PDF del Ministerio)</a>` : ''}
         <h2 class="sec">Existencias</h2><div class="list">${(tits.length ? tits : [tit || '']).map(t => `<div class="row"><div class="main"><div class="t">${esc(t || 'Sin titular')}</div></div><div class="end big ${existencias(pid, t) < 0 ? 'neg' : ''}">${fmtCant(existencias(pid, t), p.unidad)}</div></div>`).join('')}</div>
         <div class="btns" style="justify-content:flex-start"><button type="button" class="btn sm" data-ajuste>Ajustar existencias</button><button type="button" class="btn sm" data-editp>Cambiar nombre o unidad</button></div>
-        <h2 class="sec">Movimientos${tit ? ' · ' + esc(tit) : ''}</h2>${movs.length ? `<div class="list">${movs.map(m => `<div class="row">${fechaBox(m.fecha)}<div class="main"><div class="t">${esc(m.txt)}</div><div class="s">${esc(m.titular || '')}</div></div><div class="end big ${m.cant < 0 ? 'neg' : 'pos'}">${m.cant > 0 ? '+' : ''}${fmtCant(m.cant, p.unidad)}</div></div>`).join('')}</div>` : '<p class="note">Sin movimientos.</p>'}`;
+        <h2 class="sec">Movimientos${tit ? ' · ' + esc(tit) : ''}</h2>${movs.length ? `<p class="small muted" style="margin:0">Toca un movimiento para corregirlo o borrarlo.</p><div class="list">${movs.map(m => `<button type="button" class="row" data-mov="${m.doc ? 'doc' : m.labor ? 'labor' : 'ajuste'}" data-id="${m.doc || m.labor || m.ajuste}">${fechaBox(m.fecha)}<div class="main"><div class="t">${esc(m.txt)}</div><div class="s">${esc(m.titular || '')}</div></div><div class="end big ${m.cant < 0 ? 'neg' : 'pos'}">${m.cant > 0 ? '+' : ''}${fmtCant(m.cant, p.unidad)}</div></button>`).join('')}</div>` : '<p class="note">Sin movimientos.</p>'}
+        <div class="btns" style="justify-content:flex-start;margin-top:6px"><button type="button" class="btn sm danger" data-borrarp>Borrar producto</button></div>`;
     };
     abrirCapa(`<div class="sheet" role="dialog" aria-modal="true">${cabecera(esc(p.nombre))}<div class="body" id="phBody">${pintar()}</div></div>`, (el, d) => {
       const body = el.querySelector('#phBody');
       cargarFitos().then(() => { body.innerHTML = pintar(); }).catch(() => {});
-      el.addEventListener('click', e => {
+      el.addEventListener('click', async e => {
+        const mv = e.target.closest('[data-mov]');
+        if (mv) {
+          volverA(d - 1);
+          if (mv.dataset.mov === 'doc') formDocumento(null, mv.dataset.id);
+          else if (mv.dataset.mov === 'labor') formLabor(mv.dataset.id);
+          else formAjuste(mv.dataset.id);
+          return;
+        }
+        if (e.target.closest('[data-borrarp]')) {
+          const n = movimientosProducto(pid).length;
+          if (n) { toast(`Tiene ${n} movimiento${n === 1 ? '' : 's'}: corrígelos o bórralos antes de borrar el producto`); return; }
+          const r = await confirmar('¿Borrar el producto?', `Se quitará «${esc(p.nombre)}» del almacén.`);
+          if (!r.ok) return;
+          db.productos = db.productos.filter(x => x !== p); guardar(); volverA(d - 1); render(); toast('Producto borrado');
+          return;
+        }
         if (e.target.closest('[data-ajuste]')) {
           const ts = titularesTodos();
           formulario({
@@ -2261,6 +2301,7 @@
   function normVoz(s) {
     let t = String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
     t = t.replace(/(\d)\.(\d{3})(?!\d)/g, '$1$2').replace(/(\d)\.(\d{3})(?!\d)/g, '$1$2'); // 20.000 -> 20000
+    t = t.replace(/(\d),(\d{3})(?=\s*(?:kilos?|kg|kilogramos?)\b)/g, '$1$2');             // 47,620 kilos -> 47620
     t = t.replace(/(\d),(\d)/g, '$1.$2');                                                  // 1,5 -> 1.5
     t = t.replace(/€/g, ' euros ').replace(/%/g, ' por ciento ').replace(/º|ª/g, ' ');
     t = t.replace(/[^a-z0-9.\/ ]+/g, ' ').replace(/(^|[^\d])\.|\.(?!\d)/g, '$1 ');
@@ -2310,7 +2351,7 @@
       if (!c.n) continue;
       const k = c.n.split(' ').length; let best = 0, pos = -1;
       for (let i = 0; i + k <= w.length; i++) {
-        if (PALABRAS_VACIAS.has(w[i])) continue;
+        if (PALABRAS_VACIAS.has(w[i]) && !c.n.startsWith(w[i] + ' ')) continue;
         const s = parecido(w.slice(i, i + k).join(' '), c.n); if (s > best) { best = s; pos = i; }
       }
       const min = c.n.length <= 4 ? 1 : c.n.length <= 6 ? 0.83 : umbral;
@@ -2368,7 +2409,9 @@
 
   function candidatosFinca() {
     const m = new Map();
-    const add = (n, fs, tipo, nombre) => { n = normVoz(n); if (!n || n.length < 3) return; const o = m.get(n) || { n, fs: new Set(), tipo, nombre }; fs.forEach(f => o.fs.add(f)); m.set(n, o); };
+    const add1 = (n, fs, tipo, nombre) => { if (!n || n.length < 3) return; const o = m.get(n) || { n, fs: new Set(), tipo, nombre }; fs.forEach(f => o.fs.add(f)); m.set(n, o); };
+    // «El Llano» también se encuentra si dices solo «Llano»
+    const add = (n, fs, tipo, nombre) => { n = normVoz(n); add1(n, fs, tipo, nombre); const sin = n.replace(/^(el|la|los|las) /, ''); if (sin !== n) add1(sin, fs, tipo, nombre); };
     listaGrupos().forEach((fs, g) => { add(g, fs, 'g', g); const sin = g.replace(/\s*\(.*\)\s*$/, ''); if (sin !== g) add(sin, fs, 'g', g); });
     db.fincas.forEach(f => {
       const b = nombreBase(f.nombre);

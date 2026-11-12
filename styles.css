@@ -332,3 +332,6 @@ tr.tot td { font-weight: 700; background: var(--surface-2); }
 .voz-dudas { color: var(--warn-ink); background: var(--warn-bg); border-radius: 8px; padding: 8px 10px 8px 26px; margin: 0; }
 .voz-ej summary { cursor: pointer; font-weight: 650; color: var(--accent); padding: 6px 0; }
 .voz-ej .chip { cursor: pointer; text-align: left; white-space: normal; }
+
+.camp-row { padding: 0 10px 0 0; gap: 6px; }
+.camp-row > .row { border-top: 0; flex: 1; }
