@@ -2,7 +2,7 @@
 (function () {
   // ---------- Constantes ----------
   const KEY = 'cuadernoCampo.v1';
-  const VERSION = '1.4.1';
+  const VERSION = '1.4.2';
   const TIPOS_LABOR = ['Labrado', 'Siembra', 'Abonado', 'Tratamiento', 'Rodillo', 'Cosecha', 'Empacado', 'Otro'];
   const CON_DOSIS = ['Siembra', 'Abonado', 'Tratamiento'];
   const UNIDADES = ['kg/ha', 'L/ha', 'g/ha', 'cc/ha', 'kg', 'L'];
@@ -2445,6 +2445,7 @@
     if (!t) return R;
     if (/\b(nueva finca|nueva parcela|finca nueva|parcela nueva|dar de alta|da de alta|dame de alta|alta (de )?(la |una )?(finca|parcela)|anad\w* (la |una )?(finca|parcela)|crea\w* (la |una )?(finca|parcela))\b/.test(t)) return interpretarFinca(t, R);
     if (/\balbaran/.test(t)) return interpretarDocumento(t, R, 'albaran');
+    if (/\b(compra|compro|compre|comprado|compramos|hemos comprado|he comprado)\b/.test(t) && cantidadesDichas(t).length && !VERBOS.some(([, re]) => re.test(t))) return interpretarDocumento(t, R, 'albaran');
     if (/\bfactura/.test(t) && !/\b(sembr|sulfat|arad|labr)/.test(t)) return interpretarDocumento(t, R, 'factura');
     if (/\bsemilla|para sembrar\b/.test(t) && /\b(cosecha|propia|nuestra|guard|apart|reserv|dej)\w*/.test(t) && !/\b(he sembrado|sembre|acabo de sembrar)\b/.test(t)) return interpretarSemilla(t, R);
     const verbo = VERBOS.map(([tipo, re]) => { const m = t.match(re); return m ? { tipo, i: m.index } : null; }).filter(Boolean).sort((a, b) => a.i - b.i);
@@ -2575,27 +2576,46 @@
     return R;
   }
 
+  const compacto = s => normVoz(s).replace(/[^a-z0-9]/g, '');
+  // «número de registro ES00367», «registro 19549», «ES 00367»
+  function fitoPorRegistro(t) {
+    if (!FITOS) return null;
+    const m = t.match(/\bregistro(?: numero| n)? (?:es ?)?(\d{3,6})\b/) || t.match(/\bes ?(\d{5})\b/);
+    if (!m) return null;
+    const dd = m[1].replace(/^0+/, '');
+    return FITOS.productos.find(p => { const r = String(p.r).toUpperCase().replace(/[^A-Z0-9]/g, ''); return r.replace(/^ES0*/, '') === dd; }) || null;
+  }
+  // Busca un nombre comparando sin espacios ni guiones («U46 de comple» ~ «U-46 D COMPLET»)
+  function mejorPorNombre(nombre, lista, clave, umbral = 0.78) {
+    const c = compacto(nombre); if (c.length < 3) return null;
+    let best = null, bs = 0;
+    for (const x of lista) { const k = compacto(clave(x)); const s = Math.max(parecido(c, k), k.startsWith(c) && c.length >= 4 ? 0.9 : 0, c.startsWith(k) && k.length >= 5 ? 0.88 : 0); if (s > bs) { bs = s; best = x; } }
+    return bs >= umbral ? best : null;
+  }
   function lineasDichas(t) {
     // «20 litros de accresto a 30 euros el litro y 1000 kilos de urea»
     const lineas = []; const cants = cantidadesDichas(t);
     cants.forEach((c, k) => {
       const fin = k + 1 < cants.length ? cants[k + 1].i : t.length;
       const trozo = t.slice(c.i + c.txt.length, fin);
-      const nombre = (trozo.match(/^\s*(?:de |del )?(.+?)(?= a \d| por \d| para |,| y \d|$)/) || [])[1] || '';
+      const nombre = (trozo.match(/^\s*(?:de |del )?(.+?)(?= a \d| por \d| para |,| y \d| con (?:el )?(?:numero|registro|n )| numero de registro| n de registro| registro | registro$| (?:del |de la )?(?:empresa|proveedor)|$)/) || [])[1] || '';
+      const reg = fitoPorRegistro(trozo);
       const precio = (trozo.match(/\ba (\d+(?:\.\d+)?)(?: euros?)?(?: el| por| cada)? ?(?:kilo|kg|litro|l|unidad|tonelada)?/) || [])[1];
       const imp = (trozo.match(/\bpor (\d+(?:\.\d+)?) euros?/) || [])[1];
-      lineas.push({ q: c.q, base: c.base, nombre: nombre.replace(/\b(y|para|el|la)\s*$/, '').trim(), precio: precio ? +precio : null, importe: imp ? +imp : null });
+      lineas.push({ q: c.q, base: c.base, nombre: nombre.replace(/\b(y|para|el|la|con)\s*$/, '').trim(), precio: precio ? +precio : null, importe: imp ? +imp : null, reg });
     });
     return lineas;
   }
   function productoParaLinea(l) {
+    const deRegistro = r => { const ya = db.productos.find(p => p.regId === r.id); return ya ? { p: ya } : { nuevo: { nombre: r.n, tipo: 'Fitosanitario', unidad: unidadDeFormulado(r.f), regId: r.id, registro: r.r, formulado: r.f } }; };
+    if (l.reg) return deRegistro(l.reg);
     const n = normVoz(l.nombre); if (!n) return null;
-    const mio = buscarNombres(n, candidatosProducto(null), 0.8)[0];
+    const mio = buscarNombres(n, candidatosProducto(null), 0.8)[0] || (() => { const p = mejorPorNombre(n, db.productos, p => p.nombre, 0.8); return p ? { c: { p } } : null; })();
     if (mio) return { p: mio.c.p };
     if (FITOS) {
-      const w = n.split(' ')[0];
-      const r = FITOS.productos.filter(x => parecido(normVoz(x.n), n) > 0.82 || parecido(normVoz(x.n).split(' ')[0], w) > 0.88).sort((a, b) => (b.e === 'Vigente') - (a.e === 'Vigente'))[0];
-      if (r) return { nuevo: { nombre: r.n, tipo: 'Fitosanitario', unidad: unidadDeFormulado(r.f), regId: r.id, registro: r.r, formulado: r.f } };
+      const vig = FITOS.productos.filter(x => x.e === 'Vigente');
+      const r = mejorPorNombre(n, vig, x => x.n) || mejorPorNombre(n, FITOS.productos, x => x.n, 0.85);
+      if (r) return deRegistro(r);
     }
     const cu = db.cultivos.find(c => n.includes(norm(c)));
     const tipo = /\b(urea|nitrato|abono|npk|nac|fosfato|potasa|sulfato|complejo)\b/.test(n) ? 'Abono' : (/\bsemilla|para sembrar\b/.test(n) || cu) ? 'Semilla' : 'Otro';
@@ -2606,12 +2626,22 @@
     R.intencion = tipo;
     const tits = candidatosTitular();
     const tit = buscarNombres(t, tits, 0.85);
-    let proveedor = (t.match(new RegExp(`\\b${tipo === 'albaran' ? 'albaran' : 'factura'}(?: (?:numero|n) \\w+)? (?:de|del) (?:la |el |los )?([a-z ]+?)(?= para | numero | n \\d|,| \\d| de \\d|$)`)) || [])[1] || '';
-    if (proveedor && tits.some(x => parecido(x.n, proveedor) > 0.85)) proveedor = '';
-    const numero = (t.match(/\b(?:numero|n|num) (\w*\d\w*)/) || [])[1] || '';
-    const pre = { titular: tit.length ? tit[0].c.t : '', fecha: R.fecha, proveedor: proveedor.replace(/\b\w/g, x => x.toUpperCase()).trim(), numero: numero.toUpperCase(), lineas: [] };
+    const palabraDoc = tipo === 'albaran' ? 'albaran' : 'factura';
+    // proveedor: «a la empresa Terrastar», «proveedor X», «albarán de la cooperativa», o uno que ya hayas usado
+    const finProv = '(?= para | numero | n \\d|,| \\d| de \\d| con | por | el dia| y |$)';
+    let proveedor = (t.match(new RegExp(`\\b(?:empresa|proveedor|casa comercial|distribuidor|distribuidora|comercial)(?: de| del)? (?:la |el |los )?([a-z0-9 ]+?)${finProv}`)) || [])[1]
+      || (t.match(new RegExp(`\\b${palabraDoc}(?: (?:numero|n) \\w+)? (?:de|del) (?:la |el |los )?([a-z ]+?)${finProv}`)) || [])[1]
+      || (t.match(new RegExp(`\\b(?:compra|compro|compre|comprado|compramos)\\b.*? a (?:la |el |los )?(?!\\d)([a-z][a-z0-9 ]+?)${finProv}`)) || [])[1] || '';
+    proveedor = proveedor.replace(/^(empresa|proveedor) /, '').trim();
+    if (proveedor && (tits.some(x => parecido(x.n, proveedor) > 0.85) || /^(numero|albaran|factura)\b/.test(proveedor))) proveedor = '';
+    const conocidos = [...new Set(db.documentos.map(x => x.proveedor).filter(Boolean))];
+    const prevProv = proveedor ? mejorPorNombre(proveedor, conocidos, x => x, 0.75) : (buscarNombres(t, conocidos.map(x => ({ n: normVoz(x), x })), 0.82)[0] || {}).c?.x;
+    if (prevProv) proveedor = prevProv;
+    // número: «número de albarán 324», «albarán número 324», «albarán 324» (no el nº de registro)
+    const numero = (t.match(new RegExp(`\\b(?:numero|n|num)(?: de ${palabraDoc})? (?!de registro)(\\d[\\w\\/-]*)`)) || t.match(new RegExp(`\\b${palabraDoc}(?: numero| n| num)? (\\d[\\w\\/-]*)`)) || [])[1] || '';
+    const pre = { titular: tit.length ? tit[0].c.t : '', fecha: R.fecha, proveedor: prevProv ? proveedor : proveedor.replace(/\b\w/g, x => x.toUpperCase()).trim(), numero: numero.toUpperCase(), lineas: [] };
     R.lineasNuevas = [];
-    const desde = t.search(/\d+(?:\.\d+)? (kilo|kg|litro|l |tonelada|gramo|centimetro|cc|ml|mililitro)/);
+    const desde = t.search(/\d+(?:\.\d+)? (kilo|kg|litro|l |l$|tonelada|gramo|centimetro|cc|ml|mililitro)/);
     const ls = desde >= 0 ? lineasDichas(t.slice(desde)) : [];
     ls.forEach(l => {
       const r = productoParaLinea(l); if (!r) return;

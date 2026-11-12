@@ -48,6 +48,7 @@ Habla con el usuario en español, con lenguaje sencillo y sin tecnicismos: es ag
 - Funciona **sin IA**: `interpretar(texto)` aplica `normVoz` (números dichos con palabras → cifras), palabras clave (`VERBOS`) y búsqueda aproximada de nombres (`buscarNombres`, Levenshtein) de fincas, titulares, cultivos y productos.
 - Entiende labores, cosechas, albaranes, facturas, fincas nuevas, gastos, ingresos y semilla propia.
 - Fincas: se aplica la finca agrupada entera, salvo lo que vaya tras «excepto / menos / salvo» (parcelas por número, titulares u otras fincas). También entiende «las de trigo de Tomás».
+- Albaranes dictados: el producto se busca primero por el nº de registro dicho (`fitoPorRegistro`), y si no, por nombre comparando sin espacios ni guiones (`mejorPorNombre`: «U46 de comple» ≈ «U-46 D COMPLET»). El proveedor sale de «empresa/proveedor X», «albarán de X» o «compra a X», y se reconocen los ya usados. «Compro/compra» con cantidades se entiende como albarán.
 - Siempre enseña una tarjeta de confirmación. **Guardar** usa `registrarLabor` / `registrarCosecha` / `registrarMov`, con las mismas comprobaciones de normativa que el formulario. **Corregir** abre el formulario relleno.
 - Siembra: asigna el cultivo (`cultivoSiembra`) y descuenta la semilla «<Cultivo> para sembrar» del almacén de cada titular. La semilla propia entra como ajuste.
 - Historial: `empujar()` espera si hay un `history.go` pendiente (`pendientes`). Sin eso, al cerrar una ventana y abrir otra seguidas, la app se salía al pulsar atrás.
