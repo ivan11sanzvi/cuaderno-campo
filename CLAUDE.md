@@ -27,6 +27,7 @@ Habla con el usuario en español, con lenguaje sencillo y sin tecnicismos: es ag
 - Cada registro de `db.fincas` es una **parcela**, con `titular` y `grupo` (nombre de la finca agrupada). En la interfaz se habla de «parcela» y de «finca agrupada».
 - Las siembras guardan `laboreo` (C = siembra directa con complemento, T = tradicional, D = siembra directa) y `estiercol` (true si se echó «basura»).
 - Las labores, gastos y cosechas hechos en varias parcelas a la vez comparten `lote`. Los importes, kilos y costes se reparten por superficie, en las listas salen en una sola línea y se editan juntos.
+- La labor «Siembra» también pone el laboreo (`laboreoSiembra`: C/D/T, recuerda el último en `db.ultLaboreo`) y el estiércol (`estiercolSiembra`) de todas sus parcelas, sin borrar lo que ya tenía la siembra. Por voz: «en directa», «directa con complemento», «tradicional», «con basura».
 - Una parcela solo se puede sembrar una vez por campaña: en la labor «Siembra» las ya sembradas salen grises y no se pueden marcar (`sembradas(campaña)`, campo `bloquear` del selector de fincas). La voz también las quita. Las demás labores se pueden repetir.
 - «Lindan» se calcula con los contornos SIGPAC guardados en `f.geo` (vértice a menos de 5 m del borde de la otra parcela).
 

@@ -2,7 +2,7 @@
 (function () {
   // ---------- Constantes ----------
   const KEY = 'cuadernoCampo.v1';
-  const VERSION = '2.0.2';
+  const VERSION = '2.0.3';
   const TIPOS_LABOR = ['Labrado', 'Siembra', 'Abonado', 'Tratamiento', 'Rodillo', 'Cosecha', 'Empacado', 'Otro'];
   const CON_DOSIS = ['Siembra', 'Abonado', 'Tratamiento'];
   const UNIDADES = ['kg/ha', 'L/ha', 'g/ha', 'cc/ha', 'kg', 'L'];
@@ -1192,9 +1192,10 @@
     if (v.tractorId || v.aperoId) { db.ultMaq = db.ultMaq || {}; db.ultMaq[v.tipo] = { equipoId: v.equipoId || '', tractorId: v.tractorId || '', aperoId: v.aperoId || '' }; }
     if (v.equipoId && !equipo(v.equipoId)) v.equipoId = '';
     if (v.tipo !== 'Tratamiento') delete v.aplicador; else if (v.aplicador) db.ultAplicador = v.aplicador;
+    if (v.tipo === 'Siembra' && v.laboreoSiembra) db.ultLaboreo = v.laboreoSiembra;
     fs.forEach((f, i) => {
       const x = Object.assign({}, v, { id: i === 0 && l ? l.id : uid(), fincaId: f.id, coste: costes[i], superficie: fs.length > 1 ? null : v.superficie });
-      delete x.fincas; delete x.prodAlm; delete x._propio; delete x.cultivoSiembra; delete x.variedadSiembra; if (lote) x.lote = lote; else delete x.lote;
+      delete x.fincas; delete x.prodAlm; delete x._propio; delete x.cultivoSiembra; delete x.variedadSiembra; delete x.laboreoSiembra; delete x.estiercolSiembra; if (lote) x.lote = lote; else delete x.lote;
       delete x.consumo; delete x.avisos; delete x.productoId;
       if (p) {
         x.productoId = p.id; x.producto = p.nombre; if (p.registro) x.registro = p.registro;
@@ -1207,12 +1208,18 @@
   }
       db.labores.push(x);
       if (x.coste > 0) db.movimientos.push({ id: uid(), laborId: x.id, tipo: 'gasto', fecha: x.fecha, fincaId: x.fincaId, campana: x.campana, categoria: CAT_LABOR[x.tipo] || 'Servicios contratados', concepto: x.tipo + (x.producto ? ' · ' + x.producto : ''), importe: x.coste, lote: lote || undefined });
-      if (x.tipo === 'Siembra' && v.cultivoSiembra) {
-        db.siembras = db.siembras.filter(s => !(s.fincaId === x.fincaId && s.campana === x.campana));
-        db.siembras.push({ id: uid(), fincaId: x.fincaId, campana: x.campana, cultivo: v.cultivoSiembra, variedad: v.variedadSiembra || '' });
-      } else if (x.tipo === 'Siembra' && !siembraDe(x.fincaId, x.campana)) {
-        const cu = db.cultivos.find(c => (x.producto || '').toLowerCase().includes(c.toLowerCase()));
-        if (cu) db.siembras.push({ id: uid(), fincaId: x.fincaId, campana: x.campana, cultivo: cu, variedad: '' });
+      if (x.tipo === 'Siembra') {
+        // cultivo, variedad, laboreo y estiércol de la parcela en la campaña (sin perder lo que ya tenía)
+        const s0 = siembraDe(x.fincaId, x.campana);
+        const cu = v.cultivoSiembra || (s0 && s0.cultivo) || db.cultivos.find(c => (x.producto || '').toLowerCase().includes(c.toLowerCase()));
+        if (cu) {
+          const sb = s0 || { id: uid(), fincaId: x.fincaId, campana: x.campana, variedad: '' };
+          if (!s0) db.siembras.push(sb);
+          sb.cultivo = cu;
+          if (v.cultivoSiembra) sb.variedad = v.variedadSiembra || '';
+          if (v.laboreoSiembra) sb.laboreo = v.laboreoSiembra;
+          if (v.estiercolSiembra) sb.estiercol = v.estiercolSiembra === 'si';
+        }
   }
     });
       
@@ -1241,7 +1248,8 @@
       ? Object.assign({}, l, { fincas: miembros.map(x => x.fincaId), prodAlm: l.productoId || '', coste: miembros.some(x => x.coste) ? Math.round(sum(miembros, x => x.coste) * 100) / 100 : null })
       : Object.assign({ fecha: hoyISO(), tipo: 'Labrado', fincas: idsIniciales(pre), unidad: 'kg/ha', campana: db.campanaActiva, prodAlm: '' }, maqPorDefecto((pre.valores || {}).tipo || 'Labrado'), { aplicador: aplicadorPorDefecto() }, pre.valores || {});
     let maqTocada = !!l || !!(pre.valores && (pre.valores.tractorId || pre.valores.aperoId || pre.valores.equipoId));
-    if (l && l.tipo === 'Siembra') { const s = siembraDe(l.fincaId, l.campana); if (s) { ini.cultivoSiembra = s.cultivo; ini.variedadSiembra = s.variedad || ''; } }
+    if (l && l.tipo === 'Siembra') { const s = siembraDe(l.fincaId, l.campana); if (s) { ini.cultivoSiembra = s.cultivo; ini.variedadSiembra = s.variedad || ''; ini.laboreoSiembra = s.laboreo || ''; ini.estiercolSiembra = s.estiercol ? 'si' : ''; } }
+    if (!l && ini.laboreoSiembra == null) ini.laboreoSiembra = db.ultLaboreo || '';
     let ultimoProd = ini.prodAlm;
     cargarFitos().then(d => { FITOS = d; if (refrescarInfo) refrescarInfo(); }).catch(() => {});
     let refrescarInfo = null;
@@ -1256,6 +1264,8 @@
         { k: 'producto', label: 'Producto, variedad o apero', placeholder: 'Ej.: cultivador, vertedera', show: v => !(TIPO_DE_LABOR[v.tipo] && v.prodAlm) && (v.tipo !== 'Tratamiento' || viejo) },
         { k: 'cultivoSiembra', label: 'Cultivo sembrado', type: 'select', half: 1, opts: () => [['', 'No cambiar'], ...db.cultivos.map(c => [c, c])], show: v => v.tipo === 'Siembra', hint: 'Se asigna a las parcelas en la campaña.' },
         { k: 'variedadSiembra', label: 'Variedad', half: 1, placeholder: 'Ej.: Marcopolo', show: v => v.tipo === 'Siembra' },
+        { k: 'laboreoSiembra', label: 'Laboreo', type: 'select', half: 1, sinOpcional: 1, opts: () => [['', 'No cambiar'], ['C', 'C · Directa con complemento'], ['D', 'D · Siembra directa'], ['T', 'T · Tradicional']], show: v => v.tipo === 'Siembra' },
+        { k: 'estiercolSiembra', label: 'Estiércol (basura)', type: 'select', half: 1, sinOpcional: 1, opts: () => [['', 'No cambiar'], ['no', 'No'], ['si', 'Sí']], show: v => v.tipo === 'Siembra' },
         { k: 'dosis', label: 'Dosis', type: 'num', half: 1, show: conDosis },
         { k: 'unidad', label: 'Unidad', type: 'select', half: 1, opts: () => UNIDADES.map(u => [u, u]), show: conDosis },
         { k: 'registro', label: 'Nº de registro', half: 1, show: v => trat(v) && !v.prodAlm, placeholder: 'Registro del producto' },
@@ -2850,6 +2860,8 @@
     const haM = t.match(/\b(\d+(?:\.\d+)?) (?:hectareas?|ha)\b/);
     const motivo = (t.match(/\bcontra (?:la |el |los |las )?([a-z ]{3,40}?)(?= a \d| con | en | por | y |$|\d)/) || [])[1] || '';
     const variedad = (t.match(/\bvariedad ([a-z0-9]+(?: [a-z0-9]+)?)/) || [])[1] || '';
+    const laboreoV = tipo !== 'Siembra' ? '' : /\bdirecta con (?:el |un )?complement/.test(t) || /\bcon complemento\b/.test(t) ? 'C' : /\b(?:siembra |en |a )?directa\b/.test(t) ? 'D' : /\b(tradicional|convencional)\b/.test(t) ? 'T' : '';
+    const estiercolV = tipo === 'Siembra' && /\b(con|echado|echamos|eche|echado) (?:la |el )?(basura|estiercol)\b/.test(t) ? 'si' : '';
     const mqs = R.maquinas || []; const dm = R.equipo ? { equipoId: R.equipo.id, tractorId: R.equipo.tractorId || '', aperoId: R.equipo.aperoId || '' } : maqPorDefecto(tipo);
     const tractorV = (mqs.find(m => MOTRICES.includes(m.tipo)) || {}).id || dm.tractorId;
     const aperoV = (mqs.find(m => !MOTRICES.includes(m.tipo)) || {}).id || (mqs.length ? '' : dm.aperoId);
@@ -2858,7 +2870,7 @@
     R.labor = {
       fecha: R.fecha, tipo, fincas: fs.map(f => f.id), prodAlm: p ? p.id : '', producto: apero ? apero.charAt(0).toUpperCase() + apero.slice(1) : '',
       dosis, unidad: unidad || (tipo === 'Siembra' || tipo === 'Abonado' ? 'kg/ha' : 'L/ha'), motivo: motivo.trim(), superficie: fs.length === 1 && haM ? +haM[1] : null,
-      coste: dineroDicho(t), campana: db.campanaActiva, notas: '', equipoId: equipoV, tractorId: tractorV, aperoId: aperoV, aplicador: tipo === 'Tratamiento' ? aplicadorPorDefecto() : '', cultivoSiembra: tipo === 'Siembra' ? cultivo : '', variedadSiembra: variedad ? variedad.charAt(0).toUpperCase() + variedad.slice(1) : ''
+      coste: dineroDicho(t), campana: db.campanaActiva, notas: '', equipoId: equipoV, tractorId: tractorV, aperoId: aperoV, aplicador: tipo === 'Tratamiento' ? aplicadorPorDefecto() : '', laboreoSiembra: laboreoV || (tipo === 'Siembra' ? db.ultLaboreo || '' : ''), estiercolSiembra: estiercolV, cultivoSiembra: tipo === 'Siembra' ? cultivo : '', variedadSiembra: variedad ? variedad.charAt(0).toUpperCase() + variedad.slice(1) : ''
     };
     R.quitadas = quitadas; R.nombresFinca = nombres;
     if (tipo === 'Siembra' && !cultivo) R.dudas.push('No has dicho el cultivo: la siembra se apunta sin cambiar el cultivo de las parcelas.');
@@ -3021,7 +3033,7 @@
     let h = ''; let puedeGuardar = false; let abrir = '';
     if (R.intencion === 'labor') {
       const v = R.labor; const p = producto(v.prodAlm);
-      h += `<dl class="kv">${fila('Labor', esc(v.tipo))}${fila('Fecha', fmtFecha(v.fecha))}${fila('Fincas', listaParc(v.fincas, R.quitadas))}${v.cultivoSiembra ? fila('Cultivo', chip(v.cultivoSiembra) + (v.variedadSiembra ? ' ' + esc(v.variedadSiembra) : '') + ` <span class="small muted">en ${esc(v.campana)}</span>`) : ''}${fila('Producto', p ? esc(p.nombre) : esc(v.producto))}${fila('Dosis', v.dosis != null ? `${fmtN(v.dosis, 4)} ${esc(v.unidad)}` : '')}${fila('Contra', esc(v.motivo))}${fila('Maquinaria', (equipo(v.equipoId) ? `<b>${esc(equipo(v.equipoId).nombre)}</b>: ` : '') + esc([v.tractorId, v.aperoId].map(nombreMaq).filter(Boolean).join(' + ')))}${fila('Aplicador', esc(v.aplicador))}${fila('Coste', v.coste ? eur(v.coste, 2) : '')}</dl>`;
+      h += `<dl class="kv">${fila('Labor', esc(v.tipo))}${fila('Fecha', fmtFecha(v.fecha))}${fila('Fincas', listaParc(v.fincas, R.quitadas))}${v.cultivoSiembra ? fila('Cultivo', chip(v.cultivoSiembra) + (v.variedadSiembra ? ' ' + esc(v.variedadSiembra) : '') + ` <span class="small muted">en ${esc(v.campana)}</span>`) : ''}${v.tipo === 'Siembra' ? fila('Laboreo', v.laboreoSiembra ? `${v.laboreoSiembra} · ${esc(etiquetaLaboreo(v.laboreoSiembra))}` : '<span class="muted">sin decir</span>') + fila('Estiércol', v.estiercolSiembra === 'si' ? 'Sí' : '') : ''}${fila('Producto', p ? esc(p.nombre) : esc(v.producto))}${fila('Dosis', v.dosis != null ? `${fmtN(v.dosis, 4)} ${esc(v.unidad)}` : '')}${fila('Contra', esc(v.motivo))}${fila('Maquinaria', (equipo(v.equipoId) ? `<b>${esc(equipo(v.equipoId).nombre)}</b>: ` : '') + esc([v.tractorId, v.aperoId].map(nombreMaq).filter(Boolean).join(' + ')))}${fila('Aplicador', esc(v.aplicador))}${fila('Coste', v.coste ? eur(v.coste, 2) : '')}</dl>`;
       if (p) h += `<div class="fito-info">${infoLaborHTML(Object.assign({}, v))}</div>`;
       puedeGuardar = v.fincas.length > 0 && !R.bloqueo && v.tipo !== 'Otro';
       abrir = 'labor';
@@ -3098,7 +3110,7 @@
     } else if (R.intencion === 'finca') formFinca(null, Object.assign({}, R.finca));
   }
 
-  const EJEMPLOS_VOZ = ['Acabo de sembrar la Sarrana de trigo a 180 kilos', 'Ayer aré Consejera con el John Deere y el chísel', 'He sulfatado la Sarrana con Accresto a 200 centímetros contra avena loca', 'Ayer aré Consejera', 'He cosechado Consejera, 14.000 kilos', 'Albarán de la cooperativa para Iván: 20 litros de Accresto a 30 euros el litro', 'Guardar 5.000 kilos de trigo de la cosecha como semilla para Iván', 'Gasto de gasóleo 300 euros', 'Nueva finca Los Prados en Lerma polígono 663 parcela 180, 3,5 hectáreas, titular Iván'];
+  const EJEMPLOS_VOZ = ['Acabo de sembrar la Sarrana de trigo a 180 kilos en directa', 'Ayer aré Consejera con el John Deere y el chísel', 'He sulfatado la Sarrana con Accresto a 200 centímetros contra avena loca', 'Ayer aré Consejera', 'He cosechado Consejera, 14.000 kilos', 'Albarán de la cooperativa para Iván: 20 litros de Accresto a 30 euros el litro', 'Guardar 5.000 kilos de trigo de la cosecha como semilla para Iván', 'Gasto de gasóleo 300 euros', 'Nueva finca Los Prados en Lerma polígono 663 parcela 180, 3,5 hectáreas, titular Iván'];
   function hojaVoz() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
     cargarFitos().then(d => { FITOS = d; }).catch(() => {});
