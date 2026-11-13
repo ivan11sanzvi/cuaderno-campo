@@ -27,7 +27,8 @@ Habla con el usuario en español, con lenguaje sencillo y sin tecnicismos: es ag
 - Cada registro de `db.fincas` es una **parcela**, con `titular` y `grupo` (nombre de la finca agrupada). En la interfaz se habla de «parcela» y de «finca agrupada».
 - Las siembras guardan `laboreo` (C = siembra directa con complemento, T = tradicional, D = siembra directa) y `estiercol` (true si se echó «basura»).
 - Las labores, gastos y cosechas hechos en varias parcelas a la vez comparten `lote`. Los importes, kilos y costes se reparten por superficie, en las listas salen en una sola línea y se editan juntos.
-- La labor «Siembra» también pone el laboreo (`laboreoSiembra`: C/D/T, recuerda el último en `db.ultLaboreo`) y el estiércol (`estiercolSiembra`) de todas sus parcelas, sin borrar lo que ya tenía la siembra. Por voz: «en directa», «directa con complemento», «tradicional», «con basura».
+- La labor «Siembra» también pone el laboreo (`laboreoSiembra`: C/D/T, recuerda el último en `db.ultLaboreo`) de todas sus parcelas, sin borrar lo que ya tenía la siembra. Por voz: «en directa», «directa con complemento», «tradicional».
+- El estiércol NO va en la siembra (es otra labor): `conEstiercol(fid, c)` es true si hay un Abonado con estiércol/basura/purín… (`esEstiercol`) en la campaña, o si la siembra trae `estiercol` (Excel o «Cambiar cultivo»). Úsalo siempre en vez de `s.estiercol`.
 - En la misma siembra cada parcela puede llevar un laboreo distinto («Laboreo distinto en alguna parcela», `laboreoPorFinca`). Los recintos con distinto régimen ya vienen separados al importar el Excel.
 - Variedades: `variedadesDe(cultivo)` sugiere las ya usadas con ese cultivo (datalist en la siembra y en «Cambiar cultivo»).
 - Una parcela solo se puede sembrar una vez por campaña: en la labor «Siembra» las ya sembradas salen grises y no se pueden marcar (`sembradas(campaña)`, campo `bloquear` del selector de fincas). La voz también las quita. Las demás labores se pueden repetir.

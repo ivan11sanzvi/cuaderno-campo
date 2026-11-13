@@ -2,7 +2,7 @@
 (function () {
   // ---------- Constantes ----------
   const KEY = 'cuadernoCampo.v1';
-  const VERSION = '2.0.5';
+  const VERSION = '2.0.6';
   const TIPOS_LABOR = ['Labrado', 'Siembra', 'Abonado', 'Tratamiento', 'Rodillo', 'Cosecha', 'Empacado', 'Otro'];
   const CON_DOSIS = ['Siembra', 'Abonado', 'Tratamiento'];
   const UNIDADES = ['kg/ha', 'L/ha', 'g/ha', 'cc/ha', 'kg', 'L'];
@@ -91,6 +91,10 @@
 
   const finca = id => db.fincas.find(f => f.id === id);
   const siembraDe = (fid, c) => db.siembras.find(s => s.fincaId === fid && s.campana === c) || null;
+  // Estiércol («basura»): un abonado con estiércol en la campaña, o marcado a mano / desde el Excel
+  const RE_ESTIERCOL = /\b(estiercol|basura|purin|gallinaza|palomina|compost|organico)\b/;
+  const esEstiercol = l => l.tipo === 'Abonado' && RE_ESTIERCOL.test(norm(l.producto || ((db.productos.find(p => p.id === l.productoId) || {}).nombre) || ''));
+  const conEstiercol = (fid, c) => { const s = siembraDe(fid, c); return !!(s && s.estiercol) || db.labores.some(l => l.fincaId === fid && l.campana === c && esEstiercol(l)); };
   const cultivoDe = (fid, c) => { const s = siembraDe(fid, c); return s ? s.cultivo : null; };
 
   // ---------- Fincas agrupadas (varias parcelas que tú llamas igual) ----------
@@ -584,7 +588,7 @@
       h += `<div class="card pad sp"><span class="small muted">Sin referencia SIGPAC: no se puede situar en el mapa.</span><button class="btn sm" data-act="editFinca" data-id="${id}">Añadir referencia</button></div>`;
     }
     h += `<div class="card pad" style="display:flex;flex-direction:column;gap:12px">
-      <div class="sp"><div><div class="tag">Campaña ${c}</div><div class="chips">${chip(s && s.cultivo)}${s && s.variedad ? `<span class="muted small">${esc(s.variedad)}</span>` : ''}</div>${s && (s.laboreo || s.estiercol) ? `<div class="small muted" style="margin-top:4px">${[s.laboreo ? 'Laboreo: ' + esc(etiquetaLaboreo(s.laboreo)) : '', s.estiercol ? 'Con estiércol' : ''].filter(Boolean).join(' · ')}</div>` : ''}</div>
+      <div class="sp"><div><div class="tag">Campaña ${c}</div><div class="chips">${chip(s && s.cultivo)}${s && s.variedad ? `<span class="muted small">${esc(s.variedad)}</span>` : ''}</div>${s && (s.laboreo || conEstiercol(id, c)) ? `<div class="small muted" style="margin-top:4px">${[s.laboreo ? 'Laboreo: ' + esc(etiquetaLaboreo(s.laboreo)) : '', conEstiercol(id, c) ? 'Con estiércol' : ''].filter(Boolean).join(' · ')}</div>` : ''}</div>
       <button class="btn sm" data-act="asignar" data-id="${id}">${s ? 'Cambiar cultivo' : 'Asignar cultivo'}</button></div>
       <div class="stats">${stat('Rendimiento', st.kgHa ? fmtN(st.kgHa, 0) + ' kg/ha' : '—')}${stat('Gastos', eur(st.gastos))}${stat('Margen', st.margenHa != null ? eur(st.margenHa) + '/ha' : '—', signo(st.margen))}</div>${notaMaq(st)}
       <div class="actions"><button class="btn sm" data-act="nuevaLabor" data-finca="${id}">${ico.plus} Labor</button><button class="btn sm" data-act="nuevoMov" data-finca="${id}" data-tipo="gasto">${ico.plus} Gasto</button><button class="btn sm" data-act="nuevoMov" data-finca="${id}" data-tipo="ingreso">${ico.plus} Ingreso</button><button class="btn sm" data-act="nuevaCosecha" data-finca="${id}">${ico.plus} Cosecha</button></div></div>`;
@@ -599,7 +603,7 @@
     if (camps.length) {
       h += `<h2 class="sec">Rotación e historial</h2><div class="tablewrap"><table><thead><tr><th>Campaña</th><th>Cultivo</th><th>Laboreo</th><th>kg/ha</th><th>Margen €/ha</th></tr></thead><tbody>${camps.map(cc => {
         const x = statsFinca(id, cc); const sc = siembraDe(id, cc);
-        return `<tr><td>${cc}</td><td style="text-align:left">${chip(cultivoDe(id, cc))}</td><td style="text-align:left" class="small">${sc ? esc(etiquetaLaboreo(sc.laboreo)) + (sc.estiercol ? ' · estiércol' : '') : ''}</td><td>${x.kgHa ? fmtN(x.kgHa, 0) : '—'}</td><td class="${signo(x.margen)}">${x.margenHa != null ? fmtN(x.margenHa, 0) : '—'}</td></tr>`;
+        return `<tr><td>${cc}</td><td style="text-align:left">${chip(cultivoDe(id, cc))}</td><td style="text-align:left" class="small">${sc ? esc(etiquetaLaboreo(sc.laboreo)) + (conEstiercol(id, cc) ? ' · estiércol' : '') : ''}</td><td>${x.kgHa ? fmtN(x.kgHa, 0) : '—'}</td><td class="${signo(x.margen)}">${x.margenHa != null ? fmtN(x.margenHa, 0) : '—'}</td></tr>`;
       }).join('')}</tbody></table></div>`;
     }
     const ab = abonadoFinca(id, c);
@@ -1100,7 +1104,7 @@
         { k: 'cultivo', label: 'Cultivo', type: 'select', req: 1, opts: () => [...db.cultivos.map(x => [x, x]), ['__ninguno', 'Sin cultivo (quitar)']] },
         { k: 'variedad', label: 'Variedad', placeholder: 'Ej.: Marcopolo, Pedrezuela, Castellana…', show: v => v.cultivo !== '__ninguno' && v.cultivo !== 'Barbecho', lista: () => variedadesDe(s ? s.cultivo : db.cultivos[0]) },
         { k: 'laboreo', label: 'Laboreo', type: 'select', half: 1, opts: () => [['', '—'], ...Object.entries(LABOREO)], show: v => v.cultivo !== '__ninguno' },
-        { k: 'estiercol', label: 'Estiércol', type: 'select', half: 1, opts: () => [['no', 'No'], ['si', 'Sí']], show: v => v.cultivo !== '__ninguno' },
+        { k: 'estiercol', label: 'Estiércol', type: 'select', half: 1, opts: () => [['no', 'No'], ['si', 'Sí']], show: v => v.cultivo !== '__ninguno', hint: 'También cuenta si apuntas un abonado con estiércol.' },
         campoCampana
       ],
       alCambiar(v, form, origen) { if (origen === 'cultivo') pintarVariedades(form, 'variedad', v.cultivo); },
@@ -1220,7 +1224,6 @@
           if (v.cultivoSiembra) sb.variedad = v.variedadSiembra || '';
           const lab = (v.laboreoPorFinca || {})[x.fincaId] || v.laboreoSiembra;
           if (lab) sb.laboreo = lab;
-          if (v.estiercolSiembra) sb.estiercol = v.estiercolSiembra === 'si';
         }
   }
     });
@@ -1257,7 +1260,7 @@
       ? Object.assign({}, l, { fincas: miembros.map(x => x.fincaId), prodAlm: l.productoId || '', coste: miembros.some(x => x.coste) ? Math.round(sum(miembros, x => x.coste) * 100) / 100 : null })
       : Object.assign({ fecha: hoyISO(), tipo: 'Labrado', fincas: idsIniciales(pre), unidad: 'kg/ha', campana: db.campanaActiva, prodAlm: '' }, maqPorDefecto((pre.valores || {}).tipo || 'Labrado'), { aplicador: aplicadorPorDefecto() }, pre.valores || {});
     let maqTocada = !!l || !!(pre.valores && (pre.valores.tractorId || pre.valores.aperoId || pre.valores.equipoId));
-    if (l && l.tipo === 'Siembra') { const s = siembraDe(l.fincaId, l.campana); if (s) { ini.cultivoSiembra = s.cultivo; ini.variedadSiembra = s.variedad || ''; ini.laboreoSiembra = s.laboreo || ''; ini.estiercolSiembra = s.estiercol ? 'si' : ''; } }
+    if (l && l.tipo === 'Siembra') { const s = siembraDe(l.fincaId, l.campana); if (s) { ini.cultivoSiembra = s.cultivo; ini.variedadSiembra = s.variedad || ''; ini.laboreoSiembra = s.laboreo || ''; } }
     if (!l && ini.laboreoSiembra == null) ini.laboreoSiembra = db.ultLaboreo || '';
     // laboreo distinto en algunas parcelas de la misma siembra
     const lpf = {};
@@ -1297,11 +1300,10 @@
         { k: 'tipo', label: 'Labor', type: 'select', req: 1, half: 1, opts: () => TIPOS_LABOR.map(t => [t, t]) },
         { k: 'fincas', label: 'Fincas', type: 'fincas', req: 1, hint: 'Marca una o varias. Al marcar una finca agrupada se marcan todas sus parcelas.', bloquear: v => v.tipo === 'Siembra' ? sembradas(v.campana, propiosIds) : null },
         { k: 'prodAlm', label: 'Producto del almacén', sinOpcional: 1, type: 'select', dyn: 1, opts: v => opcionesAlmacen(v, l && l.productoId), show: v => !!TIPO_DE_LABOR[v.tipo] && !(viejo && !v.prodAlm && v.tipo === 'Tratamiento' && l.producto) },
-        { k: 'producto', label: 'Producto, variedad o apero', placeholder: 'Ej.: cultivador, vertedera', show: v => !(TIPO_DE_LABOR[v.tipo] && v.prodAlm) && (v.tipo !== 'Tratamiento' || viejo) },
+        { k: 'producto', label: 'Producto, variedad o apero', placeholder: 'Ej.: cultivador, vertedera', lista: () => ['Estiércol', 'Purín', 'Gallinaza'], show: v => !(TIPO_DE_LABOR[v.tipo] && v.prodAlm) && (v.tipo !== 'Tratamiento' || viejo) },
         { k: 'cultivoSiembra', label: 'Cultivo sembrado', type: 'select', half: 1, opts: () => [['', 'No cambiar'], ...db.cultivos.map(c => [c, c])], show: v => v.tipo === 'Siembra', hint: 'Se asigna a las parcelas en la campaña.' },
         { k: 'variedadSiembra', label: 'Variedad', half: 1, placeholder: 'Ej.: Marcopolo', show: v => v.tipo === 'Siembra', lista: () => variedadesDe(ini.cultivoSiembra) },
         { k: 'laboreoSiembra', label: 'Laboreo', type: 'select', half: 1, sinOpcional: 1, opts: () => [['', 'No cambiar'], ['C', 'C · Directa con complemento'], ['D', 'D · Siembra directa'], ['T', 'T · Tradicional']], show: v => v.tipo === 'Siembra' },
-        { k: 'estiercolSiembra', label: 'Estiércol (basura)', type: 'select', half: 1, sinOpcional: 1, opts: () => [['', 'No cambiar'], ['no', 'No'], ['si', 'Sí']], show: v => v.tipo === 'Siembra' },
         { k: 'dosis', label: 'Dosis', type: 'num', half: 1, show: conDosis },
         { k: 'unidad', label: 'Unidad', type: 'select', half: 1, opts: () => UNIDADES.map(u => [u, u]), show: conDosis },
         { k: 'registro', label: 'Nº de registro', half: 1, show: v => trat(v) && !v.prodAlm, placeholder: 'Registro del producto' },
@@ -1851,7 +1853,7 @@
       ? [['Sarrana 663-180', 'Sarrana', 'Iván', 2.92, 'Lerma', 9, 197, 0, 0, 663, 180, '1, 2', '', 'Trigo', '', 'C', '', c, ''],
          ['Sarrana 663-181', 'Sarrana', 'Iván', 1.5, 'Lerma', 9, 197, 0, 0, 663, 181, '1', '', 'Trigo', '', 'C', 'X', c, ''],
          ['Consejera', '', 'Tomás', 6.82, 'Lerma', 9, 197, 0, 0, 631, 778, '1', '', 'Esparceta', '', 'D', '', c, 'Arrendada']]
-      : db.fincas.slice().sort(byNombre).map(f => { const s = siembraDe(f.id, c); return [f.nombre, grupoDe(f), f.titular || '', f.superficie, f.municipio || '', f.provincia || '', f.codMunicipio || '', f.agregado || 0, f.zona || 0, f.poligono || '', f.parcela || '', f.recinto || '', f.otras || '', s ? s.cultivo : '', s ? s.variedad || '' : '', s ? s.laboreo || '' : '', s && s.estiercol ? 'X' : '', c, f.notas || '']; });
+      : db.fincas.slice().sort(byNombre).map(f => { const s = siembraDe(f.id, c); return [f.nombre, grupoDe(f), f.titular || '', f.superficie, f.municipio || '', f.provincia || '', f.codMunicipio || '', f.agregado || 0, f.zona || 0, f.poligono || '', f.parcela || '', f.recinto || '', f.otras || '', s ? s.cultivo : '', s ? s.variedad || '' : '', s ? s.laboreo || '' : '', conEstiercol(f.id, c) ? 'X' : '', c, f.notas || '']; });
     const ws = XLSX.utils.aoa_to_sheet([COLS_EXPORT, ...filas]);
     ws['!cols'] = COLS_EXPORT.map((h, i) => ({ wch: [20, 16, 10, 12, 16, 9, 12, 9, 6, 9, 9, 9, 16, 12, 12, 8, 7, 9, 24][i] }));
     const wb = XLSX.utils.book_new();
@@ -2488,7 +2490,7 @@
       const fs = g ? fincasDeGrupo(g) : [f]; if (g) vistos.add(g);
       const ha = sum(fs, x => +x.superficie || 0); const ab = fs.map(x => Object.assign(abonadoFinca(x.id, c), { ha: +x.superficie || 0 }));
       const cus = [...new Set(fs.map(x => cultivoDe(x.id, c)).filter(Boolean))];
-      filas.push({ nombre: g || f.nombre, cus, ha, n: ha ? sum(ab, a => a.n * a.ha) / ha : 0, p: ha ? sum(ab, a => a.p * a.ha) / ha : 0, k: ha ? sum(ab, a => a.k * a.ha) / ha : 0, hay: ab.some(a => a.ls.length), est: fs.some(x => { const s = siembraDe(x.id, c); return s && s.estiercol; }) });
+      filas.push({ nombre: g || f.nombre, cus, ha, n: ha ? sum(ab, a => a.n * a.ha) / ha : 0, p: ha ? sum(ab, a => a.p * a.ha) / ha : 0, k: ha ? sum(ab, a => a.k * a.ha) / ha : 0, hay: ab.some(a => a.ls.length), est: fs.some(x => conEstiercol(x.id, c)) });
     });
     const porCu = {};
     db.fincas.forEach(f => { const cu = cultivoDe(f.id, c); if (!cu || norm(cu) === 'barbecho') return; const a = abonadoFinca(f.id, c); const ha = +f.superficie || 0; const o = porCu[cu] || (porCu[cu] = { ha: 0, n: 0, p: 0, k: 0, haAb: 0 }); o.ha += ha; o.n += a.n * ha; o.p += a.p * ha; o.k += a.k * ha; if (a.ls.length) o.haAb += ha; });
@@ -2563,7 +2565,7 @@
     const fe = [['Fecha', 'Nº orden parcelas', 'Cultivo', 'Superficie (ha)', 'Abono', 'Tipo', 'Riqueza N-P₂O₅-K₂O (%)', 'Dosis', 'Unidad', 'kg de abono/ha', 'N (UF/ha)', 'P₂O₅ (UF/ha)', 'K₂O (UF/ha)', 'Equipo', 'Observaciones']];
     D.grupos.filter(({ x }) => x.tipo === 'Abonado' || ufLabor(x)).forEach(({ x, n }) => { const u = ufLabor(x);
       fe.push([dmy(x.fecha), nums(n), cultG(n), haG(n), x.producto || '', 'Mineral', u ? txtRiq(u.r) : '', x.dosis != null ? x.dosis : '', x.unidad || '', u ? r2(u.kgHa) : '', u ? r2(u.n) : '', u ? r2(u.p) : '', u ? r2(u.k) : '', equipoTxt(x), x.notas || '']); });
-    D.fs.filter(f => { const s = siembraDe(f.id, c); return s && s.estiercol; }).forEach(f => fe.push(['', D.orden.get(f.id), cultivoDe(f.id, c) || '', r2(f.superficie), 'Estiércol', 'Orgánico', '', '', '', '', '', '', '', '', 'Aplicado en la campaña (sin dosis apuntada)']));
+    D.fs.filter(f => { const s = siembraDe(f.id, c); return s && s.estiercol && !db.labores.some(l => l.fincaId === f.id && l.campana === c && esEstiercol(l)); }).forEach(f => fe.push(['', D.orden.get(f.id), cultivoDe(f.id, c) || '', r2(f.superficie), 'Estiércol', 'Orgánico', '', '', '', '', '', '', '', '', 'Aplicado en la campaña (sin dosis apuntada)']));
     XLSX.utils.book_append_sheet(wb, hoja(fe, [11, 14, 14, 10, 24, 9, 14, 7, 8, 10, 9, 10, 9, 24, 30]), '4 Fertilizacion');
     // 5. Otras labores (siembra, laboreo, cosecha…)
     const ot = [['Fecha', 'Nº orden parcelas', 'Cultivo', 'Superficie (ha)', 'Labor', 'Semilla, producto o apero', 'Dosis', 'Unidad', 'Maquinaria', 'Observaciones']];
@@ -2611,7 +2613,7 @@
     const lab = { D: 0, C: 0, T: 0, '': 0 }; let est = 0; const grp = {};
     fs.forEach(f => { const s = siembraDe(f.id, c); const ha = +f.superficie || 0; const g = grupoCult(s && s.cultivo); grp[g] = (grp[g] || 0) + ha;
       if (s && s.cultivo && norm(s.cultivo) !== 'barbecho') { const k = LABOREO[s.laboreo] ? s.laboreo : ''; lab[k] += ha; }
-      if (s && s.estiercol) est += ha; });
+      if (conEstiercol(f.id, c)) est += ha; });
     const sembrada = lab.D + lab.C + lab.T + lab[''];
     return { lab, est, grp, sembrada, total: sum(fs, f => +f.superficie || 0) };
   }
@@ -2645,7 +2647,7 @@
     camps.forEach(c => { cab1.push(c, '', ''); cab2.push('CULTIVO', 'BASURA', 'LABOREO'); });
     const nombreDe = f => { if (grupoDe(f)) return grupoDe(f); const nb = nombreBase(f.nombre); return (!nb || norm(nb) === norm(f.municipio)) ? '' : nb; };
     const fila = f => { const r = [String(f.titular || '').toUpperCase(), nombreDe(f), String(f.municipio || '').toUpperCase(), f.provincia || '', f.codMunicipio || '', +f.poligono || f.poligono || '', +f.parcela || f.parcela || '', f.recinto || '', f.geo && f.geo.ha ? f.geo.ha : '', f.superficie || ''];
-      camps.forEach(c => { const s = siembraDe(f.id, c); r.push(s ? String(s.cultivo).toUpperCase() : '', s && s.estiercol ? 'X' : '', s ? s.laboreo || '' : ''); }); return r; };
+      camps.forEach(c => { const s = siembraDe(f.id, c); r.push(s ? String(s.cultivo).toUpperCase() : '', conEstiercol(f.id, c) ? 'X' : '', s ? s.laboreo || '' : ''); }); return r; };
     const orden = (a, b) => String(a.municipio || '').localeCompare(String(b.municipio || ''), 'es') || (+a.poligono - +b.poligono) || (+a.parcela - +b.parcela);
     const hoja = fs => { const ws = XLSX.utils.aoa_to_sheet([cab1, cab2, ...fs.slice().sort(orden).map(fila)]); ws['!cols'] = cab2.map((h, i) => ({ wch: [12, 22, 16, 9, 9, 9, 9, 9, 11, 13][i] || 11 })); ws['!merges'] = camps.map((c, i) => ({ s: { r: 0, c: 10 + i * 3 }, e: { r: 0, c: 12 + i * 3 } })); return ws; };
     const wb = XLSX.utils.book_new();
@@ -2902,16 +2904,16 @@
     const motivo = (t.match(/\bcontra (?:la |el |los |las )?([a-z ]{3,40}?)(?= a \d| con | en | por | y |$|\d)/) || [])[1] || '';
     const variedad = (t.match(/\bvariedad ([a-z0-9]+(?: [a-z0-9]+)?)/) || [])[1] || '';
     const laboreoV = tipo !== 'Siembra' ? '' : /\bdirecta con (?:el |un )?complement/.test(t) || /\bcon complemento\b/.test(t) ? 'C' : /\b(?:siembra |en |a )?directa\b/.test(t) ? 'D' : /\b(tradicional|convencional)\b/.test(t) ? 'T' : '';
-    const estiercolV = tipo === 'Siembra' && /\b(con|echado|echamos|eche|echado) (?:la |el )?(basura|estiercol)\b/.test(t) ? 'si' : '';
     const mqs = R.maquinas || []; const dm = R.equipo ? { equipoId: R.equipo.id, tractorId: R.equipo.tractorId || '', aperoId: R.equipo.aperoId || '' } : maqPorDefecto(tipo);
     const tractorV = (mqs.find(m => MOTRICES.includes(m.tipo)) || {}).id || dm.tractorId;
     const aperoV = (mqs.find(m => !MOTRICES.includes(m.tipo)) || {}).id || (mqs.length ? '' : dm.aperoId);
     const equipoV = dm.equipoId && tractorV === dm.tractorId && aperoV === dm.aperoId ? dm.equipoId : '';
+    const estiercolDicho = tipo === 'Abonado' && !p && /\b(estiercol|basura)\b/.test(t);
     const apero = !p && !mqs.length && !CON_DOSIS.includes(tipo) ? ((t.match(/\bcon (?:el |la |los |las )?([a-z]+(?: [a-z]+)?)/) || [])[1] || '') : '';
     R.labor = {
-      fecha: R.fecha, tipo, fincas: fs.map(f => f.id), prodAlm: p ? p.id : '', producto: apero ? apero.charAt(0).toUpperCase() + apero.slice(1) : '',
+      fecha: R.fecha, tipo, fincas: fs.map(f => f.id), prodAlm: p ? p.id : '', producto: estiercolDicho ? 'Estiércol' : apero ? apero.charAt(0).toUpperCase() + apero.slice(1) : '',
       dosis, unidad: unidad || (tipo === 'Siembra' || tipo === 'Abonado' ? 'kg/ha' : 'L/ha'), motivo: motivo.trim(), superficie: fs.length === 1 && haM ? +haM[1] : null,
-      coste: dineroDicho(t), campana: db.campanaActiva, notas: '', equipoId: equipoV, tractorId: tractorV, aperoId: aperoV, aplicador: tipo === 'Tratamiento' ? aplicadorPorDefecto() : '', laboreoSiembra: laboreoV || (tipo === 'Siembra' ? db.ultLaboreo || '' : ''), estiercolSiembra: estiercolV, cultivoSiembra: tipo === 'Siembra' ? cultivo : '', variedadSiembra: variedad ? variedad.charAt(0).toUpperCase() + variedad.slice(1) : ''
+      coste: dineroDicho(t), campana: db.campanaActiva, notas: '', equipoId: equipoV, tractorId: tractorV, aperoId: aperoV, aplicador: tipo === 'Tratamiento' ? aplicadorPorDefecto() : '', laboreoSiembra: laboreoV || (tipo === 'Siembra' ? db.ultLaboreo || '' : ''), cultivoSiembra: tipo === 'Siembra' ? cultivo : '', variedadSiembra: variedad ? variedad.charAt(0).toUpperCase() + variedad.slice(1) : ''
     };
     R.quitadas = quitadas; R.nombresFinca = nombres;
     if (tipo === 'Siembra' && !cultivo) R.dudas.push('No has dicho el cultivo: la siembra se apunta sin cambiar el cultivo de las parcelas.');
@@ -3074,7 +3076,7 @@
     let h = ''; let puedeGuardar = false; let abrir = '';
     if (R.intencion === 'labor') {
       const v = R.labor; const p = producto(v.prodAlm);
-      h += `<dl class="kv">${fila('Labor', esc(v.tipo))}${fila('Fecha', fmtFecha(v.fecha))}${fila('Fincas', listaParc(v.fincas, R.quitadas))}${v.cultivoSiembra ? fila('Cultivo', chip(v.cultivoSiembra) + (v.variedadSiembra ? ' ' + esc(v.variedadSiembra) : '') + ` <span class="small muted">en ${esc(v.campana)}</span>`) : ''}${v.tipo === 'Siembra' ? fila('Laboreo', v.laboreoSiembra ? `${v.laboreoSiembra} · ${esc(etiquetaLaboreo(v.laboreoSiembra))}` : '<span class="muted">sin decir</span>') + fila('Estiércol', v.estiercolSiembra === 'si' ? 'Sí' : '') : ''}${fila('Producto', p ? esc(p.nombre) : esc(v.producto))}${fila('Dosis', v.dosis != null ? `${fmtN(v.dosis, 4)} ${esc(v.unidad)}` : '')}${fila('Contra', esc(v.motivo))}${fila('Maquinaria', (equipo(v.equipoId) ? `<b>${esc(equipo(v.equipoId).nombre)}</b>: ` : '') + esc([v.tractorId, v.aperoId].map(nombreMaq).filter(Boolean).join(' + ')))}${fila('Aplicador', esc(v.aplicador))}${fila('Coste', v.coste ? eur(v.coste, 2) : '')}</dl>`;
+      h += `<dl class="kv">${fila('Labor', esc(v.tipo))}${fila('Fecha', fmtFecha(v.fecha))}${fila('Fincas', listaParc(v.fincas, R.quitadas))}${v.cultivoSiembra ? fila('Cultivo', chip(v.cultivoSiembra) + (v.variedadSiembra ? ' ' + esc(v.variedadSiembra) : '') + ` <span class="small muted">en ${esc(v.campana)}</span>`) : ''}${v.tipo === 'Siembra' ? fila('Laboreo', v.laboreoSiembra ? `${v.laboreoSiembra} · ${esc(etiquetaLaboreo(v.laboreoSiembra))}` : '<span class="muted">sin decir</span>') : ''}${fila('Producto', p ? esc(p.nombre) : esc(v.producto))}${fila('Dosis', v.dosis != null ? `${fmtN(v.dosis, 4)} ${esc(v.unidad)}` : '')}${fila('Contra', esc(v.motivo))}${fila('Maquinaria', (equipo(v.equipoId) ? `<b>${esc(equipo(v.equipoId).nombre)}</b>: ` : '') + esc([v.tractorId, v.aperoId].map(nombreMaq).filter(Boolean).join(' + ')))}${fila('Aplicador', esc(v.aplicador))}${fila('Coste', v.coste ? eur(v.coste, 2) : '')}</dl>`;
       if (p) h += `<div class="fito-info">${infoLaborHTML(Object.assign({}, v))}</div>`;
       puedeGuardar = v.fincas.length > 0 && !R.bloqueo && v.tipo !== 'Otro';
       abrir = 'labor';
