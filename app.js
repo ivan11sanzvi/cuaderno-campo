@@ -2,7 +2,7 @@
 (function () {
   // ---------- Constantes ----------
   const KEY = 'cuadernoCampo.v1';
-  const VERSION = '2.0.3';
+  const VERSION = '2.0.5';
   const TIPOS_LABOR = ['Labrado', 'Siembra', 'Abonado', 'Tratamiento', 'Rodillo', 'Cosecha', 'Empacado', 'Otro'];
   const CON_DOSIS = ['Siembra', 'Abonado', 'Tratamiento'];
   const UNIDADES = ['kg/ha', 'L/ha', 'g/ha', 'cc/ha', 'kg', 'L'];
@@ -1098,11 +1098,12 @@
       valores: { campana: c, cultivo: s ? s.cultivo : db.cultivos[0], variedad: s ? s.variedad : '', laboreo: s ? s.laboreo || '' : '', estiercol: s && s.estiercol ? 'si' : 'no' },
       campos: [
         { k: 'cultivo', label: 'Cultivo', type: 'select', req: 1, opts: () => [...db.cultivos.map(x => [x, x]), ['__ninguno', 'Sin cultivo (quitar)']] },
-        { k: 'variedad', label: 'Variedad', placeholder: 'Ej.: Marcopolo, Pedrezuela, Castellana…', show: v => v.cultivo !== '__ninguno' && v.cultivo !== 'Barbecho' },
+        { k: 'variedad', label: 'Variedad', placeholder: 'Ej.: Marcopolo, Pedrezuela, Castellana…', show: v => v.cultivo !== '__ninguno' && v.cultivo !== 'Barbecho', lista: () => variedadesDe(s ? s.cultivo : db.cultivos[0]) },
         { k: 'laboreo', label: 'Laboreo', type: 'select', half: 1, opts: () => [['', '—'], ...Object.entries(LABOREO)], show: v => v.cultivo !== '__ninguno' },
         { k: 'estiercol', label: 'Estiércol', type: 'select', half: 1, opts: () => [['no', 'No'], ['si', 'Sí']], show: v => v.cultivo !== '__ninguno' },
         campoCampana
       ],
+      alCambiar(v, form, origen) { if (origen === 'cultivo') pintarVariedades(form, 'variedad', v.cultivo); },
       guardar(v) {
         db.siembras = db.siembras.filter(x => !(x.fincaId === fid && x.campana === v.campana));
         if (v.cultivo !== '__ninguno') db.siembras.push({ id: uid(), fincaId: fid, campana: v.campana, cultivo: v.cultivo, variedad: v.variedad, laboreo: v.laboreo, estiercol: v.estiercol === 'si' });
@@ -1195,7 +1196,7 @@
     if (v.tipo === 'Siembra' && v.laboreoSiembra) db.ultLaboreo = v.laboreoSiembra;
     fs.forEach((f, i) => {
       const x = Object.assign({}, v, { id: i === 0 && l ? l.id : uid(), fincaId: f.id, coste: costes[i], superficie: fs.length > 1 ? null : v.superficie });
-      delete x.fincas; delete x.prodAlm; delete x._propio; delete x.cultivoSiembra; delete x.variedadSiembra; delete x.laboreoSiembra; delete x.estiercolSiembra; if (lote) x.lote = lote; else delete x.lote;
+      delete x.fincas; delete x.prodAlm; delete x._propio; delete x.cultivoSiembra; delete x.variedadSiembra; delete x.laboreoSiembra; delete x.estiercolSiembra; delete x.laboreoPorFinca; if (lote) x.lote = lote; else delete x.lote;
       delete x.consumo; delete x.avisos; delete x.productoId;
       if (p) {
         x.productoId = p.id; x.producto = p.nombre; if (p.registro) x.registro = p.registro;
@@ -1217,7 +1218,8 @@
           if (!s0) db.siembras.push(sb);
           sb.cultivo = cu;
           if (v.cultivoSiembra) sb.variedad = v.variedadSiembra || '';
-          if (v.laboreoSiembra) sb.laboreo = v.laboreoSiembra;
+          const lab = (v.laboreoPorFinca || {})[x.fincaId] || v.laboreoSiembra;
+          if (lab) sb.laboreo = lab;
           if (v.estiercolSiembra) sb.estiercol = v.estiercolSiembra === 'si';
         }
   }
@@ -1225,6 +1227,13 @@
       
   }
 
+  // Variedades ya usadas (las del cultivo primero, las más usadas antes)
+  function variedadesDe(cultivo) {
+    const n = new Map(), deCult = new Set();
+    db.siembras.forEach(s => { const v = String(s.variedad || '').trim(); if (!v) return; const k = v.toLowerCase(); const o = n.get(k) || { v, c: 0 }; o.c++; n.set(k, o); if (cultivo && norm(s.cultivo) === norm(cultivo)) deCult.add(k); });
+    return [...n.entries()].sort((a, b) => (deCult.has(b[0]) - deCult.has(a[0])) || b[1].c - a[1].c || a[1].v.localeCompare(b[1].v, 'es')).filter(([k]) => !cultivo || deCult.has(k)).map(([, o]) => o.v);
+  }
+  const pintarVariedades = (form, k, cultivo) => { const dl = form.querySelector('#dl_' + k); if (dl) dl.innerHTML = variedadesDe(cultivo).map(x => `<option value="${esc(x)}">`).join(''); };
   // Parcelas con una siembra ya apuntada en la campaña → texto «sembrada el 2 nov»
   function sembradas(campana, excluir) {
     const m = new Map();
@@ -1250,6 +1259,33 @@
     let maqTocada = !!l || !!(pre.valores && (pre.valores.tractorId || pre.valores.aperoId || pre.valores.equipoId));
     if (l && l.tipo === 'Siembra') { const s = siembraDe(l.fincaId, l.campana); if (s) { ini.cultivoSiembra = s.cultivo; ini.variedadSiembra = s.variedad || ''; ini.laboreoSiembra = s.laboreo || ''; ini.estiercolSiembra = s.estiercol ? 'si' : ''; } }
     if (!l && ini.laboreoSiembra == null) ini.laboreoSiembra = db.ultLaboreo || '';
+    // laboreo distinto en algunas parcelas de la misma siembra
+    const lpf = {};
+    if (l && l.tipo === 'Siembra') {
+      const labs = miembros.map(x => (siembraDe(x.fincaId, x.campana) || {}).laboreo || '');
+      const cuenta = {}; labs.forEach(x => { if (x) cuenta[x] = (cuenta[x] || 0) + 1; });
+      const comun = Object.keys(cuenta).sort((a, b) => cuenta[b] - cuenta[a])[0] || '';
+      ini.laboreoSiembra = comun;
+      miembros.forEach((x, i) => { if (labs[i] && labs[i] !== comun) lpf[x.fincaId] = labs[i]; });
+    }
+    if (pre.valores && pre.valores.laboreoPorFinca) Object.assign(lpf, pre.valores.laboreoPorFinca);
+    let lpfClave = '';
+    function pintarLpf(v, form) {
+      const anc = form.querySelector('[data-pair="laboreoSiembra"]'); if (!anc) return;
+      let box = form.querySelector('#lpf');
+      form.querySelectorAll('[data-lpf]').forEach(sel => { if (sel.value) lpf[sel.dataset.lpf] = sel.value; else delete lpf[sel.dataset.lpf]; });
+      const fs = v.tipo === 'Siembra' ? (v.fincas || []).map(finca).filter(Boolean) : [];
+      const clave = fs.map(f => f.id).join(',') + '|' + v.laboreoSiembra;
+      if (fs.length < 2) { if (box) box.remove(); lpfClave = ''; return; }
+      const cuantas = () => { const n = Object.keys(lpf).filter(id => fs.some(f => f.id === id)).length; return n ? `${n} distinta${n === 1 ? '' : 's'}` : 'ninguna'; };
+      if (box && clave === lpfClave) { const c = box.querySelector('.lpf-n'); if (c) c.textContent = cuantas(); return; }
+      lpfClave = clave;
+      if (!box) { box = document.createElement('details'); box.id = 'lpf'; box.className = 'card pad lpf'; anc.after(box); }
+      const abierto = box.open || Object.keys(lpf).some(id => fs.some(f => f.id === id));
+      const gen = v.laboreoSiembra ? `Igual (${v.laboreoSiembra})` : 'Igual';
+      box.innerHTML = `<summary><b>Laboreo distinto en alguna parcela</b> <span class="small muted lpf-n">${cuantas()}</span></summary><div class="lpf-list">${fs.sort(byNombre).map(f => `<label class="lpf-f"><span>${esc(f.nombre)}${f.recinto ? ` <span class="small muted">rec. ${esc(f.recinto)}</span>` : ''}</span><select data-lpf="${f.id}"><option value="">${gen}</option>${['C', 'D', 'T'].map(k => `<option value="${k}"${lpf[f.id] === k ? ' selected' : ''}>${k} · ${esc(LABOREO[k])}</option>`).join('')}</select></label>`).join('')}</div>`;
+      box.open = abierto;
+    }
     let ultimoProd = ini.prodAlm;
     cargarFitos().then(d => { FITOS = d; if (refrescarInfo) refrescarInfo(); }).catch(() => {});
     let refrescarInfo = null;
@@ -1263,7 +1299,7 @@
         { k: 'prodAlm', label: 'Producto del almacén', sinOpcional: 1, type: 'select', dyn: 1, opts: v => opcionesAlmacen(v, l && l.productoId), show: v => !!TIPO_DE_LABOR[v.tipo] && !(viejo && !v.prodAlm && v.tipo === 'Tratamiento' && l.producto) },
         { k: 'producto', label: 'Producto, variedad o apero', placeholder: 'Ej.: cultivador, vertedera', show: v => !(TIPO_DE_LABOR[v.tipo] && v.prodAlm) && (v.tipo !== 'Tratamiento' || viejo) },
         { k: 'cultivoSiembra', label: 'Cultivo sembrado', type: 'select', half: 1, opts: () => [['', 'No cambiar'], ...db.cultivos.map(c => [c, c])], show: v => v.tipo === 'Siembra', hint: 'Se asigna a las parcelas en la campaña.' },
-        { k: 'variedadSiembra', label: 'Variedad', half: 1, placeholder: 'Ej.: Marcopolo', show: v => v.tipo === 'Siembra' },
+        { k: 'variedadSiembra', label: 'Variedad', half: 1, placeholder: 'Ej.: Marcopolo', show: v => v.tipo === 'Siembra', lista: () => variedadesDe(ini.cultivoSiembra) },
         { k: 'laboreoSiembra', label: 'Laboreo', type: 'select', half: 1, sinOpcional: 1, opts: () => [['', 'No cambiar'], ['C', 'C · Directa con complemento'], ['D', 'D · Siembra directa'], ['T', 'T · Tradicional']], show: v => v.tipo === 'Siembra' },
         { k: 'estiercolSiembra', label: 'Estiércol (basura)', type: 'select', half: 1, sinOpcional: 1, opts: () => [['', 'No cambiar'], ['no', 'No'], ['si', 'Sí']], show: v => v.tipo === 'Siembra' },
         { k: 'dosis', label: 'Dosis', type: 'num', half: 1, show: conDosis },
@@ -1283,6 +1319,8 @@
       alCambiar(v, form, origen) {
         refrescarInfo = () => alCambiarReal(v, form);
         const ponMaq = d => { ['equipoId', 'tractorId', 'aperoId'].forEach(k => { if (form.elements[k] && d[k] !== undefined) { form.elements[k].value = d[k]; v[k] = d[k]; } }); };
+        pintarLpf(v, form);
+        if (origen === 'cultivoSiembra' || origen === 'tipo') pintarVariedades(form, 'variedadSiembra', v.cultivoSiembra);
         if (origen === 'tractorId' || origen === 'aperoId' || origen === 'equipoId') maqTocada = true;
         if (origen === 'equipoId' && equipo(v.equipoId)) { const e = equipo(v.equipoId); ponMaq({ tractorId: e.tractorId || '', aperoId: e.aperoId || '' }); }
         if ((origen === 'tractorId' || origen === 'aperoId') && v.equipoId) { const e = equipo(v.equipoId); if (!e || (e.tractorId || '') !== v.tractorId || (e.aperoId || '') !== v.aperoId) ponMaq({ equipoId: '' }); }
@@ -1321,7 +1359,10 @@
         if (!r.graves.length) return Promise.resolve(true);
         return confirmar('⚠ Revisa antes de guardar', `<ul class="avisos-lista">${r.graves.map(g => `<li>${esc(g)}</li>`).join('')}</ul>Si lo guardas, la labor quedará marcada para revisar en el cuaderno.`, 'Guardar igualmente').then(x => x.ok);
       },
-      guardar(v) { registrarLabor(v, { l, miembros, propio }); },
+      guardar(v) {
+        if (v.tipo === 'Siembra') { document.querySelectorAll('#lpf [data-lpf]').forEach(sel => { if (sel.value) lpf[sel.dataset.lpf] = sel.value; else delete lpf[sel.dataset.lpf]; }); v.laboreoPorFinca = Object.fromEntries(Object.entries(lpf).filter(([id]) => v.fincas.includes(id))); }
+        registrarLabor(v, { l, miembros, propio });
+      },
       textoBorrar: miembros.length > 1 ? `Se borrará esta labor en las ${miembros.length} parcelas y, si tenía coste, también sus gastos. Lo gastado del almacén vuelve al inventario.` : 'Se borrará la labor y, si tenía coste, también su gasto. Lo gastado del almacén vuelve al inventario.',
       borrar: l && (() => { const ids = new Set(miembros.map(x => x.id)); db.labores = db.labores.filter(x => !ids.has(x.id)); db.movimientos = db.movimientos.filter(m => !ids.has(m.laborId)); })
     });

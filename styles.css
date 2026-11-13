@@ -345,3 +345,9 @@ tr.tot td { font-weight: 700; background: var(--surface-2); }
 .pk-f.pk-off { cursor: not-allowed; background: var(--bg); }
 .pk-f.pk-off .pk-n { color: var(--muted); }
 .pk-motivo { display: block; color: var(--muted); font-weight: 400; }
+.lpf summary { cursor: pointer; }
+.lpf-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.lpf-f { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.lpf-f > span { min-width: 0; flex: 1; }
+.lpf-f select { width: auto; max-width: 55%; min-height: 40px; border: 1px solid var(--line); border-radius: 10px; padding: 0 8px; background: var(--surface); color: var(--ink); }
+.lpf summary .lpf-n { margin-left: 6px; }
