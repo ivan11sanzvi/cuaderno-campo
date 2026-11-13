@@ -342,3 +342,6 @@ tr.tot td { font-weight: 700; background: var(--surface-2); }
 .sec-row h2.sec { margin: 0 2px; }
 .sec-row .btn svg { width: 16px; height: 16px; }
 .linea .riq { margin-top: 6px; }
+.pk-f.pk-off { cursor: not-allowed; background: var(--bg); }
+.pk-f.pk-off .pk-n { color: var(--muted); }
+.pk-motivo { display: block; color: var(--muted); font-weight: 400; }

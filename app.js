@@ -2,7 +2,7 @@
 (function () {
   // ---------- Constantes ----------
   const KEY = 'cuadernoCampo.v1';
-  const VERSION = '2.0.0';
+  const VERSION = '2.0.1';
   const TIPOS_LABOR = ['Labrado', 'Siembra', 'Abonado', 'Tratamiento', 'Rodillo', 'Cosecha', 'Empacado', 'Otro'];
   const CON_DOSIS = ['Siembra', 'Abonado', 'Tratamiento'];
   const UNIDADES = ['kg/ha', 'L/ha', 'g/ha', 'cc/ha', 'kg', 'L'];
@@ -889,8 +889,8 @@
     const lista = root.querySelector('.pk-list'), sumEl = root.querySelector('.pk-sum');
     const act = () => {
       root.querySelectorAll('.pk-g').forEach(g => {
-        const cs = [...g.querySelectorAll('.pk-f input')]; const n = cs.filter(i => i.checked).length;
-        const gh = g.querySelector('.pk-gh input'); gh.checked = n === cs.length; gh.indeterminate = n > 0 && n < cs.length;
+        const cs = [...g.querySelectorAll('.pk-f input:not(:disabled)')]; const n = cs.filter(i => i.checked).length;
+        const gh = g.querySelector('.pk-gh input'); gh.disabled = !cs.length; gh.checked = cs.length > 0 && n === cs.length; gh.indeterminate = n > 0 && n < cs.length;
       });
       const ids = [...lista.querySelectorAll('.pk-f input:checked')].map(i => i.value);
       sumEl.textContent = ids.length ? `${ids.length} ${ids.length === 1 ? 'parcela elegida' : 'parcelas elegidas'} · ${fmtN(sum(ids.map(finca), f => f.superficie))} ha` : 'Ninguna parcela elegida';
@@ -898,12 +898,12 @@
     };
     root.addEventListener('change', e => {
       const g = e.target.closest('.pk-gh');
-      if (g) g.parentElement.querySelectorAll('.pk-f').forEach(l => { if (!l.hidden) l.querySelector('input').checked = e.target.checked; });
+      if (g) g.parentElement.querySelectorAll('.pk-f').forEach(l => { const i = l.querySelector('input'); if (!l.hidden && !i.disabled) i.checked = e.target.checked; });
       act();
     });
     root.addEventListener('click', e => {
       const b = e.target.closest('.pk-cu');
-      if (b) { lista.querySelectorAll('.pk-f').forEach(l => { if (l.dataset.cu === b.dataset.cu) l.querySelector('input').checked = true; }); act(); }
+      if (b) { lista.querySelectorAll('.pk-f').forEach(l => { const i = l.querySelector('input'); if (l.dataset.cu === b.dataset.cu && !i.disabled) i.checked = true; }); act(); }
       if (e.target.closest('.pk-nada')) { lista.querySelectorAll('input').forEach(i => { i.checked = false; }); act(); }
     });
     root.querySelector('.pk-buscar').addEventListener('input', e => {
@@ -911,6 +911,7 @@
       lista.querySelectorAll('.pk-f').forEach(l => { l.hidden = !!q && !q.split(' ').every(w => l.dataset.txt.includes(w)); });
       lista.querySelectorAll('.pk-g').forEach(g => { const fs = [...g.querySelectorAll('.pk-f')]; g.hidden = fs.every(l => l.hidden) && !(q && norm(g.querySelector('.pk-gh').textContent).includes(q)); if (!g.hidden && fs.every(l => l.hidden)) fs.forEach(l => { l.hidden = false; }); });
     });
+    root._act = act;
     act();
     const prim = lista.querySelector('.pk-f input:checked');
     if (prim) lista.scrollTop = Math.max(0, prim.closest('.pk-f').offsetTop - lista.offsetTop - 50);
@@ -952,8 +953,23 @@
         return vals;
       };
       cs.filter(f => f.type === 'fincas').forEach(f => montarPicker(form.querySelector(`.field[data-k="${f.k}"] .picker`)));
+      // parcelas que no se pueden elegir (por ejemplo, ya sembradas): grises, desmarcadas y con el motivo
+      const bloquear = () => {
+        for (const f of cs.filter(x => x.type === 'fincas' && x.bloquear)) {
+          const pk = form.querySelector(`.field[data-k="${f.k}"] .picker`); const m = f.bloquear(vals) || new Map(); let cambio = false;
+          pk.querySelectorAll('.pk-f').forEach(l => {
+            const i = l.querySelector('input'); const txt = m.get(i.value);
+            if (txt && i.checked) { i.checked = false; cambio = true; }
+            i.disabled = !!txt; l.classList.toggle('pk-off', !!txt);
+            let mo = l.querySelector('.pk-motivo'); if (txt) { if (!mo) { mo = document.createElement('span'); mo.className = 'pk-motivo small'; l.querySelector('.pk-n').appendChild(mo); } mo.textContent = txt; } else if (mo) mo.remove();
+          });
+          if (pk._act) pk._act();
+          if (cambio) vals[f.k] = [...pk.querySelectorAll('.pk-f input:checked')].map(i => i.value);
+        }
+      };
       const refrescar = (origen) => {
         leer();
+        if (!origen || origen === 'tipo' || origen === 'campana' || !form.elements[origen]) bloquear();
         for (const f of cs) {
           const w = form.querySelector(`.field[data-k="${f.k}"]`);
           if (f.show) w.hidden = !f.show(vals);
@@ -1202,6 +1218,13 @@
       
   }
 
+  // Parcelas con una siembra ya apuntada en la campaña → texto «sembrada el 2 nov»
+  function sembradas(campana, excluir) {
+    const m = new Map();
+    db.labores.filter(l => l.tipo === 'Siembra' && l.campana === (campana || db.campanaActiva) && !(excluir && excluir.has(l.id)))
+      .sort((a, b) => (a.fecha || '').localeCompare(b.fecha || '')).forEach(l => { if (!m.has(l.fincaId)) m.set(l.fincaId, `sembrada el ${fmtFecha(l.fecha)}`); });
+    return m;
+  }
   function formLabor(id, pre = {}) {
     const l = id ? db.labores.find(x => x.id === id) : null;
     if (!db.fincas.length) { toast('Primero añade una finca'); return; }
@@ -1210,6 +1233,7 @@
     const trat = v => v.tipo === 'Tratamiento';
     const una = v => (v.fincas || []).length <= 1;
     const hayMaq = () => db.maquinas.length > 0;
+    const propiosIds = new Set(miembros.map(x => x.id));
     const viejo = l && l.tipo === 'Tratamiento' && !l.productoId; // labor antigua sin producto del almacén
     // lo que ya gastaba esta labor vuelve a estar disponible al editarla
     const propio = {}; miembros.forEach(x => { if (x.consumo) propio[x.consumo.titular] = (propio[x.consumo.titular] || 0) + (+x.consumo.cantidad || 0); });
@@ -1227,7 +1251,7 @@
       campos: [
         { k: 'fecha', label: 'Fecha', type: 'date', req: 1, half: 1 },
         { k: 'tipo', label: 'Labor', type: 'select', req: 1, half: 1, opts: () => TIPOS_LABOR.map(t => [t, t]) },
-        { k: 'fincas', label: 'Fincas', type: 'fincas', req: 1, hint: 'Marca una o varias. Al marcar una finca agrupada se marcan todas sus parcelas.' },
+        { k: 'fincas', label: 'Fincas', type: 'fincas', req: 1, hint: 'Marca una o varias. Al marcar una finca agrupada se marcan todas sus parcelas.', bloquear: v => v.tipo === 'Siembra' ? sembradas(v.campana, propiosIds) : null },
         { k: 'prodAlm', label: 'Producto del almacén', sinOpcional: 1, type: 'select', dyn: 1, opts: v => opcionesAlmacen(v, l && l.productoId), show: v => !!TIPO_DE_LABOR[v.tipo] && !(viejo && !v.prodAlm && v.tipo === 'Tratamiento' && l.producto) },
         { k: 'producto', label: 'Producto, variedad o apero', placeholder: 'Ej.: cultivador, vertedera', show: v => !(TIPO_DE_LABOR[v.tipo] && v.prodAlm) && (v.tipo !== 'Tratamiento' || viejo) },
         { k: 'cultivoSiembra', label: 'Cultivo sembrado', type: 'select', half: 1, opts: () => [['', 'No cambiar'], ...db.cultivos.map(c => [c, c])], show: v => v.tipo === 'Siembra', hint: 'Se asigna a las parcelas en la campaña.' },
@@ -1280,6 +1304,7 @@
         alCambiarReal(v, form);
       },
       antesDeGuardar(v) {
+        if (v.tipo === 'Siembra') { const ya = sembradas(v.campana, propiosIds); const rep = v.fincas.filter(id => ya.has(id)); if (rep.length) { toast(`${rep.length === 1 ? 'Una parcela ya está sembrada' : rep.length + ' parcelas ya están sembradas'} en ${v.campana}: quítala${rep.length === 1 ? '' : 's'} de la lista`); return Promise.resolve(false); } }
         if (v.tipo === 'Tratamiento' && !v.prodAlm && !viejo) { toast('Elige el fitosanitario del almacén. Si no aparece, sube primero su albarán.'); return Promise.resolve(false); }
         if (!v.prodAlm) return Promise.resolve(true);
         const r = revisarLabor(Object.assign({}, v, { _propio: propio }));
@@ -2795,7 +2820,11 @@
     const cultivo = cultHits.length ? cultHits[0].c.c : '';
     resto = quitarTramos(resto, cultHits);
     const { fs, quitadas, nombres } = fincasDichas(resto, { dudas: R.dudas, cultivoFiltro: tipo !== 'Siembra' && /\b(las|los|todas?|todos?) (de|del) /.test(t) ? cultivo : null });
-    if (!fs.length) R.dudas.push('No sé en qué finca: di su nombre (por ejemplo «la Sarrana») o «parcela 180».');
+    if (tipo === 'Siembra') {
+      const ya = sembradas(db.campanaActiva); const rep = fs.filter(f => ya.has(f.id));
+      if (rep.length) { rep.forEach(f => { fs.splice(fs.indexOf(f), 1); quitadas.push(f); }); R.avisos.push(`${rep.length === 1 ? `«${rep[0].nombre}» ya estaba sembrada` : `${rep.length} parcelas ya estaban sembradas`} en ${db.campanaActiva}: no se incluye${rep.length === 1 ? '' : 'n'}.`); }
+    }
+    if (!fs.length && !quitadas.length) R.dudas.push('No sé en qué finca: di su nombre (por ejemplo «la Sarrana») o «parcela 180».');
     // semilla: si no la has dicho, la del cultivo que tengas en el almacén
     if (tipo === 'Siembra' && !p && cultivo) {
       const tits = [...new Set(fs.map(f => titularDe(f.id)))];
