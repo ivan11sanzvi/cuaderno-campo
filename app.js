@@ -2,7 +2,7 @@
 (function () {
   // ---------- Constantes ----------
   const KEY = 'cuadernoCampo.v1';
-  const VERSION = '2.0.6';
+  const VERSION = '2.0.7';
   const TIPOS_LABOR = ['Labrado', 'Siembra', 'Abonado', 'Tratamiento', 'Rodillo', 'Cosecha', 'Empacado', 'Otro'];
   const CON_DOSIS = ['Siembra', 'Abonado', 'Tratamiento'];
   const UNIDADES = ['kg/ha', 'L/ha', 'g/ha', 'cc/ha', 'kg', 'L'];
@@ -1300,7 +1300,7 @@
         { k: 'tipo', label: 'Labor', type: 'select', req: 1, half: 1, opts: () => TIPOS_LABOR.map(t => [t, t]) },
         { k: 'fincas', label: 'Fincas', type: 'fincas', req: 1, hint: 'Marca una o varias. Al marcar una finca agrupada se marcan todas sus parcelas.', bloquear: v => v.tipo === 'Siembra' ? sembradas(v.campana, propiosIds) : null },
         { k: 'prodAlm', label: 'Producto del almacén', sinOpcional: 1, type: 'select', dyn: 1, opts: v => opcionesAlmacen(v, l && l.productoId), show: v => !!TIPO_DE_LABOR[v.tipo] && !(viejo && !v.prodAlm && v.tipo === 'Tratamiento' && l.producto) },
-        { k: 'producto', label: 'Producto, variedad o apero', placeholder: 'Ej.: cultivador, vertedera', lista: () => ['Estiércol', 'Purín', 'Gallinaza'], show: v => !(TIPO_DE_LABOR[v.tipo] && v.prodAlm) && (v.tipo !== 'Tratamiento' || viejo) },
+        { k: 'producto', label: 'Producto, variedad o apero', placeholder: 'Ej.: cultivador, vertedera', lista: () => ['Estiércol', 'Purín', 'Gallinaza'], show: v => v.tipo !== 'Siembra' && !(TIPO_DE_LABOR[v.tipo] && v.prodAlm) && (v.tipo !== 'Tratamiento' || viejo) },
         { k: 'cultivoSiembra', label: 'Cultivo sembrado', type: 'select', half: 1, opts: () => [['', 'No cambiar'], ...db.cultivos.map(c => [c, c])], show: v => v.tipo === 'Siembra', hint: 'Se asigna a las parcelas en la campaña.' },
         { k: 'variedadSiembra', label: 'Variedad', half: 1, placeholder: 'Ej.: Marcopolo', show: v => v.tipo === 'Siembra', lista: () => variedadesDe(ini.cultivoSiembra) },
         { k: 'laboreoSiembra', label: 'Laboreo', type: 'select', half: 1, sinOpcional: 1, opts: () => [['', 'No cambiar'], ['C', 'C · Directa con complemento'], ['D', 'D · Siembra directa'], ['T', 'T · Tradicional']], show: v => v.tipo === 'Siembra' },
