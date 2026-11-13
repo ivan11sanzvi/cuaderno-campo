@@ -2,7 +2,7 @@
 (function () {
   // ---------- Constantes ----------
   const KEY = 'cuadernoCampo.v1';
-  const VERSION = '2.0.1';
+  const VERSION = '2.0.2';
   const TIPOS_LABOR = ['Labrado', 'Siembra', 'Abonado', 'Tratamiento', 'Rodillo', 'Cosecha', 'Empacado', 'Otro'];
   const CON_DOSIS = ['Siembra', 'Abonado', 'Tratamiento'];
   const UNIDADES = ['kg/ha', 'L/ha', 'g/ha', 'cc/ha', 'kg', 'L'];
@@ -3558,7 +3558,21 @@
   // ---------- Arranque ----------
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch (e) { /* ignorar */ }
   if ('serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
-    window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => {}); });
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(reg => {
+        // al volver a la app, mira si hay versión nueva
+        document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reg.update().catch(() => {}); });
+      }).catch(() => {});
+    });
+    // Cuando llega una versión nueva, se recarga sola en cuanto no haya ninguna ventana abierta (para no perder lo que estés escribiendo)
+    let habia = !!navigator.serviceWorker.controller, recargando = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!habia) { habia = true; return; }
+      if (recargando) return; recargando = true;
+      const intentar = () => { if (!capas.length) { try { sessionStorage.setItem(KEY + '.actualizada', '1'); } catch (e) { /* ignorar */ } location.reload(); } else setTimeout(intentar, 1500); };
+      intentar();
+    });
+    try { if (sessionStorage.getItem(KEY + '.actualizada')) { sessionStorage.removeItem(KEY + '.actualizada'); setTimeout(() => toast(`App actualizada a la versión ${VERSION}`), 400); } } catch (e) { /* ignorar */ }
   }
   try { const v = localStorage.getItem(KEY + '.vista'); if (v === 'mapa' || v === 'lista') ui.vistaFincas = v; } catch (e) { /* ignorar */ }
   render();

@@ -6,7 +6,7 @@ Habla con el usuario en español, con lenguaje sencillo y sin tecnicismos: es ag
 
 ## Estructura
 - `index.html`: estructura. `styles.css`: diseño (claro y oscuro). `app.js`: toda la lógica, en un único IIFE.
-- `sw.js`: service worker. **Sube `CACHE` (cuaderno-campo-vN) en cada cambio** de `app.js` o `styles.css`, si no los móviles no se actualizan.
+- `sw.js`: service worker. **Sube `CACHE` (cuaderno-campo-vN) en cada cambio** de `app.js` o `styles.css`, si no los móviles no se actualizan. Al instalar pide todo con `cache: 'reload'` (si no, podía guardar el app.js viejo de la caché del navegador con el nombre nuevo). La app se recarga sola al activarse una versión nueva cuando no hay ventanas abiertas y avisa «App actualizada». Comprueba siempre `node --check sw.js`.
 - `vendor/`: Leaflet 1.9.4 y SheetJS 0.18.5, locales para que funcione sin cobertura.
 - Sin build ni dependencias: se sirve tal cual (`python3 -m http.server`).
 
