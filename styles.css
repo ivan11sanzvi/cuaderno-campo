@@ -351,3 +351,8 @@ tr.tot td { font-weight: 700; background: var(--surface-2); }
 .lpf-f > span { min-width: 0; flex: 1; }
 .lpf-f select { width: auto; max-width: 55%; min-height: 40px; border: 1px solid var(--line); border-radius: 10px; padding: 0 8px; background: var(--surface); color: var(--ink); }
 .lpf summary .lpf-n { margin-left: 6px; }
+select.zvp { width: auto; max-width: 46%; min-height: 40px; border: 1px solid var(--line); border-radius: 10px; padding: 0 8px; background: var(--surface); color: var(--ink); }
+.pac-card { display: flex; flex-direction: column; gap: 10px; margin-bottom: 10px; }
+.pac-b { border-top: 1px solid var(--line); padding-top: 8px; display: flex; flex-direction: column; gap: 3px; }
+.pac-b > b { font-size: .95rem; }
+.pac-b > .pill { align-self: flex-start; }

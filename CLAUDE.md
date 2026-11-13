@@ -58,11 +58,24 @@ Habla con el usuario en español, con lenguaje sencillo y sin tecnicismos: es ag
 - `ufLabor(l)` = kg de abono/ha × riqueza / 100 (UF/ha de N, P₂O₅, K₂O); `abonadoFinca(fid, c)`. Resumen → «Abonado» (`vAbonado`) por cultivo y por finca; también en la ficha de la parcela.
 - Cuaderno de campo oficial: Explotación → Agricultores → «Descargar» (`hojaCuaderno`, `datosCuaderno`, `excelCuaderno`). Excel por titular y campaña con 7 hojas: datos generales (titular, aplicadores ROPO, equipos ROMA/ITEAF), parcelas con nº de orden, tratamientos, fertilización, otras labores, cosecha y compras. Antes de descargar avisa de lo que falta.
 
+## Nitratos (zonas vulnerables)
+- `ZONAS_VULNERABLES`: municipios del Decreto 5/2020 de CyL (24 zonas, 387 municipios) por código de provincia. `zonaVulnerable(f)` usa lo marcado por pueblo en `db.zvPueblos` («provincia|codMunicipio» → código de zona o «no»); si no, el nombre exacto, o un nombre corto único («Espinosa» → Espinosa de Cerrato, ZV-PE) marcado «por confirmar». Se corrige en Resumen → Abonado → «Zonas vulnerables por pueblo».
+- Orden MAV/398/2022: `N_MAX_SECANO` (anexo III), −10 si el cultivo anterior fue leguminosa (anexo II), subida proporcional si la cosecha media del cultivo pasa de 4.000 kg/ha (`limiteN`). Épocas prohibidas (anexo V) y tipos de estiércol A/B/C (anexo I) en `revisarNitrogeno`. En zona vulnerable son avisos graves («⚠ Revisar normativa»); fuera, solo notas.
+
+## PAC: condicionalidad y ecorregímenes (secano)
+- `cumplimientoPAC(titular, campaña)` y `tarjetaPAC` en Resumen → PAC. Explotación = titular. Rotación por género botánico (`GENERO`; en Vicia por especie); las plurianuales ya implantadas (`PLURIANUALES`) no cuentan.
+- BCAM 7 (RD 1049/2022): exenta ≤10 ha o >75 % leguminosa/barbecho/forraje; opción 1 rotación ≥33 % y cada parcela cambia al menos una vez en 3 campañas; opción 2 diversificación (2 cultivos ≤75 % hasta 30 ha; 3 cultivos, ≤75 % y dos mayores ≤95 % si más). BCAM 6: sin labor de volteo (`conVolteo`) entre la cosecha del cereal de invierno y el 1 de septiembre.
+- Ecorrégimen rotación con mejorantes (RD 1048/2022 art. 36): rota ≥50 % (25 % si >25 % plurianuales; barbecho tras leguminosa no cuenta), mejorantes ≥10 % (anexo XV: leguminosas, colza, camelina, girasol… no anís ni cilantro), leguminosas ≥5 %. Siembra directa (art. 37): ≥40 % en D, sin arar y rotando; C solo si la Junta lo admite. Espacios de biodiversidad (art. 44): 7 % en secano; el barbecho solo vale si es de biodiversidad y sin abono ni fitos.
+- Solo secano. Fuentes: BOE consolidado de los RD 1048 y 1049/2022 (julio 2026).
+
 ## Fitosanitarios y normativa
 - `fitos.json` se genera con `herramientas/actualizar_fitos.py`. Lee el Registro del MAPA (`servicio.mapa.gob.es/regfiweb`): la lista de productos de cada cultivo y la tabla «Usos y Dosis Autorizados» de cada ficha PDF.
 - `fitos.json` trae **todos** los productos del Registro (3.103) para reconocer cualquier albarán. Solo los de los cultivos de la explotación (y de las categorías generales «Herbáceas extensivas/intensivas», «Rastrojeras» y «Márgenes de cultivos») llevan `c` (cultivos autorizados) y `u` (dosis).
 - Los cultivos de la app se comparan con los del Registro mediante `CULTIVO_REG`. Un cultivo de campo cuenta también como «Herbáceas extensivas»; el anís y el cilantro, como «Herbáceas intensivas». El titarro no está en el Registro: se compara con almorta y leguminosas de grano.
 - En una labor de Tratamiento el producto sale **solo del almacén** del titular. Se comprueban la autorización en el cultivo, la dosis máxima, el estado y la caducidad, y si hay existencias suficientes. Si hay problemas se pide confirmar, y la labor guarda `avisos` y sale marcada «⚠ Revisar normativa».
+- Cada uso es `[agente, dosisMín, dosisMáx, unidad, nºAplicaciones?, intervaloDías?]` y el producto lleva `ps` (plazo de seguridad en días por cultivo; null = no procede). Se regenera con `TODOS=1` para leer las fichas de todos los productos y todos los cultivos.
+- Al apuntar un tratamiento se comprueban también el nº máximo de aplicaciones por campaña en la parcela y los días entre aplicaciones (`porFinca` en `revisarLabor`). Al apuntar una cosecha, `plazosPendientes` avisa si no ha pasado el plazo de seguridad.
+- Un cultivo que no esté en `CULTIVO_REG` se busca por su nombre entre todos los cultivos del Registro (`FITOS.cultivosReg`).
 - Conviene regenerar `fitos.json` de vez en cuando, porque el Registro cambia cada semana.
 
 ## Asistente de voz

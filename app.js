@@ -2,7 +2,7 @@
 (function () {
   // ---------- Constantes ----------
   const KEY = 'cuadernoCampo.v1';
-  const VERSION = '2.0.8';
+  const VERSION = '2.1.0';
   const TIPOS_LABOR = ['Labrado', 'Siembra', 'Abonado', 'Tratamiento', 'Rodillo', 'Cosecha', 'Empacado', 'Otro'];
   const CON_DOSIS = ['Siembra', 'Abonado', 'Tratamiento'];
   const UNIDADES = ['kg/ha', 'L/ha', 'g/ha', 'cc/ha', 'kg', 'L'];
@@ -569,7 +569,7 @@
     const refs = refsFinca(f);
     let h = `<div class="backhdr"><button class="iconbtn" data-act="atras" aria-label="Volver">${ico.back}</button><h2>${esc(f.nombre)}</h2><button class="iconbtn" data-act="editFinca" data-id="${id}" aria-label="Editar finca">${ico.edit}</button></div>
       <div class="meta"><span><b>${fmtN(f.superficie)} ha</b></span>${f.municipio ? `<span>${esc(f.municipio)}</span>` : ''}${sig ? `<span>SIGPAC ${esc(sig)}</span>` : ''}</div>
-      ${f.titular ? `<div class="meta"><span>Titular: <b>${esc(f.titular)}</b></span></div>` : ''}`;
+      ${f.titular ? `<div class="meta"><span>Titular: <b>${esc(f.titular)}</b></span></div>` : ''}${(z => z ? `<div class="meta"><span class="pill neg">Zona vulnerable a nitratos · ${esc(z.nombre)}${z.seguro ? '' : ' (por confirmar)'}</span></div>` : '')(zonaVulnerable(f))}`;
     const g = grupoDe(f);
     if (g) {
       const fsG = fincasDeGrupo(g);
@@ -1137,7 +1137,8 @@
   }
   function revisarLabor(v) {
     const p = producto(v.prodAlm); const fs = (v.fincas || []).map(finca).filter(Boolean);
-    const out = { porCultivo: [], graves: [], notas: [], consumo: [], sinCalculo: false };
+    const out = { porCultivo: [], graves: [], notas: [], consumo: [], sinCalculo: false, nitro: [] };
+    if (v.tipo === 'Abonado') fs.forEach(f => { const n = revisarNitrogeno(f, v, p, v._excl); out.nitro.push(n); n.graves.forEach(g => { if (!out.graves.includes(g)) out.graves.push(g); }); n.notas.forEach(g => { if (!out.notas.includes(g)) out.notas.push(g); }); });
     if (!p) return out;
     const reg = regProducto(p);
     const grupos = new Map();
@@ -1146,6 +1147,17 @@
       if (!reg) out.notas.push(p.registro ? `No encuentro el nº ${p.registro} en el Registro incluido en la app: compruébalo en la ficha oficial.` : 'Este producto no está enlazado con el Registro oficial: la app no puede comprobar cultivos ni dosis.');
       grupos.forEach((ff, cu) => {
         const r = revisarFito(reg, cu, v.dosis, v.unidad);
+        // nº de aplicaciones y días entre aplicaciones en cada parcela, en la campaña
+        r.porFinca = {};
+        ff.forEach(f => {
+          const antes = db.labores.filter(l => l.fincaId === f.id && l.tipo === 'Tratamiento' && l.campana === (v.campana || db.campanaActiva) && !(v._excl && v._excl.has(l.id)) && (l.productoId === p.id || (p.registro && l.registro === p.registro))).map(l => l.fecha).sort();
+          const g = [];
+          if (r.maxAplic && antes.length + 1 > r.maxAplic) g.push(`«${p.nombre}» en ${cu}: como mucho ${r.maxAplic} aplicaci${r.maxAplic === 1 ? 'ón' : 'ones'} por campaña y en ${f.nombre} esta sería la ${antes.length + 1}.ª.`);
+          const prev = antes.filter(x => x <= v.fecha).pop();
+          if (r.intervalo && prev) { const dias = Math.round((new Date(v.fecha) - new Date(prev)) / 864e5); if (dias < r.intervalo) g.push(`«${p.nombre}» en ${cu}: entre aplicaciones tiene que haber al menos ${r.intervalo} días y en ${f.nombre} la anterior fue hace ${dias} (${fmtFecha(prev)}).`); }
+          r.porFinca[f.id] = g; g.forEach(x => { if (!out.graves.includes(x)) out.graves.push(x); });
+        });
+        if (r.plazo) r.notas.push(`Plazo de seguridad en ${cu}: ${r.plazo} días. No cosechar antes del ${fmtFecha(new Date(new Date(v.fecha || hoyISO()).getTime() + r.plazo * 864e5).toISOString().slice(0, 10))}.`);
         out.porCultivo.push({ cu, fs: ff, r });
         r.graves.forEach(g => { if (!out.graves.includes(g)) out.graves.push(g); });
         r.notas.forEach(g => { if (!out.notas.includes(g)) out.notas.push(g); });
@@ -1159,6 +1171,7 @@
   }
   function infoLaborHTML(v) {
     const p = producto(v.prodAlm);
+    if (!p && v.tipo === 'Abonado') { const r = revisarLabor(v); return nitroHTML(r) + (r.graves.length ? `<div class="aviso-norma"><b>⚠ Puedes estar incumpliendo la normativa</b><ul>${r.graves.map(g => `<li>${esc(g)}</li>`).join('')}</ul></div>` : '') + (r.notas.length ? `<ul class="small muted notas">${r.notas.map(g => `<li>${esc(g)}</li>`).join('')}</ul>` : ''); }
     if (!p) return TIPO_DE_LABOR[v.tipo] === 'Fitosanitario' ? '<p class="small muted" style="margin:0">Solo puedes elegir fitosanitarios que estén en el almacén del titular. Si falta alguno, sube primero su albarán en la pestaña Almacén.</p>' : '';
     const reg = regProducto(p); const r = revisarLabor(v);
     let abo = '';
@@ -1173,9 +1186,9 @@
     if (p.tipo === 'Fitosanitario' && !FITOS) h += '<p class="small muted">Cargando el Registro oficial…</p>';
     r.porCultivo.forEach(({ cu, fs, r: rr }) => {
       const ok = rr.autorizado; const n = `${fs.length} parcela${fs.length === 1 ? '' : 's'}`;
-      h += `<div class="fito-cu ${ok === false ? 'mal' : ok ? 'bien' : ''}"><b>${ok === false ? '✗' : ok ? '✓' : '?'} ${esc(cu || 'Sin cultivo')}</b> <span class="small muted">(${n})</span>${ok ? `<div class="small">Dosis autorizada: ${esc(textoUsos(rr.usos)) || 'ver ficha'}</div>` : ok === false ? '<div class="small">No autorizado en este cultivo</div>' : ''}</div>`;
+      h += `<div class="fito-cu ${ok === false ? 'mal' : ok ? 'bien' : ''}"><b>${ok === false ? '✗' : ok ? '✓' : '?'} ${esc(cu || 'Sin cultivo')}</b> <span class="small muted">(${n})</span>${ok ? `<div class="small">Dosis autorizada: ${esc(textoUsos(rr.usos)) || 'ver ficha'}${rr.maxAplic ? ` · máx. ${rr.maxAplic} aplicaci${rr.maxAplic === 1 ? 'ón' : 'ones'}/campaña` : ''}${rr.intervalo ? ` · cada ${rr.intervalo} días mín.` : ''}${rr.plazo ? ` · plazo de seguridad ${rr.plazo} días` : ''}</div>` : ok === false ? '<div class="small">No autorizado en este cultivo</div>' : ''}</div>`;
     });
-    h += abo;
+    h += abo + nitroHTML(r);
     if (r.consumo.length) h += `<div class="small">Se gastan: ${r.consumo.map(x => `<b>${fmtCant(x.q, p.unidad)}</b>${x.t ? ' de ' + esc(x.t) : ''} (tiene ${fmtCant(x.ex, p.unidad)})`).join(' · ')}</div>`;
     if (r.graves.length) h += `<div class="aviso-norma"><b>⚠ Puedes estar incumpliendo la normativa</b><ul>${r.graves.map(g => `<li>${esc(g)}</li>`).join('')}</ul></div>`;
     if (r.notas.length) h += `<ul class="small muted notas">${r.notas.map(g => `<li>${esc(g)}</li>`).join('')}</ul>`;
@@ -1188,8 +1201,8 @@
     const l = ctx.l || null, miembros = ctx.miembros || [], propio = ctx.propio || {};
     const fs = v.fincas.map(finca).filter(Boolean);
     const p = producto(v.prodAlm);
-    const r = p ? revisarLabor(Object.assign({}, v, { _propio: propio })) : null;
     const ids = new Set(miembros.map(x => x.id));
+    const r = p || v.tipo === 'Abonado' ? revisarLabor(Object.assign({}, v, { _propio: propio, _excl: ids })) : null;
     db.labores = db.labores.filter(x => !ids.has(x.id));
     db.movimientos = db.movimientos.filter(m => !ids.has(m.laborId));
     const lote = fs.length > 1 ? (l && l.lote) || uid() : null;
@@ -1200,7 +1213,7 @@
     if (v.tipo === 'Siembra' && v.laboreoSiembra) db.ultLaboreo = v.laboreoSiembra;
     fs.forEach((f, i) => {
       const x = Object.assign({}, v, { id: i === 0 && l ? l.id : uid(), fincaId: f.id, coste: costes[i], superficie: fs.length > 1 ? null : v.superficie });
-      delete x.fincas; delete x.prodAlm; delete x._propio; delete x.cultivoSiembra; delete x.variedadSiembra; delete x.laboreoSiembra; delete x.estiercolSiembra; delete x.laboreoPorFinca; if (lote) x.lote = lote; else delete x.lote;
+      delete x.fincas; delete x.prodAlm; delete x._propio; delete x.cultivoSiembra; delete x.variedadSiembra; delete x.laboreoSiembra; delete x.estiercolSiembra; delete x.laboreoPorFinca; delete x._excl; if (lote) x.lote = lote; else delete x.lote;
       delete x.consumo; delete x.avisos; delete x.productoId;
       if (p) {
         x.productoId = p.id; x.producto = p.nombre; if (p.registro) x.registro = p.registro;
@@ -1208,9 +1221,11 @@
         if (q != null) x.consumo = { productoId: p.id, cantidad: Math.round(q * 1000) / 1000, unidad: p.unidad, titular: titularDe(f.id) };
         const cu = cultivoDe(f.id, x.campana) || '';
         const pc = r && r.porCultivo.find(z => z.cu === cu);
-        const av = [...(pc ? pc.r.graves : []), ...(r ? r.graves.filter(g => / solo tiene /.test(g) && g.startsWith(titularDe(f.id) || 'El titular')) : [])];
+        const av = [...(pc ? pc.r.graves : []), ...(pc && pc.r.porFinca ? pc.r.porFinca[f.id] || [] : []), ...(r ? r.graves.filter(g => / solo tiene /.test(g) && g.startsWith(titularDe(f.id) || 'El titular')) : [])];
         if (av.length) x.avisos = av;
   }
+      const nz = r && r.nitro.find(z => z.fid === f.id);
+      if (nz && nz.graves.length) x.avisos = [...(x.avisos || []), ...nz.graves];
       db.labores.push(x);
       if (x.coste > 0) db.movimientos.push({ id: uid(), laborId: x.id, tipo: 'gasto', fecha: x.fecha, fincaId: x.fincaId, campana: x.campana, categoria: CAT_LABOR[x.tipo] || 'Servicios contratados', concepto: x.tipo + (x.producto ? ' · ' + x.producto : ''), importe: x.coste, lote: lote || undefined });
       if (x.tipo === 'Siembra') {
@@ -1356,8 +1371,8 @@
       antesDeGuardar(v) {
         if (v.tipo === 'Siembra') { const ya = sembradas(v.campana, propiosIds); const rep = v.fincas.filter(id => ya.has(id)); if (rep.length) { toast(`${rep.length === 1 ? 'Una parcela ya está sembrada' : rep.length + ' parcelas ya están sembradas'} en ${v.campana}: quítala${rep.length === 1 ? '' : 's'} de la lista`); return Promise.resolve(false); } }
         if (v.tipo === 'Tratamiento' && !v.prodAlm && !viejo) { toast('Elige el fitosanitario del almacén. Si no aparece, sube primero su albarán.'); return Promise.resolve(false); }
-        if (!v.prodAlm) return Promise.resolve(true);
-        const r = revisarLabor(Object.assign({}, v, { _propio: propio }));
+        if (!v.prodAlm && v.tipo !== 'Abonado') return Promise.resolve(true);
+        const r = revisarLabor(Object.assign({}, v, { _propio: propio, _excl: propiosIds }));
         if (!r.graves.length) return Promise.resolve(true);
         return confirmar('⚠ Revisa antes de guardar', `<ul class="avisos-lista">${r.graves.map(g => `<li>${esc(g)}</li>`).join('')}</ul>Si lo guardas, la labor quedará marcada para revisar en el cuaderno.`, 'Guardar igualmente').then(x => x.ok);
       },
@@ -1372,7 +1387,7 @@
       const box = form.querySelector('#fitoInfo'); if (!box) return;
       const anc = form.querySelector('[data-pair="dosis"]') || form.querySelector('.field[data-k="prodAlm"]');
       if (anc && box.previousElementSibling !== anc) anc.after(box);
-      const html = TIPO_DE_LABOR[v.tipo] ? infoLaborHTML(Object.assign({}, v, { dosis: parseNum(v.dosis), superficie: parseNum(v.superficie), _propio: propio })) : '';
+      const html = TIPO_DE_LABOR[v.tipo] ? infoLaborHTML(Object.assign({}, v, { dosis: parseNum(v.dosis), superficie: parseNum(v.superficie), _excl: propiosIds, _propio: propio })) : '';
       box.hidden = !html; box.innerHTML = html;
     }
   }
@@ -1433,6 +1448,20 @@
     const base = Object.assign({}, v); delete base.fincas;
     fs.forEach((f, i) => { const c = Object.assign({ id: i === 0 && x ? x.id : uid() }, base, { fincaId: f.id, kg: kgs[i] }); if (lote) c.lote = lote; db.cosechas.push(c); });
   }
+  // Tratamientos cuyo plazo de seguridad no ha pasado el día de la cosecha
+  function plazosPendientes(fids, fecha) {
+    if (!FITOS) return [];
+    const out = [];
+    fids.forEach(fid => { const f = finca(fid); if (!f) return;
+      db.labores.filter(l => l.fincaId === fid && l.tipo === 'Tratamiento' && l.fecha && l.fecha <= fecha).forEach(l => {
+        const reg = regProducto(producto(l.productoId)); if (!reg || !reg.ps) return;
+        const ds = (regDeCultivo(cultivoDe(fid, l.campana) || '') || []).map(c => reg.ps[c]).filter(x => x != null); if (!ds.length) return;
+        const d = Math.max(...ds); if (!(d > 0)) return;
+        const libre = new Date(new Date(l.fecha).getTime() + d * 864e5).toISOString().slice(0, 10);
+        if (libre > fecha) out.push(`${f.nombre}: «${l.producto}» (${fmtFecha(l.fecha)}) tiene ${d} días de plazo de seguridad; no se debe cosechar hasta el ${fmtFecha(libre)}.`);
+      }); });
+    return [...new Set(out)];
+  }
   function formCosecha(id, pre = {}) {
     const x = id ? db.cosechas.find(c => c.id === id) : null;
     if (!db.fincas.length) { toast('Primero añade una finca'); return; }
@@ -1452,6 +1481,11 @@
         campoCampana,
         { k: 'notas', label: 'Destino o notas', type: 'textarea', placeholder: 'Cooperativa, almacén, nº de ticket de báscula…' }
       ],
+      async antesDeGuardar(v) {
+        try { FITOS = await cargarFitos(); } catch (e) { return true; }
+        const ps = plazosPendientes(v.fincas, v.fecha); if (!ps.length) return true;
+        return (await confirmar('⚠ Plazo de seguridad', `<ul class="avisos-lista">${ps.map(g => `<li>${esc(g)}</li>`).join('')}</ul>`, 'Guardar igualmente')).ok;
+      },
       guardar(v) {
         if (v.kg <= 0) return 'Los kilos tienen que ser mayores que cero';
         if (v.maquinaId) { db.ultMaq = db.ultMaq || {}; db.ultMaq.Cosecha = Object.assign({}, db.ultMaq.Cosecha, { tractorId: v.maquinaId }); }
@@ -2007,7 +2041,7 @@
   let fitosP = null;
   function cargarFitos() {
     return fitosP || (fitosP = fetch('fitos.json').then(r => { if (!r.ok) throw new Error('fitos'); return r.json(); })
-      .then(d => { d.porId = new Map(d.productos.map(p => [p.id, p])); return d; })
+      .then(d => { d.porId = new Map(d.productos.map(p => [p.id, p])); d.cultivosReg = new Map(); d.productos.forEach(p => Object.keys(p.u || {}).concat(p.c || []).forEach(c => { if (!d.cultivosReg.has(norm(c))) d.cultivosReg.set(norm(c), c); })); return d; })
       .catch(e => { fitosP = null; throw e; }));
   }
   let FITOS = null; // se rellena al cargar
@@ -2025,7 +2059,8 @@
     'anis dulce': ['Anís, matalauva', HI], anis: ['Anís, matalauva', HI], cilantro: ['Cilantro', HI], girasol: ['Girasol', HE], colza: ['Colza', HE], camelina: ['Camelina', HE],
     barbecho: ['Barbechos', 'Rastrojeras'], chopo: ['Chopos y álamos']
   };
-  const regDeCultivo = cu => CULTIVO_REG[norm(cu)] || null;
+  // Cualquier otro cultivo se busca por su nombre entre todos los del Registro (y como herbácea extensiva)
+  const regDeCultivo = cu => { if (CULTIVO_REG[norm(cu)]) return CULTIVO_REG[norm(cu)]; const n = FITOS && FITOS.cultivosReg && (FITOS.cultivosReg.get(norm(cu)) || FITOS.cultivosReg.get(norm(cu).replace(/s$/, ''))); return n ? [n, HE] : null; };
   const fechaDMY = s => { const m = String(s || '').match(/^(\d{2})-(\d{2})-(\d{4})$/); return m ? `${m[3]}-${m[2]}-${m[1]}` : ''; };
   // Dosis por hectárea pasada a L/ha o kg/ha
 
@@ -2069,6 +2104,83 @@
     return { n: sum(ls, x => x.u.n), p: sum(ls, x => x.u.p), k: sum(ls, x => x.u.k), ls };
   }
   const txtUF = a => `N ${fmtN(a.n, 0)} · P₂O₅ ${fmtN(a.p, 0)} · K₂O ${fmtN(a.k, 0)}`;
+  // ---------- Zonas vulnerables a nitratos y límites de nitrógeno ----------
+  // Municipios: Decreto 5/2020 de Castilla y León (24 zonas, 387 municipios), por código de provincia.
+  const ZONAS_VULNERABLES = {"ZV-AD":["Aranda de Duero",{"9":"Aranda de Duero|Fuentemolinos|La Sequera de Haza|Castrillo de la vega|Fuentespina|Nava de Roa|Fuentecén|Haza|Villalba de Duero|Fuentelisendo|Hoyales de Roa"}],"ZV-AG":["Ágreda - Ólvega",{"42":"Ágreda|Castilruiz|Dévanos|Fuentestrún|Matalebreras|Ólvega"}],"ZV-AL":["Almazán",{"42":"Adradas|Barcones|Morón de Almazán|Alcubilla de las Peñas|Coscurita|Nolay|Alentisque|Escobosa de Almazán|Rello|Alpanseque|Frechilla de Almazán|Soliedra|Arenillas|La Riba de Escalote|Taroda|Baraona|Momblona|Villasayas"}],"ZV-AM":["Aluvial de Miranda de Ebro",{"9":"Bozoó|Miranda de Ebro|Santa Gadea del Cid"}],"ZV-AO":["Aluvial del Oca",{"9":"Aguilar de Bureba|Berzosa de Bureba|Briviesca|Busto de Bureba|Castil de Peones|Cubo de Bureba|Fuentebureba|Grisaleña|La Vid de Bureba|Los Barrios de Bureba|Prádanos de Bureba|Quintanaélez|Reinoso|Vileña"}],"ZV-AP":["Armuña-Peñaranda",{"37":"Alconada|Macotera|Salmoral|Aldeaseca de Alba|Malpartida|Bóveda del Río|Mancera de Abajo|Almar Tordillos|Valdecarros|Pedrosillo de Alba|Cantaracillo|Ventosa del Río Almar|Peñarandilla|Coca de Alba|Peñaranda de|Cordovilla|Garcihernández","5":"San Miguel de la|Mancera de Arriba|Cabezas de Villar"}],"ZV-AR":["Arenales",{"47":"Aguasal|Alcazarén|Ataquines|Aldea de San Miguel|Bocigas|Aldeamayor de San Martín|Boecillo|Fuente-Olmedo|Almenara de Adaja|Cogeces de Íscar|Hornillos de Eresma|Íscar|Puras|Mojados|La Pedraja de Portillo|La Zarza|Laguna de Duero|Llano de Olmedo|Olmedo|Valdestillas|Pedrajas de San|Matapozuelos|Pozaldez|Megeces","40":"Añe|Donhierro|Fuente de Santa Cruz|Aldeanueva del Codonal|Coca|Fuente el Olmo de Íscar|Aldehuela del Codonal|Codorniz|Melque de Cercos|Juarros de Voltoya|Rapariegos|Montejo de Arévalo|Remondo|Muñopedro|San Cristóbal de la Vega|Nava de la Asunción|Sangarcía|Navas de Oro|Santa María la Real|Marazuela|Nieva|Santiuste de San Juan|Martín Muñoz de la|Ortigosa de Pestaño|Tolocirio|Martín Muñoz de las|Mata de Cuéllar|Villaverde de Íscar|Villeguillo","5":"Donvidas|Espinosa de los Caballeros|Posadas Palacios de Goda"}],"ZV-AS":["Armuña-Salamanca",{"37":"Cabrerizos|Monterrubio de Armuña|Santa Marta de Tormes|Calzada de Valdunciel|Moriscos|Valdunciel|Castellanos de|Pedrosillo el Ralo|Villaverde de Guareña|Pelabravo|Castellanos de|Villiquera San Cristóbal de la|Gomecello"}],"ZV-AT":["Aluvial del Tirón",{"9":"Cerezo de Río Tirón|Fresno de Río Tirón"}],"ZV-CA":["Campos-Astudillo",{"34":"Amusco|Manquillos|Valdeolmillos|Astudillo|Monzón de Campos|Villalaco|Fuentes de Valdepero|Palencia|Villalobón|Lomas|Ribas de Campos|Villamediana|Magaz de Pisuerga|San Cebrián|Villoldo"}],"ZV-CC":["Campo Charro",{"37":"Cabrillas|La Fuente de San Esteban|Martín de Yeltes"}],"ZV-CH":["Churrería",{"40":"Aldeasoña|Fuentesaúco de Fuentidueña|Membibre de la Hoz|Olombrada","47":"Fompedraza|Santibáñez de Valcorba|Bahabón|Sardón de Duero|Campaspero|Torre de Peñafiel|Canalejas de Peñafiel|Montemayor de Pililla|Traspinedo|Cogeces del Monte"}],"ZV-CS":["Cantimpalos-Segovia",{"40":"Adrada de Pirón|Encinillas|Pinarejos|Adrados|Escarabajosa de Cabezas|Pinarnegrillo|Aguilafuente|Frumales|Sanchonuño|Brieva|Fuentepelayo|Sauquillo de Cabezas|Cabañas de Polendos|Fuentepiñel|Tabanera la Luenga|Cabezuela|Gomezserracín|Torrecilla del Pinar|Cantalejo|Hontalbilla|Turégano|Cantimpalos|Lastras de Cuéllar|Veganzones|Carbonero el Mayor|Mozoncillo|Zarzuela del Pinar|Cozuelos de Fuentidueña|Navalmanzano|Cuéllar|Perosillo"}],"ZV-CV":["Castrojeriz-Villadiego",{"9":"Castellanos de Castro|Hornillos del Camino|Padilla de Arriba|Castrojeriz|Iglesias|Pedrosa del Páramo|Grijalba|Los Balbases|Sasamón|Hontanas|Padilla de Abajo|Sordillos|Tamarón|Villaldemiro|Villaquirán de los Infantes|Vallejera|Villamayor de Treviño|Villasandino|Villadiego|Villaquirán de la Puebla|Villegas"}],"ZV-FU":["Fuente Cantos",{"42":"Fuente Cantos"}],"ZV-IB":["Ibeas de Juarros",{"9":"Ibeas de Juarros"}],"ZV-ME":["Medina",{"47":"Alaejos|Castrejón de Trabancos|Velascálvaro|Bobadilla del Campo|El Campillo|Villaverde de Medina|Brahojos de Medina|Fresno el Viejo|Carpio|Nueva Villa de las Torres"}],"ZV-MO":["Moraña",{"5":"Cabezas de Alambre|Donjimeno|Pedro-Rodríguez|Cabizuela|El Bohodón|San Pascual|Constanzana|Papatrigo|San Vicente de Arévalo"}],"ZV-PE":["Páramo de Esgueva",{"34":"Alba de Cerrato|Castrillo de Onielo|Dueñas|Antigüedad|Cevico de la Torre|Baltanás|Cevico Navero|Espinosa de Cerrato|Castrillo de Don Juan|Cobos de Cerrato|Hérmedes de Cerrato|Tabanera de Cerrato|Herrera de Valdecañas|Tariego de Cerrato|Hontoria de Cerrato|Villahán|Palenzuela|Villamuriel de Cerrato|Valle de Cerrato|Villaviudas|Reinoso de Cerrato|Venta de Baños|Vertavillo|Soto de Cerrato|Villaconancio","47":"Corrales de Duero|Amusquillo|Castrillo-Tejeriego|Castroverde de Cerrato|Encinas de Esgueva|Esguevillas de Esgueva|Canillas de Esgueva|Fombellida|Torre de Esgueva|Villafuerte|Piñel de Abajo|Piñel de Arriba|Valoria la Buena|San Llorente|Villaco","9":"Avellanosa de Muñó|Cilleruelo de Abajo|Fontioso|Villaescusa de Roa|Villafruela|Iglesiarrubia|Torresandino|Tórtoles de Esgueva|Royuela de Río Franco"}],"ZV-PL":["Páramos de León",{"24":"Bercianos del Páramo|Laguna de Negrillos|Urdiales del Páramo|Bustillo del Páramo|Pobladura de Pelayo García|Zotes del Páramo|Laguna Dalga|Santa María del Páramo"}],"ZV-TO":["Páramo de Torozos",{"47":"Adalia|Geria|Tordehumos|La Cistérniga|Torrecilla de la Torre|Arroyo de la Encomienda|La Mudarra|Torrelobatón|Matilla de los Caños|Trigueros del Valle|Barruelo del Valle|Medina de Rioseco|Valdenebro de los Valles|Valladolid|Bercero|Montealegre de Campos|Valverde de Campos|Berceruelo|Mota del Marqués|Velilla|Mucientes|Velliza|Villabrágima|Peñaflor de Hornija|Villalba de los Alcores|Castrodeza|Quintanilla de Trigueros|Villán de Tordesillas|Castromonte|Robladillo|Villanubla|Cigales|San Cebrián de Mazote|Villanueva de San Mancio|Ciguñuela|San Pelayo|Villasexmir|Corcos|San Salvador|Cubillas de Santa Marta|Wamba|Fuensaldaña|Simancas|Zaratán","34":"Ampudia|Autilla del Pino|Belmonte de Campos|Meneses de Campos|Boada de Campos|Capillas|Pedraza de Campos|Castil de Vela|Villerias|Santa Cecilia del Alcor"}],"ZV-TR":["Tordesillas",{"47":"Casasola de Arión|Pedrosa del Rey|Villalar de los Comuneros|Gallegos de Hornija|Tordesillas|Villalbarba|Marzales|Vega de Valdetronco"}],"ZV-VF":["Villafáfila",{"49":"Arquillinos|Montamarta|San Martín de Valderaduey|Barcial del Barco|Pajares de la Lampreana|Villafáfila|Cañizo|Piedrahita de Castro|Villalba de la Lampreana|Castronuevo|Revellinos|Villárdiga|Cerecinos del Carrizal|San Agustín del Pozo|Villarrín de Campos|Manganeses de la Lampreana|San Cebrián de Castro"}],"ZV-ZA":["Zamora",{"49":"Madridanos|Villalazán|Villaralbo"}]};
+  const ZV_IDX = (() => { const m = new Map(); Object.entries(ZONAS_VULNERABLES).forEach(([cod, [, ps]]) => Object.entries(ps).forEach(([pr, ns]) => ns.split('|').forEach(n => m.set(pr + '|' + norm(n), { cod, n })))); return m; })();
+  // Zona vulnerable de un pueblo: lo que hayas marcado tú, si no por el nombre (exacto: seguro; «Espinosa» → «Espinosa de Cerrato»: por confirmar)
+  function zvAuto(pr, nombre) {
+    const n = norm(nombre); if (!+pr || !n) return null;
+    const ex = ZV_IDX.get(+pr + '|' + n); if (ex) return { cod: ex.cod, n: ex.n, seguro: true };
+    const pref = [...ZV_IDX.entries()].filter(([k]) => k.startsWith(+pr + '|' + n + ' '));
+    return pref.length === 1 ? { cod: pref[0][1].cod, n: pref[0][1].n, seguro: false } : null;
+  }
+  const clavePueblo = f => `${+f.provincia || 0}|${+f.codMunicipio || norm(f.municipio)}`;
+  function zonaVulnerable(f) {
+    if (!f) return null;
+    const m = (db.zvPueblos || {})[clavePueblo(f)];
+    if (m === 'no') return null;
+    if (m && ZONAS_VULNERABLES[m]) return { cod: m, nombre: ZONAS_VULNERABLES[m][0], seguro: true, manual: true };
+    const a = zvAuto(f.provincia, f.municipio);
+    return a ? { cod: a.cod, nombre: ZONAS_VULNERABLES[a.cod][0], seguro: a.seguro, municipio: a.n } : null;
+  }
+  // Orden MAV/398/2022, anexo III: máximo de N (kg/ha) en secano. Para cosechas mayores que la media se puede subir en proporción.
+  const N_MAX_SECANO = { trigo: 105, triticale: 105, cebada: 105, avena: 81, centeno: 57, lenteja: 30, garbanzo: 30, guisante: 38, 'guisante para grano': 38, veza: 10, 'veza forrajera': 30, judia: 50, haba: 50, habas: 50, girasol: 35, colza: 105, soja: 35, alfalfa: 30, maiz: 324 };
+  const CEREAL_INVIERNO = new Set(['trigo', 'cebada', 'avena', 'centeno', 'triticale']);
+  const LEGUMINOSAS = new Set(['lenteja', 'garbanzo', 'titarro', 'almorta', 'guisante', 'guisante para grano', 'veza', 'veza forrajera', 'yeros', 'haba', 'habas', 'judia', 'alfalfa', 'esparceta', 'soja', 'altramuz', 'alberjon', 'algarroba', 'trebol', 'alholva', 'zulla']);
+  function limiteN(fid, c, cu) {
+    const k = norm(cu); let base = N_MAX_SECANO[k]; if (base == null && /forraj/.test(k) && /veza/.test(k)) base = 30;
+    if (base == null) return null;
+    let max = base; const ajustes = [];
+    const ant = cultivoDe(fid, campanaAnterior(c));
+    if (ant && LEGUMINOSAS.has(norm(ant))) { max -= 10; ajustes.push('−10 por la leguminosa del año anterior'); }
+    if (CEREAL_INVIERNO.has(k)) {
+      const cs = db.cosechas.filter(x => x.campana < c && norm(cultivoDe(x.fincaId, x.campana) || '') === k);
+      const ha = sum([...new Set(cs.map(x => x.fincaId + x.campana))].map(id => cs.find(x => x.fincaId + x.campana === id)), x => +((finca(x.fincaId) || {}).superficie) || 0);
+      const media = ha ? sum(cs, x => +x.kg || 0) / ha : 0;
+      if (media > 4000) { max = Math.round(max * media / 3500); ajustes.push(`subido porque tu cosecha media de ${cu.toLowerCase()} es ${fmtN(media, 0)} kg/ha`); }
+    }
+    return { max: Math.max(0, max), base, ajustes };
+  }
+  // Tipo de estiércol (anexo I): A estiércol de vacuno, ovino…; B purín de vacuno/ovino, conejo; C gallinaza, purín de cerdo
+  function tipoEstiercol(nombre) {
+    const n = norm(nombre || ''); if (!RE_ESTIERCOL.test(n)) return null;
+    if (/gallinaza|palomina|aves|purin (de )?(cerdo|porcino)|porcino|cerdo|pato/.test(n)) return 'C';
+    if (/purin|conejo/.test(n)) return 'B';
+    return 'A';
+  }
+  function revisarNitrogeno(f, v, p, excl) {
+    const c = v.campana || db.campanaActiva; const cu = cultivoDe(f.id, c) || ''; const k = norm(cu);
+    const zv = zonaVulnerable(f); const fs = (v.fincas || []).map(finca).filter(Boolean);
+    const haT = fs.length === 1 && v.superficie > 0 ? v.superficie : sum(fs, x => +x.superficie || 0);
+    const nombre = p ? p.nombre : v.producto;
+    const ri = p ? riqueza(p) : (riquezaDeNombre(nombre) ? (r => ({ n: r[0], p: r[1], k: r[2] }))(riquezaDeNombre(nombre)) : null);
+    const kg = kgAbonoHa(p, parseNum(v.dosis), v.unidad, haT);
+    const nEste = ri && kg != null ? kg * ri.n / 100 : 0;
+    const previo = sum(db.labores.filter(l => l.fincaId === f.id && l.campana === c && !(excl && excl.has(l.id))), l => (ufLabor(l) || {}).n || 0);
+    const total = previo + nEste; const lim = cu ? limiteN(f.id, c, cu) : null;
+    const est = tipoEstiercol(nombre); const md = String(v.fecha || '').slice(5);
+    const graves = [], notas = [];
+    if (zv) {
+      if (lim && total > lim.max + 0.5) graves.push(`Zona vulnerable ${zv.nombre}: el máximo de nitrógeno para ${cu.toLowerCase()} de secano es ${lim.max} kg N/ha y con este abonado llegas a ${fmtN(total, 0)}.`);
+      if (!est && nEste > 0 && CEREAL_INVIERNO.has(k) && md >= '06-01' && md <= '08-31') graves.push(`Zona vulnerable ${zv.nombre}: al cereal de invierno no se puede echar abono nitrogenado mineral desde el 1 de junio hasta las labores del siguiente cultivo.`);
+      if (est && est !== 'C' && CEREAL_INVIERNO.has(k)) {
+        const sem = db.labores.filter(l => l.fincaId === f.id && l.campana === c && l.tipo === 'Siembra').map(l => l.fecha).sort()[0];
+        if (sem && v.fecha >= sem) graves.push(`Zona vulnerable ${zv.nombre}: el estiércol no se puede echar desde la siembra del cereal (${fmtFecha(sem)}) hasta preparar la tierra para el siguiente cultivo.`);
+      }
+      if (est === 'C' && CEREAL_INVIERNO.has(k) && md >= '04-01' && md <= '09-01') graves.push(`Zona vulnerable ${zv.nombre}: la gallinaza y el purín de cerdo no se pueden echar al cereal de invierno del 1 de abril al 1 de septiembre.`);
+      if (!lim && cu && nEste > 0) notas.push(`La Orden de zonas vulnerables no trae el máximo de nitrógeno para ${cu.toLowerCase()}: mira la Guía práctica de fertilización del Ministerio.`);
+      if (!zv.seguro) notas.push(`Creo que ${f.municipio} es ${zv.municipio}, que está en zona vulnerable: confírmalo en Resumen → Abonado.`);
+    } else if (lim && total > lim.max + 0.5) notas.push(`${fmtN(total, 0)} kg N/ha supera lo recomendado para ${cu.toLowerCase()} de secano (${lim.max}). Fuera de zona vulnerable no es obligatorio.`);
+    return { fid: f.id, cu, zv, lim, total, nEste, graves, notas };
+  }
+  function nitroHTML(r) {
+    if (!r || !r.nitro || !r.nitro.length) return '';
+    const g = new Map(); r.nitro.forEach(x => { const k = (x.zv ? x.zv.cod : '') + '|' + x.cu; if (!g.has(k)) g.set(k, []); g.get(k).push(x); });
+    return [...g.values()].map(xs => { const x = xs[0]; const mx = Math.max(...xs.map(y => y.total));
+      return `<div class="small">${x.zv ? `<b class="neg">Zona vulnerable</b> (${esc(x.zv.nombre)})` : 'Fuera de zona vulnerable'} · ${esc(x.cu || 'sin cultivo')}: ${x.lim ? `máx. <b>${x.lim.max}</b> kg N/ha${x.lim.ajustes.length ? ` <span class="muted">(${esc(x.lim.ajustes.join('; '))})</span>` : ''}` : 'sin máximo en la Orden'} · llevas <b class="${x.lim && mx > x.lim.max + 0.5 ? 'neg' : ''}">${fmtN(mx, 0)}</b> kg N/ha${xs.length > 1 ? ` <span class="muted">(${xs.length} parcelas)</span>` : ''}</div>`; }).join('');
+  }
+
 
   function baseHa(v, u) {
     u = String(u || '').toLowerCase().replace(/\s/g, '');
@@ -2094,7 +2206,11 @@
     r.autorizado = aut.length > 0;
     if (!aut.length) { r.graves.push(`«${reg.n}» no está autorizado en ${cultivo}.`); return r; }
     if (norm(cultivo) === 'titarro') r.notas.push('El titarro no figura en el Registro; se compara con almorta y leguminosas de grano. Confírmalo con tu técnico.');
-    r.usos = aut.flatMap(c => ((reg.u && reg.u[c]) || []).map(x => ({ c, ag: x[0], min: x[1], max: x[2], u: x[3] })));
+    r.usos = aut.flatMap(c => ((reg.u && reg.u[c]) || []).map(x => ({ c, ag: x[0], min: x[1], max: x[2], u: x[3], nap: x[4] || null, inter: x[5] || null })));
+    // nº máximo de aplicaciones e intervalo: el más permisivo de los usos de ese cultivo (sin dato = no se comprueba)
+    const naps = r.usos.map(x => x.nap).filter(Boolean); r.maxAplic = naps.length ? Math.max(...naps) : null;
+    const ints = r.usos.map(x => x.inter).filter(Boolean); r.intervalo = ints.length && ints.length === r.usos.length ? Math.min(...ints) : null;
+    const pss = aut.map(c => reg.ps && reg.ps[c]).filter(x => x != null); r.plazo = pss.length ? Math.max(...pss) : null;
     const bs = r.usos.map(x => ({ a: baseHa(x.min, x.u), b: baseHa(x.max, x.u) })).filter(x => x.a && x.b);
     if (bs.length) {
       const u0 = bs[0].a.u; const mm = bs.filter(x => x.a.u === u0);
@@ -2490,17 +2606,31 @@
       const fs = g ? fincasDeGrupo(g) : [f]; if (g) vistos.add(g);
       const ha = sum(fs, x => +x.superficie || 0); const ab = fs.map(x => Object.assign(abonadoFinca(x.id, c), { ha: +x.superficie || 0 }));
       const cus = [...new Set(fs.map(x => cultivoDe(x.id, c)).filter(Boolean))];
-      filas.push({ nombre: g || f.nombre, cus, ha, n: ha ? sum(ab, a => a.n * a.ha) / ha : 0, p: ha ? sum(ab, a => a.p * a.ha) / ha : 0, k: ha ? sum(ab, a => a.k * a.ha) / ha : 0, hay: ab.some(a => a.ls.length), est: fs.some(x => conEstiercol(x.id, c)) });
+      // nitrógeno frente al máximo: la parcela que más se pase
+      const pasa = fs.map(x => { const z = zonaVulnerable(x); const lim = limiteN(x.id, c, cultivoDe(x.id, c) || ''); const n = abonadoFinca(x.id, c).n; return { z, lim, n, exceso: lim ? n - lim.max : -1 }; }).sort((a, b) => b.exceso - a.exceso)[0];
+      filas.push({ nombre: g || f.nombre, cus, ha, n: ha ? sum(ab, a => a.n * a.ha) / ha : 0, p: ha ? sum(ab, a => a.p * a.ha) / ha : 0, k: ha ? sum(ab, a => a.k * a.ha) / ha : 0, hay: ab.some(a => a.ls.length), est: fs.some(x => conEstiercol(x.id, c)), zv: fs.some(x => zonaVulnerable(x)), pasa });
     });
     const porCu = {};
     db.fincas.forEach(f => { const cu = cultivoDe(f.id, c); if (!cu || norm(cu) === 'barbecho') return; const a = abonadoFinca(f.id, c); const ha = +f.superficie || 0; const o = porCu[cu] || (porCu[cu] = { ha: 0, n: 0, p: 0, k: 0, haAb: 0 }); o.ha += ha; o.n += a.n * ha; o.p += a.p * ha; o.k += a.k * ha; if (a.ls.length) o.haAb += ha; });
     const sinRiq = db.productos.filter(p => p.tipo === 'Abono' && !riqueza(p));
-    let h = sinRiq.length ? `<div class="banner"><p>Estos abonos no tienen la riqueza (N-P-K) puesta: ${sinRiq.map(p => `<b>${esc(p.nombre)}</b>`).join(', ')}. Ponla en el almacén para que cuenten.</p></div>` : '';
+    // zonas vulnerables por pueblo (se pueden corregir)
+    const pueblos = new Map(); db.fincas.forEach(f => { const k = clavePueblo(f); if (!pueblos.has(k)) pueblos.set(k, { f, ha: 0 }); pueblos.get(k).ha += +f.superficie || 0; });
+    const listaP = [...pueblos.entries()].sort((a, b) => String(a[1].f.municipio || '').localeCompare(String(b[1].f.municipio || ''), 'es'));
+    const dudas = listaP.filter(([, o]) => { const z = zonaVulnerable(o.f); return z && !z.seguro; });
+    const pasan = filas.filter(x => x.zv && x.pasa && x.pasa.lim && x.pasa.exceso > 0.5);
+    let h = pasan.length ? `<div class="banner"><p><b>Te pasas del nitrógeno máximo en zona vulnerable</b> en: ${pasan.map(x => `<b>${esc(x.nombre)}</b> (${fmtN(x.pasa.n, 0)} de ${x.pasa.lim.max} kg N/ha)`).join(', ')}.</p></div>` : '';
+    if (dudas.length) h += `<div class="banner"><p>Confirma si están en zona vulnerable: ${dudas.map(([, o]) => `<b>${esc(o.f.municipio)}</b> (¿${esc(zonaVulnerable(o.f).municipio)}?)`).join(', ')}. Cámbialo abajo, en «Zonas vulnerables por pueblo».</p></div>`;
+    h += sinRiq.length ? `<div class="banner"><p>Estos abonos no tienen la riqueza (N-P-K) puesta: ${sinRiq.map(p => `<b>${esc(p.nombre)}</b>`).join(', ')}. Ponla en el almacén para que cuenten.</p></div>` : '';
     const cus = Object.entries(porCu).sort((a, b) => b[1].ha - a[1].ha);
     if (!filas.some(x => x.hay)) h += '<p class="note">Todavía no hay abonados con un abono del almacén en esta campaña. Apunta la labor «Abonado» eligiendo el abono y la dosis, y aquí verás las unidades de N, P y K por hectárea.</p>';
     h += `<h2 class="sec">Por cultivo · ${c} (UF/ha, media)</h2><div class="tablewrap"><table><thead><tr><th>Cultivo</th><th>ha</th><th>Abonadas</th><th>N</th><th>P₂O₅</th><th>K₂O</th></tr></thead><tbody>${cus.map(([cu, o]) => `<tr><td>${chip(cu)}</td><td>${fmtN(o.ha)}</td><td>${fmtN(o.haAb)}</td><td>${fmtN(o.ha ? o.n / o.ha : 0, 0)}</td><td>${fmtN(o.ha ? o.p / o.ha : 0, 0)}</td><td>${fmtN(o.ha ? o.k / o.ha : 0, 0)}</td></tr>`).join('')}</tbody></table></div>`;
-    h += `<h2 class="sec">Por finca · ${c} (UF/ha)</h2><div class="tablewrap"><table><thead><tr><th>Finca</th><th>Cultivo</th><th>ha</th><th>N</th><th>P₂O₅</th><th>K₂O</th></tr></thead><tbody>${filas.map(x => `<tr><td>${esc(x.nombre)}${x.est ? ' <span class="small muted">· estiércol</span>' : ''}</td><td style="text-align:left">${x.cus.map(chip).join(' ') || chip(null)}</td><td>${fmtN(x.ha)}</td>${x.hay ? `<td>${fmtN(x.n, 0)}</td><td>${fmtN(x.p, 0)}</td><td>${fmtN(x.k, 0)}</td>` : '<td colspan="3" class="muted">sin abonar</td>'}</tr>`).join('')}</tbody></table></div>
+    h += `<h2 class="sec">Por finca · ${c} (UF/ha)</h2><div class="tablewrap"><table><thead><tr><th>Finca</th><th>Cultivo</th><th>ha</th><th>N</th><th>P₂O₅</th><th>K₂O</th></tr></thead><tbody>${filas.map(x => `<tr><td>${esc(x.nombre)}${x.zv ? ' <span class="pill neg">ZV</span>' : ''}${x.est ? ' <span class="small muted">· estiércol</span>' : ''}</td><td style="text-align:left">${x.cus.map(chip).join(' ') || chip(null)}</td><td>${fmtN(x.ha)}</td>${x.hay ? `<td class="${x.zv && x.pasa && x.pasa.exceso > 0.5 ? 'neg' : ''}">${fmtN(x.n, 0)}${x.zv && x.pasa && x.pasa.lim ? `<span class="small muted">/${x.pasa.lim.max}</span>` : ''}</td><td>${fmtN(x.p, 0)}</td><td>${fmtN(x.k, 0)}</td>` : '<td colspan="3" class="muted">sin abonar</td>'}</tr>`).join('')}</tbody></table></div>
       <p class="note">UF = unidades fertilizantes: kilos de N, P₂O₅ y K₂O por hectárea. Se calculan con la riqueza del saco que pones en el albarán y la dosis de cada abonado. El estiércol se marca pero no se cuenta, porque no lleva dosis.</p>`;
+    h += `<h2 class="sec">Zonas vulnerables por pueblo</h2><div class="list">${listaP.map(([k, o]) => { const z = zonaVulnerable(o.f); const man = (db.zvPueblos || {})[k] || '';
+      const prov = String(+o.f.provincia || ''); const zonas = Object.entries(ZONAS_VULNERABLES).filter(([, [, ps]]) => !prov || ps[prov]);
+      return `<div class="row"><div class="main"><div class="t">${esc(o.f.municipio || 'Sin pueblo')}${o.f.provincia ? ` <span class="small muted">${esc(nombreProv(o.f.provincia))}</span>` : ''}</div><div class="s">${fmtN(o.ha)} ha · ${z ? `<b class="neg">Zona vulnerable ${esc(z.nombre)}</b>${z.seguro ? '' : ' (por confirmar)'}` : 'No es zona vulnerable'}</div></div>
+        <select class="zvp" data-zvp="${esc(k)}" aria-label="Zona vulnerable de ${esc(o.f.municipio || '')}"><option value=""${!man ? ' selected' : ''}>Automático</option><option value="no"${man === 'no' ? ' selected' : ''}>No</option>${zonas.map(([cod, [nom]]) => `<option value="${cod}"${man === cod ? ' selected' : ''}>Sí: ${esc(nom)}</option>`).join('')}</select></div>`; }).join('')}</div>
+      <p class="note">Zonas vulnerables del Decreto 5/2020 de la Junta. Dentro de ellas son obligatorios los máximos de nitrógeno por cultivo y las épocas sin abonar de la Orden MAV/398/2022, y llevar el libro-registro de abonado (lo tienes en el Excel del cuaderno de campo).</p>`;
     return h;
   }
 
@@ -2628,6 +2758,9 @@
       ${filas.map(([t, fs]) => { const d = datosPAC(fs, c); return `<tr${t === 'Total' ? ' class="tot"' : ''}><td>${esc(t)}</td>${['D', 'C', 'T', ''].map(k => `<td>${fmtN(d.lab[k])} ha<br><span class="small muted">${pct(d.lab[k], d.sembrada)}</span></td>`).join('')}<td>${fmtN(d.est)} ha</td></tr>`; }).join('')}</tbody></table></div>`;
     h += `<h2 class="sec">Superficie por tipo de cultivo · ${c}</h2><div class="tablewrap"><table><thead><tr><th>Titular</th>${ORDEN_GRUPOS.map(g => `<th>${g}</th>`).join('')}</tr></thead><tbody>
       ${filas.map(([t, fs]) => { const d = datosPAC(fs, c); return `<tr${t === 'Total' ? ' class="tot"' : ''}><td>${esc(t)}</td>${ORDEN_GRUPOS.map(g => `<td>${d.grp[g] ? `${fmtN(d.grp[g])}<br><span class="small muted">${pct(d.grp[g], d.total)}</span>` : '—'}</td>`).join('')}</tr>`; }).join('')}</tbody></table></div>`;
+    // Cumplimiento por titular
+    h += `<h2 class="sec">Cumplimiento PAC · ${c}</h2>${ts.filter(t => t !== 'Sin titular').map(t => tarjetaPAC(cumplimientoPAC(t, c))).join('')}
+      <p class="note">Calculado con los cultivos y el laboreo de ${ant} y ${c}, para tierras de cultivo de <b>secano</b> (RD 1049/2022, BCAM 6 y 7; RD 1048/2022, arts. 36, 37 y 44). Cada ecorrégimen se cobra solo si lo pides en la solicitud única. Es una ayuda para revisar, no sustituye a la comprobación de la Junta ni a tu técnico.</p>`;
     // Rotación
     const repiten = db.fincas.filter(f => { const a = cultivoDe(f.id, c), b = cultivoDe(f.id, ant); return a && b && norm(a) === norm(b) && grupoCult(a) !== 'Plurianuales'; });
     const sinCult = db.fincas.filter(f => !cultivoDe(f.id, c));
@@ -2635,8 +2768,107 @@
       <p style="margin:0">${repiten.length ? `<b class="neg">${repiten.length} parcelas repiten cultivo</b> (${fmtN(sum(repiten, f => f.superficie))} ha). No cuenta las plurianuales (esparceta, alfalfa…).` : '<b class="pos">Ninguna parcela repite cultivo</b> respecto a la campaña anterior.'}</p>
       ${repiten.length ? `<div class="tablewrap"><table><thead><tr><th>Parcela</th><th>Titular</th><th>Cultivo</th><th>ha</th></tr></thead><tbody>${repiten.sort(byNombre).slice(0, 80).map(f => `<tr><td><button class="lnk" data-act="verFinca" data-id="${f.id}">${esc(f.nombre)}</button></td><td style="text-align:left">${esc(f.titular || '')}</td><td style="text-align:left">${chip(cultivoDe(f.id, c))}</td><td>${fmtN(f.superficie)}</td></tr>`).join('')}</tbody></table></div>${repiten.length > 80 ? `<p class="note">…y ${repiten.length - 80} más.</p>` : ''}` : ''}
       ${sinCult.length ? `<p class="small" style="margin:0"><b>${sinCult.length} parcelas sin cultivo asignado</b> en ${c} (${fmtN(sum(sinCult, f => f.superficie))} ha).</p>` : ''}</div>
-      <p class="note">Estos datos te ayudan a revisar los ecorregímenes (rotación, siembra directa…). Los porcentajes mínimos y condiciones cambian según el año: confírmalos con tu técnico o en la normativa de la PAC.</p>`;
+`;
     return h;
+  }
+
+
+  // ---------- Cumplimiento PAC: BCAM 6 y 7 (RD 1049/2022) y ecorregímenes de tierras de cultivo de secano (RD 1048/2022) ----------
+  // «Cultivo» a efectos de rotación = género botánico (en Vicia, la especie). Las plurianuales ya implantadas no cuentan para la rotación.
+  const GENERO = { trigo: 'triticum', 'trigo duro': 'triticum', 'trigo blando': 'triticum', cebada: 'hordeum', avena: 'avena', 'avena forrajera': 'avena', centeno: 'secale', triticale: 'triticosecale',
+    titarro: 'lathyrus', almorta: 'lathyrus', lenteja: 'lens', garbanzo: 'cicer', guisante: 'pisum', 'guisante para grano': 'pisum', veza: 'vicia sativa', 'veza forrajera': 'vicia sativa', yeros: 'vicia ervilia', haba: 'vicia faba', habas: 'vicia faba',
+    esparceta: 'onobrychis', alfalfa: 'medicago', 'anis dulce': 'pimpinella', anis: 'pimpinella', cilantro: 'coriandrum', girasol: 'helianthus', colza: 'brassica napus', camelina: 'camelina', maiz: 'zea', judia: 'phaseolus', soja: 'glycine', barbecho: 'barbecho' };
+  const PLURIANUALES = new Set(['esparceta', 'alfalfa', 'pradera', 'praderas', 'chopo', 'chopos', 'mezcla forestales']);
+  const NO_TIERRA_CULTIVO = new Set(['chopo', 'chopos', 'mezcla forestales', 'forestal', 'pastos permanentes', 'pasto permanente', 'olivar', 'vinedo', 'almendro']);
+  const MEJORANTES_NO_LEG = new Set(['colza', 'camelina', 'girasol', 'cartamo', 'ajo', 'adormidera', 'mostaza', 'rabano', 'nabo forrajero', 'rucula']);
+  const genero = cu => GENERO[norm(cu)] || norm(cu);
+  const esLeg = cu => LEGUMINOSAS.has(norm(cu));
+  const esPluri = cu => PLURIANUALES.has(norm(cu));
+  const VOLTEO = /\b(arad|arar|aro|vertedera|vernete|cohecho|volteo|discos? de desfonde|subsolad)/;
+  const conVolteo = l => l.tipo === 'Labrado' && (VOLTEO.test(norm(l.producto || '')) || ((maquina(l.aperoId) || {}).tipo === 'Arado') || VOLTEO.test(norm((maquina(l.aperoId) || {}).nombre || '')));
+  function cumplimientoPAC(t, c) {
+    const a1 = campanaAnterior(c), a2 = campanaAnterior(a1);
+    const fs = fincasTitular(t).filter(f => { const cu = cultivoDe(f.id, c); return cu && !NO_TIERRA_CULTIVO.has(norm(cu)); });
+    const ha = f => +f.superficie || 0; const TA = sum(fs, ha);
+    const info = fs.map(f => { const cu = cultivoDe(f.id, c), p1 = cultivoDe(f.id, a1), p2 = cultivoDe(f.id, a2), s = siembraDe(f.id, c);
+      const pluriVieja = esPluri(cu) && p1 && genero(p1) === genero(cu);
+      return { f, ha: ha(f), cu, p1, p2, pluriVieja, cambia: p1 ? genero(cu) !== genero(p1) : null, barbTrasLeg: norm(cu) === 'barbecho' && p1 && esLeg(p1), lab: s && s.laboreo || '' }; });
+    const sinAnt = info.filter(x => !x.p1);
+    // diversificación: superficie por cultivo
+    const porCu = new Map(); info.forEach(x => porCu.set(genero(x.cu), (porCu.get(genero(x.cu)) || 0) + x.ha));
+    const orden = [...porCu.values()].sort((a, b) => b - a); const nCult = orden.length;
+    const pMay = TA ? orden[0] / TA : 0, pDos = TA ? (orden[0] + (orden[1] || 0)) / TA : 0;
+    // ---- BCAM 7
+    const b7 = { exenta: '', p1: null, p2: null, repiten3: [] };
+    const haLegBarbForr = sum(info.filter(x => esLeg(x.cu) || norm(x.cu) === 'barbecho' || /forraj/.test(norm(x.cu))), x => x.ha);
+    if (TA <= 10) b7.exenta = 'Tienes 10 ha de tierra de cultivo o menos.';
+    else if (TA && haLegBarbForr / TA > 0.75) b7.exenta = 'Más del 75 % es leguminosa, barbecho o forraje.';
+    const base7 = info.filter(x => !x.pluriVieja && x.p1); const den7 = sum(base7, x => x.ha);
+    const pRot7 = den7 ? sum(base7.filter(x => x.cambia), x => x.ha) / den7 : null;
+    b7.repiten3 = info.filter(x => !esPluri(x.cu) && x.p1 && x.p2 && genero(x.cu) === genero(x.p1) && genero(x.cu) === genero(x.p2));
+    const falta3 = info.some(x => !x.p2);
+    b7.p1 = { pct: pRot7, ok: pRot7 != null && pRot7 >= 0.33 && !b7.repiten3.length, falta3 };
+    b7.p2 = TA > 30 ? { ok: nCult >= 3 && pMay <= 0.75 && pDos <= 0.95, txt: `${nCult} cultivos · el mayor ${fmtN(pMay * 100, 0)} % · los dos mayores ${fmtN(pDos * 100, 0)} % (hace falta: 3 cultivos, el mayor ≤ 75 % y los dos mayores ≤ 95 %)` }
+      : { ok: nCult >= 2 && pMay <= 0.75, txt: `${nCult} cultivos · el mayor ${fmtN(pMay * 100, 0)} % (hace falta: 2 cultivos y el mayor ≤ 75 %)` };
+    b7.ok = !!b7.exenta || b7.p1.ok || b7.p2.ok;
+    // ---- BCAM 6: nada de volteo entre la cosecha del cereal de invierno y el 1 de septiembre
+    const b6 = [];
+    fs.forEach(f => { [a1, c].forEach(cc => {
+      const cu = cultivoDe(f.id, cc); if (!cu || !CEREAL_INVIERNO.has(norm(cu))) return;
+      const cos = [...db.cosechas.filter(x => x.fincaId === f.id && x.campana === cc).map(x => x.fecha), ...db.labores.filter(l => l.fincaId === f.id && l.campana === cc && l.tipo === 'Cosecha').map(l => l.fecha)].sort()[0];
+      if (!cos) return; const fin = cos.slice(0, 4) + '-09-01';
+      db.labores.filter(l => l.fincaId === f.id && conVolteo(l) && l.fecha > cos && l.fecha < fin).forEach(l => b6.push({ f, l }));
+    }); });
+    // ---- Ecorrégimen: rotación con especies mejorantes
+    const pluriHa = sum(info.filter(x => esPluri(x.cu)), x => x.ha);
+    const baseR = info.filter(x => !x.pluriVieja && x.p1); const denR = sum(baseR, x => x.ha);
+    const rotR = sum(baseR.filter(x => x.cambia && !x.barbTrasLeg), x => x.ha);
+    const minRot = TA && pluriHa / TA > 0.25 ? 0.25 : 0.5;
+    const haMej = sum(info.filter(x => esLeg(x.cu) || MEJORANTES_NO_LEG.has(norm(x.cu))), x => x.ha), haLeg = sum(info.filter(x => esLeg(x.cu)), x => x.ha);
+    const er = { pRot: denR ? rotR / denR : null, minRot, pMej: TA ? haMej / TA : 0, pLeg: TA ? haLeg / TA : 0 };
+    er.ok = TA <= 10 ? (nCult >= 2 && pMay <= 0.75) || (er.pRot >= minRot) : er.pRot != null && er.pRot >= minRot && er.pMej >= 0.10 && er.pLeg >= 0.05;
+    // ---- Ecorrégimen: siembra directa (≥ 40 %: sin arar, sobre rastrojo, y esa superficie rota)
+    const arada = new Set(db.labores.filter(l => l.campana === c && conVolteo(l)).map(l => l.fincaId));
+    const okD = x => x.lab === 'D' && !arada.has(x.f.id) && (x.pluriVieja || x.cambia === true) && !x.barbTrasLeg;
+    const okC = x => x.lab === 'C' && !arada.has(x.f.id) && (x.pluriVieja || x.cambia === true) && !x.barbTrasLeg;
+    const sd = { pD: TA ? sum(info.filter(okD), x => x.ha) / TA : 0, pDC: TA ? sum(info.filter(x => okD(x) || okC(x)), x => x.ha) / TA : 0,
+      dSinRot: info.filter(x => x.lab === 'D' && !(x.pluriVieja || x.cambia === true)), dArada: info.filter(x => x.lab === 'D' && arada.has(x.f.id)),
+      pluri: sum(info.filter(x => okD(x) && (siembraDe(x.f.id, a1) || {}).laboreo === 'D'), x => x.ha) };
+    sd.ok = sd.pD >= 0.40;
+    // ---- Ecorrégimen: espacios de biodiversidad (7 % en secano)
+    const barb = info.filter(x => norm(x.cu) === 'barbecho'); const haBarb = sum(barb, x => x.ha);
+    const barbTratado = barb.filter(x => db.labores.some(l => l.fincaId === x.f.id && l.campana === c && (l.tipo === 'Tratamiento' || l.tipo === 'Abonado')));
+    const eb = { pct: TA ? haBarb / TA : 0, tratados: barbTratado }; eb.ok = eb.pct >= 0.07 && !barbTratado.length;
+    return { t, c, a1, TA, n: fs.length, sinAnt, b7, b6, er, sd, eb };
+  }
+  function tarjetaPAC(r) {
+    const P = x => x == null ? '—' : fmtN(x * 100, 1) + ' %';
+    const ok = (b, txt) => `<span class="pill ${b ? 'pos' : 'neg'}">${b ? '✓ Cumple' : '✗ No cumple'}</span>${txt ? ` <span class="small muted">${txt}</span>` : ''}`;
+    const lista = (xs, f) => xs.length ? `<div class="small">${xs.slice(0, 12).map(f).join(', ')}${xs.length > 12 ? ` y ${xs.length - 12} más` : ''}</div>` : '';
+    const nombreP = x => `<button class="lnk" data-act="verFinca" data-id="${x.f.id}">${esc(x.f.nombre)}</button>`;
+    let h = `<div class="card pad pac-card"><div class="sp"><h3 style="margin:0">${esc(r.t)}</h3><span class="small muted">${fmtN(r.TA)} ha de tierra de cultivo · ${r.n} parcelas</span></div>`;
+    if (!r.TA) return h + '<p class="small muted">Sin parcelas con cultivo en esta campaña.</p></div>';
+    if (r.sinAnt.length) h += `<p class="small neg" style="margin:4px 0">Faltan los cultivos de ${r.a1} en ${r.sinAnt.length} parcelas (${fmtN(sum(r.sinAnt, x => x.ha))} ha): sin ellos no se puede calcular bien la rotación.</p>`;
+    // BCAM 7
+    h += `<div class="pac-b"><b>Rotación obligatoria (BCAM 7)</b> ${r.b7.exenta ? `<span class="pill pos">Exenta</span> <span class="small muted">${esc(r.b7.exenta)}</span>` : ok(r.b7.ok)}
+      ${r.b7.exenta ? '' : `<div class="small">Opción 1 · Rotación: cambia de cultivo el <b>${P(r.b7.p1.pct)}</b> (mínimo 33 %)${r.b7.p1.falta3 ? ' · falta la campaña de hace dos años para comprobar los 3 años' : ''} ${r.b7.p1.ok ? '✓' : '✗'}</div>${r.b7.repiten3.length ? `<div class="small neg">Mismo cultivo 3 años seguidos (cada parcela tiene que cambiar al menos una vez cada 3 años):</div>${lista(r.b7.repiten3, nombreP)}` : ''}
+      <div class="small">Opción 2 · Diversificación: ${r.b7.p2.txt} ${r.b7.p2.ok ? '✓' : '✗'}</div>`}</div>`;
+    // BCAM 6
+    h += `<div class="pac-b"><b>Suelo cubierto tras la cosecha (BCAM 6)</b> ${ok(!r.b6.length)}${r.b6.length ? `<div class="small neg">Labor con volteo (arado) entre la cosecha del cereal y el 1 de septiembre:</div>${lista(r.b6, x => `<button class="lnk" data-act="verFinca" data-id="${x.f.id}">${esc(x.f.nombre)}</button> (${fmtFecha(x.l.fecha)})`)}` : '<div class="small muted">No hay aradas apuntadas entre la cosecha del cereal y el 1 de septiembre.</div>'}</div>`;
+    // Ecorregímenes
+    h += `<div class="pac-b"><b>Ecorrégimen · Rotación con especies mejorantes</b> ${ok(r.er.ok)}
+      <div class="small">Rota el <b>${P(r.er.pRot)}</b> (mínimo ${r.er.minRot * 100} %; el barbecho tras leguminosa no cuenta) ${r.er.pRot >= r.er.minRot ? '✓' : '✗'}</div>
+      <div class="small">Mejorantes <b>${P(r.er.pMej)}</b> (mínimo 10 %) ${r.er.pMej >= 0.1 ? '✓' : '✗'} · de ellas leguminosas <b>${P(r.er.pLeg)}</b> (mínimo 5 %) ${r.er.pLeg >= 0.05 ? '✓' : '✗'}</div>
+      <div class="small muted">Mejorantes: leguminosas (titarro, lenteja, veza, yeros, esparceta, alfalfa…), colza, camelina y girasol. El anís y el cilantro no cuentan.</div></div>`;
+    h += `<div class="pac-b"><b>Ecorrégimen · Siembra directa</b> ${ok(r.sd.ok)}
+      <div class="small">Siembra directa (D) que además rota y sin arar: <b>${P(r.sd.pD)}</b> (mínimo 40 %)</div>
+      ${r.sd.pDC > r.sd.pD ? `<div class="small muted">Contando también la directa con complemento (C) serían ${P(r.sd.pDC)}: solo vale si la Junta admite esa labor vertical.</div>` : ''}
+      ${r.sd.dSinRot.length ? `<div class="small neg">En directa pero sin rotar (no cuentan):</div>${lista(r.sd.dSinRot, nombreP)}` : ''}${r.sd.dArada.length ? `<div class="small neg">En directa pero con arada apuntada:</div>${lista(r.sd.dArada, nombreP)}` : ''}
+      ${r.sd.pluri ? `<div class="small">Repiten directa del año anterior: ${fmtN(r.sd.pluri)} ha (complemento de plurianualidad, 25 €/ha).</div>` : ''}</div>`;
+    h += `<div class="pac-b"><b>Ecorrégimen · Espacios de biodiversidad</b> ${r.eb.ok ? '<span class="pill warn">Posible</span>' : ok(false)}
+      <div class="small">Barbecho: <b>${P(r.eb.pct)}</b> (hace falta 7 % en secano). Solo cuenta el barbecho de biodiversidad: sembrado con mezcla de al menos 2 familias, sin producir 6 meses y sin abono ni fitosanitarios. También valen lindes, setos, márgenes e islas de biodiversidad, que la app no conoce.</div>
+      ${r.eb.tratados.length ? `<div class="small neg">Barbecho con abonado o tratamiento apuntado (no vale):</div>${lista(r.eb.tratados, nombreP)}` : ''}</div>`;
+    return h + '</div>';
   }
 
   async function excelPAC() {
@@ -3122,7 +3354,11 @@
       registrarLabor(v); return `${v.tipo} apuntada en ${v.fincas.length} parcela${v.fincas.length === 1 ? '' : 's'}`;
     }
     if (R.intencion === 'cosecha') {
-      const v = R.cosecha; registrarCosecha(v);
+      const v = R.cosecha;
+      try { FITOS = await cargarFitos(); } catch (e) { /* sin Registro */ }
+      const ps = plazosPendientes(v.fincas, v.fecha);
+      if (ps.length && !(await confirmar('⚠ Plazo de seguridad', `<ul class="avisos-lista">${ps.map(g => `<li>${esc(g)}</li>`).join('')}</ul>`, 'Guardar igualmente')).ok) return false;
+      registrarCosecha(v);
       if (v.maquinaId) { db.ultMaq = db.ultMaq || {}; db.ultMaq.Cosecha = Object.assign({}, db.ultMaq.Cosecha, { tractorId: v.maquinaId }); }
       registrarLabor({ fecha: v.fecha, tipo: 'Cosecha', fincas: v.fincas, campana: v.campana, notas: '', producto: '', dosis: null, unidad: '', coste: null, tractorId: v.maquinaId || '' });
       return `Cosecha de ${fmtKg(v.kg)} apuntada`;
@@ -3602,6 +3838,7 @@
     if (e.target.id === 'fTitular') { ui.titular = e.target.value; const l = $('#listaFincas'); if (l) l.innerHTML = listaFincasHTML(); }
     if (e.target.id === 'fLabFinca') { ui.filtroLabor.finca = e.target.value; render(); }
     if (e.target.id === 'fLabTipo') { ui.filtroLabor.tipo = e.target.value; render(); }
+    if (e.target.dataset.zvp != null) { db.zvPueblos = db.zvPueblos || {}; if (e.target.value) db.zvPueblos[e.target.dataset.zvp] = e.target.value; else delete db.zvPueblos[e.target.dataset.zvp]; guardar(); render(); toast('Guardado'); }
   });
   $('#cfgBtn').addEventListener('click', hojaAjustes);
   $('#vozBtn').addEventListener('click', hojaVoz);

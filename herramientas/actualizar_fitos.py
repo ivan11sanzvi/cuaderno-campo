@@ -1,7 +1,8 @@
 # Uso: CA_BUNDLE=/root/.ccr/ca-bundle.crt python3 herramientas/actualizar_fitos.py fitos.json /tmp/fichas
 # Necesita: pip install pdfplumber. Con REUSAR=fitos.json reutiliza la lista de productos por cultivo.
-"""Construye fitos.json: productos fitosanitarios autorizados en los cultivos de la explotación,
-con sus usos (cultivo, agente, dosis) leídos de la ficha oficial del Registro del MAPA."""
+"""Construye fitos.json: todos los productos del Registro de fitosanitarios del MAPA, con sus usos
+(cultivo, agente, dosis, nº máximo de aplicaciones) y plazos de seguridad, leídos de la ficha oficial de cada uno.
+Con TODOS=1 lee la ficha de los 3.100 productos; si no, solo los de CULTIVOS."""
 import json, re, ssl, sys, os, time, unicodedata, urllib.request, urllib.parse, io, concurrent.futures as cf
 import pdfplumber
 
@@ -58,8 +59,29 @@ def productos_de(idc):
 DOSIS = re.compile(r'(\d+(?:[.,]\d+)?)(?:\s*-\s*(\d+(?:[.,]\d+)?))?\s*(cc|ml|l|g|kg|gr)\s*/\s*(ha|hl|100 ?l|kg|t|m2|100 ?m2|planta|árbol|arbol)', re.I)
 
 
+def leer_plazos(pdf):
+    # Tabla «Plazos de Seguridad»: líneas «Cultivo, Cultivo 30» o «… NP» (no procede)
+    txt = '\n'.join((pg.extract_text() or '') for pg in pdf.pages)
+    cab = [x.strip() for x in txt.split('\n')[:6]]  # nº de registro y nombre: se repiten arriba de cada página
+    m = re.search(r'Plazos de Seguridad[^\n]*\n(.*?)(?:Condiciones Generales|Clase de Usuario|Mitigaci)', txt, re.S)
+    if not m: return {}
+    out = {}; acum = ''
+    for lin in m.group(1).split('\n'):
+        lin = lin.strip()
+        if not lin or lin.startswith('USO') or lin.startswith('Página') or lin in cab or re.match(r'^(SECRETARIA|AGRARIOS|DIRECCI|LA PRODUCCI|ANIMAL|ES-\d|\d+$)', lin): continue
+        if any(len(c) > 3 and lin.startswith(c) for c in cab[1:]): continue
+        acum = (acum + ' ' + lin).strip()
+        mm = re.search(r'\s(\d{1,3}|NP|NO PROCEDE|-)$', acum)
+        if not mm: continue
+        cults = acum[:mm.start()].strip(); val = mm.group(1)
+        for cu in [x.strip() for x in re.split(r',\s*(?=[A-ZÁÉÍÓÚ])', cults) if x.strip()]:
+            out[cu] = int(val) if val.isdigit() else None
+        acum = ''
+    return out
+
+
 def leer_usos(pdf_bytes):
-    usos = []  # [cultivo, agente, texto dosis]
+    usos = []  # [cultivo, agente, texto dosis, nº aplicaciones]
     ultimo = None
     ultimo_cols = None
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
@@ -95,11 +117,13 @@ def leer_usos(pdf_bytes):
                 ca = col_de('AGENTE', (cab['AGENTE']['x0'] - 25, cab['Dosis']['x0'] - 40))
                 cd = col_de('Dosis', (cab['Dosis']['x0'] - 40, cab['Dosis']['x0'] + 80))
                 cc = col_de('Condic', (cd[1], pg.width))
-                cols = (ini, ca[0], cd[0], cd[1], cc[0], cc[1])
+                cn = col_de('Nº', None) or col_de('N°', None)
+                ci = col_de('Interv', None)
+                cols = (ini, ca[0], cd[0], cd[1], cc[0], cc[1], cn, ci)
             elif ultimo_cols:
                 cols = ultimo_cols; y0 = 0
             ultimo_cols = cols
-            xu0, xa, xd, xc, xk0, xk1 = cols
+            xu0, xa, xd, xc, xk0, xk1, cn, ci = cols
             # fin de la tabla: «Plazos de Seguridad» o «Condiciones Generales»
             fin = min([w['top'] for w in ws if w['top'] > y0 and w['text'] in ('Plazos', 'Condiciones', 'Clase', 'Mitigación')] + [pg.height])
             # separadores de bloque en la columna USO
@@ -110,12 +134,24 @@ def leer_usos(pdf_bytes):
                 if b - a < 4: continue
                 en = [w for w in ws if a - 1 <= w['top'] < b - 1]
                 uso = ' '.join(w['text'] for w in en if w['x0'] < xa - 1 and w['x0'] >= xu0)
-                ag_lin, do_lin, co_lin = {}, {}, {}
+                ag_lin, do_lin, co_lin, ap_lin, in_lin = {}, {}, {}, {}, {}
                 for w in en:
                     k = round(w['top'] / 4)
                     if xa - 2 <= w['x0'] < xd: ag_lin.setdefault(k, []).append(w['text'])
                     elif xd - 2 <= w['x0'] < xc: do_lin.setdefault(k, []).append(w['text'])
+                    elif cn and cn[0] - 2 <= w['x0'] < cn[1]: ap_lin.setdefault(k, []).append(w['text'])
+                    elif ci and ci[0] - 2 <= w['x0'] < ci[1]: in_lin.setdefault(k, []).append(w['text'])
                     elif xk0 - 2 <= w['x0'] < xk1: co_lin.setdefault(k, []).append(w['text'])
+                aps = sorted((k, max([int(x) for x in re.findall(r'\d+', ' '.join(v))] or [0])) for k, v in ap_lin.items())
+                aps = [x for x in aps if x[1]]
+                texto_cond = ' '.join(' '.join(v) for k, v in sorted(co_lin.items()))
+                m_ap = re.search(r'(?:m[aá]ximo de|m[aá]x\.?)\s*(\d+)\s*aplicaci', texto_cond, re.I) or re.search(r'\b(una|dos|tres|cuatro)\s+aplicaci[oó]n(?:es)?\s+(?:por|al)\s+(?:campa|a[nñ]o|ciclo)', texto_cond, re.I)
+                ap_cond = None
+                if m_ap: g = m_ap.group(1).lower(); ap_cond = int(g) if g.isdigit() else {'una': 1, 'dos': 2, 'tres': 3, 'cuatro': 4}[g]
+                ap_de = lambda k: (min(aps, key=lambda x: abs(x[0] - k))[1] if aps else ap_cond)
+                ins = sorted((k, min([int(x) for x in re.findall(r'\d+', ' '.join(v))] or [0])) for k, v in in_lin.items())
+                ins = [x for x in ins if x[1]]
+                in_de = lambda k: (min(ins, key=lambda x: abs(x[0] - k))[1] if ins else None)
                 uso = uso.strip() or (ultimo or '')
                 if not uso: continue
                 ultimo = uso
@@ -125,14 +161,15 @@ def leer_usos(pdf_bytes):
                     # fichas nuevas: «Dosis máxima por aplicación 1,5 l/ha» en las condiciones
                     texto = ' '.join(' '.join(v) for k, v in sorted(co_lin.items()))
                     for m in re.finditer(r'[Dd]osis\s+m[aá]xima[^.;]{0,60}?(\d+(?:[.,]\d+)?\s*(?:cc|ml|l|g|kg)\s*/\s*ha)', texto):
-                        usos.append([uso, (ags[0][1] if ags else ''), 'MAX ' + m.group(1)])
+                        usos.append([uso, (ags[0][1] if ags else ''), 'MAX ' + m.group(1), ap_de(0) if aps else ap_cond, in_de(0)])
                 for k, v in sorted(do_lin.items()):
                     d = ' '.join(v)
                     if not DOSIS.search(d): continue
                     cerca = min(ags, key=lambda x: abs(x[0] - k))[1] if ags else ''
-                    usos.append([uso, cerca, d])
+                    usos.append([uso, cerca, d, ap_de(k), in_de(k)])
             if 'Plazos de Seguridad' in txt or 'Condiciones Generales' in txt: en_usos = False if not cab or fin < pg.height else en_usos
-    return usos
+        plazos = leer_plazos(pdf)
+    return usos, plazos
 
 
 def num(s): return float(s.replace(',', '.'))
@@ -157,6 +194,7 @@ def main():
             idc = id_cultivo(c); ids = productos_de(idc); por_cultivo[c] = ids
             print(c, idc, len(ids), flush=True)
     todos = sorted(set().union(*por_cultivo.values()), key=int)
+    if os.environ.get('TODOS'): todos = sorted(prod.keys(), key=int)
     if len(sys.argv) > 3: todos = sys.argv[3].split(',')
     print('fichas a leer', len(todos), flush=True)
     relevantes = {norm(c) for c in CULTIVOS}
@@ -167,27 +205,28 @@ def main():
             b = get(f'{B}/Productos/ExportFichaProductoPdfGet?idProducto={pid}', binary=True)
             with open(ruta, 'wb') as f: f.write(b)
         with open(ruta, 'rb') as f: b = f.read()
-        try: return pid, leer_usos(b), None
-        except Exception as e: return pid, [], str(e)
+        try: us, pl = leer_usos(b); return pid, us, pl, None
+        except Exception as e: return pid, [], {}, str(e)
 
     salida = []; errores = 0
     with cf.ThreadPoolExecutor(6) as ex:
-        for n, (pid, usos, err) in enumerate(ex.map(ficha, todos), 1):
+        for n, (pid, usos, plazos, err) in enumerate(ex.map(ficha, todos), 1):
             if err: errores += 1
             p = prod.get(pid, {})
             u = {}
-            for uso, ag, d in usos:
+            for uso, ag, d, nap, inter in usos:
                 # una celda USO puede listar varios cultivos separados por comas
                 for cu in [x.strip() for x in re.split(r',\s*(?=[A-ZÁÉÍÓÚ])', uso)]:
-                    if norm(cu) not in relevantes: continue
+                    cu = re.sub(r'\s*\(.*$', '', cu).strip()
+                    if not cu or (not os.environ.get('TODOS') and norm(cu) not in relevantes): continue
                     for m in DOSIS.finditer(d):
                         a = num(m.group(1)); bmax = num(m.group(2)) if m.group(2) else a
                         if d.startswith('MAX '): a = 0.0  # solo se conoce la dosis máxima
                         un = (m.group(3).lower().replace('gr', 'g') + '/' + m.group(4).lower().replace(' ', ''))
-                        u.setdefault(cu, []).append([ag[:60], a, bmax, un])
+                        u.setdefault(cu, []).append([ag[:60], a, bmax, un] + ([nap or 0, inter] if inter else [nap] if nap else []))
             salida.append({'id': int(pid), 'r': p.get('NumRegistro', ''), 'n': p.get('Nombre', ''), 'f': p.get('Formulado', ''), 'e': p.get('Estado', ''),
                            'cad': p.get('StrFechaCaducidad', ''), 'lv': p.get('StrFechaLimiteVenta', ''),
-                           'c': sorted(c for c, ids in por_cultivo.items() if pid in ids), 'u': u})
+                           'c': sorted(set(c for c, ids in por_cultivo.items() if pid in ids) | set(u)), 'u': u, **({'ps': plazos} if plazos else {})})
             if n % 50 == 0: print('leídas', n, 'errores', errores, flush=True)
     ya = {str(x['id']) for x in salida}
     for pid, p in prod.items():  # resto del Registro: para reconocer cualquier producto de un albarán
