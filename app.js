@@ -2,7 +2,7 @@
 (function () {
   // ---------- Constantes ----------
   const KEY = 'cuadernoCampo.v1';
-  const VERSION = '2.0.7';
+  const VERSION = '2.0.8';
   const TIPOS_LABOR = ['Labrado', 'Siembra', 'Abonado', 'Tratamiento', 'Rodillo', 'Cosecha', 'Empacado', 'Otro'];
   const CON_DOSIS = ['Siembra', 'Abonado', 'Tratamiento'];
   const UNIDADES = ['kg/ha', 'L/ha', 'g/ha', 'cc/ha', 'kg', 'L'];
@@ -1274,7 +1274,7 @@
     if (pre.valores && pre.valores.laboreoPorFinca) Object.assign(lpf, pre.valores.laboreoPorFinca);
     let lpfClave = '';
     function pintarLpf(v, form) {
-      const anc = form.querySelector('[data-pair="laboreoSiembra"]'); if (!anc) return;
+      const anc = form.querySelector('.field[data-k="laboreoSiembra"]'); if (!anc) return;
       let box = form.querySelector('#lpf');
       form.querySelectorAll('[data-lpf]').forEach(sel => { if (sel.value) lpf[sel.dataset.lpf] = sel.value; else delete lpf[sel.dataset.lpf]; });
       const fs = v.tipo === 'Siembra' ? (v.fincas || []).map(finca).filter(Boolean) : [];
@@ -1303,7 +1303,7 @@
         { k: 'producto', label: 'Producto, variedad o apero', placeholder: 'Ej.: cultivador, vertedera', lista: () => ['Estiércol', 'Purín', 'Gallinaza'], show: v => v.tipo !== 'Siembra' && !(TIPO_DE_LABOR[v.tipo] && v.prodAlm) && (v.tipo !== 'Tratamiento' || viejo) },
         { k: 'cultivoSiembra', label: 'Cultivo sembrado', type: 'select', half: 1, opts: () => [['', 'No cambiar'], ...db.cultivos.map(c => [c, c])], show: v => v.tipo === 'Siembra', hint: 'Se asigna a las parcelas en la campaña.' },
         { k: 'variedadSiembra', label: 'Variedad', half: 1, placeholder: 'Ej.: Marcopolo', show: v => v.tipo === 'Siembra', lista: () => variedadesDe(ini.cultivoSiembra) },
-        { k: 'laboreoSiembra', label: 'Laboreo', type: 'select', half: 1, sinOpcional: 1, opts: () => [['', 'No cambiar'], ['C', 'C · Directa con complemento'], ['D', 'D · Siembra directa'], ['T', 'T · Tradicional']], show: v => v.tipo === 'Siembra' },
+        { k: 'laboreoSiembra', label: 'Laboreo', type: 'select', sinOpcional: 1, opts: () => [['', 'No cambiar'], ['C', 'C · Directa con complemento'], ['D', 'D · Siembra directa'], ['T', 'T · Tradicional']], show: v => v.tipo === 'Siembra' },
         { k: 'dosis', label: 'Dosis', type: 'num', half: 1, show: conDosis },
         { k: 'unidad', label: 'Unidad', type: 'select', half: 1, opts: () => UNIDADES.map(u => [u, u]), show: conDosis },
         { k: 'registro', label: 'Nº de registro', half: 1, show: v => trat(v) && !v.prodAlm, placeholder: 'Registro del producto' },
