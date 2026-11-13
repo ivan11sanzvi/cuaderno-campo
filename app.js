@@ -2,7 +2,7 @@
 (function () {
   // ---------- Constantes ----------
   const KEY = 'cuadernoCampo.v1';
-  const VERSION = '2.1.0';
+  const VERSION = '2.2.0';
   const TIPOS_LABOR = ['Labrado', 'Siembra', 'Abonado', 'Tratamiento', 'Rodillo', 'Cosecha', 'Empacado', 'Otro'];
   const CON_DOSIS = ['Siembra', 'Abonado', 'Tratamiento'];
   const UNIDADES = ['kg/ha', 'L/ha', 'g/ha', 'cc/ha', 'kg', 'L'];
@@ -2045,7 +2045,8 @@
       .catch(e => { fitosP = null; throw e; }));
   }
   let FITOS = null; // se rellena al cargar
-  const regProducto = p => (p && p.regId && FITOS) ? FITOS.porId.get(p.regId) : null;
+  // Por id; si el Ministerio le ha cambiado el id, por su nº de registro (ES-…), que no cambia
+  const regProducto = p => { if (!p || !FITOS) return null; const r = p.regId && FITOS.porId.get(p.regId); if (r) return r; if (!p.registro) return null; if (!FITOS.porReg) FITOS.porReg = new Map(FITOS.productos.filter(x => x.r).map(x => [norm(x.r), x])); return FITOS.porReg.get(norm(p.registro)) || null; };
   // Con qué cultivos del Registro se compara cada cultivo de la app
   // (también la categoría general: «Herbáceas extensivas» incluye cereales, leguminosas, forrajeras y oleaginosas)
   const HE = 'Herbáceas extensivas', HI = 'Herbáceas intensivas';

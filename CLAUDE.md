@@ -70,7 +70,7 @@ Habla con el usuario en español, con lenguaje sencillo y sin tecnicismos: es ag
 
 ## Fitosanitarios y normativa
 - `fitos.json` se genera con `herramientas/actualizar_fitos.py`. Lee el Registro del MAPA (`servicio.mapa.gob.es/regfiweb`): la lista de productos de cada cultivo y la tabla «Usos y Dosis Autorizados» de cada ficha PDF.
-- `fitos.json` trae **todos** los productos del Registro (3.103) para reconocer cualquier albarán. Solo los de los cultivos de la explotación (y de las categorías generales «Herbáceas extensivas/intensivas», «Rastrojeras» y «Márgenes de cultivos») llevan `c` (cultivos autorizados) y `u` (dosis).
+- `fitos.json` (≈2,8 MB) trae **todos** los productos del Registro (3.107) con los usos de **todos** sus cultivos (570), leídos de las fichas con `TODOS=1`. `regProducto` busca por `regId` y, si el Ministerio cambió el id, por el nº de registro.
 - Los cultivos de la app se comparan con los del Registro mediante `CULTIVO_REG`. Un cultivo de campo cuenta también como «Herbáceas extensivas»; el anís y el cilantro, como «Herbáceas intensivas». El titarro no está en el Registro: se compara con almorta y leguminosas de grano.
 - En una labor de Tratamiento el producto sale **solo del almacén** del titular. Se comprueban la autorización en el cultivo, la dosis máxima, el estado y la caducidad, y si hay existencias suficientes. Si hay problemas se pide confirmar, y la labor guarda `avisos` y sale marcada «⚠ Revisar normativa».
 - Cada uso es `[agente, dosisMín, dosisMáx, unidad, nºAplicaciones?, intervaloDías?]` y el producto lleva `ps` (plazo de seguridad en días por cultivo; null = no procede). Se regenera con `TODOS=1` para leer las fichas de todos los productos y todos los cultivos.
