@@ -2,7 +2,7 @@
 (function () {
   // ---------- Constantes ----------
   const KEY = 'cuadernoCampo.v1';
-  const VERSION = '2.2.0';
+  const VERSION = '2.2.1';
   const TIPOS_LABOR = ['Labrado', 'Siembra', 'Abonado', 'Tratamiento', 'Rodillo', 'Cosecha', 'Empacado', 'Otro'];
   const CON_DOSIS = ['Siembra', 'Abonado', 'Tratamiento'];
   const UNIDADES = ['kg/ha', 'L/ha', 'g/ha', 'cc/ha', 'kg', 'L'];
@@ -2423,9 +2423,14 @@
       pintarArch(); pintarLineas(); pintarAlbs(); pintarCot();
       form.addEventListener('input', e => {
         const row = e.target.closest('.linea');
-        if (row && (e.target.matches('[data-c]') || e.target.matches('[data-p]'))) {
-          const c = parseNum(row.querySelector('[data-c]').value, true), p = parseNum(row.querySelector('[data-p]').value);
-          if (c > 0 && p > 0) row.querySelector('[data-i]').value = numStr(Math.round(c * p * 100) / 100);
+        // Cantidad + precio → importe; cantidad + importe → precio. Manda el último de los dos que hayas escrito.
+        if (row && e.target.matches('[data-c], [data-p], [data-i]')) {
+          if (e.target.matches('[data-p]')) row.dataset.manda = 'p'; else if (e.target.matches('[data-i]')) row.dataset.manda = 'i';
+          const ip = row.querySelector('[data-p]'), ii = row.querySelector('[data-i]');
+          const c = parseNum(row.querySelector('[data-c]').value, true), p = parseNum(ip.value), im = parseNum(ii.value, true);
+          const manda = row.dataset.manda || (p > 0 ? 'p' : 'i');
+          if (manda === 'p' && c > 0 && p > 0) ii.value = numStr(Math.round(c * p * 100) / 100);
+          else if (manda === 'i' && c > 0 && im > 0) ip.value = numStr(Math.round(im / c * 10000) / 10000);
         }
         if (esFac && (e.target.id === 'dBase' || e.target.id === 'dIva')) {
           const b = parseNum(el.querySelector('#dBase').value, true), iv = parseNum(el.querySelector('#dIva').value);

@@ -40,6 +40,7 @@ Habla con el usuario en español, con lenguaje sencillo y sin tecnicismos: es ag
 - `db.ajustes` guarda las regularizaciones de existencias.
 - El inventario es **por titular**: entradas de albaranes − `labor.consumo` + ajustes. En `movimientosProducto(pid, tit)`, `null` significa todos los titulares y `''` sin titular.
 - Las fotos y los PDF van en IndexedDB (`cuadernoCampoArchivos`, almacén `archivos`). Las fotos se reducen a 1800 px. La copia de seguridad JSON los incluye en base64 (`archivos`).
+- En cada línea, cantidad + precio calculan el importe y cantidad + importe calculan el precio (manda el último de los dos que se escribió, `row.dataset.manda`).
 - Una factura cuadra si la base (sin IVA) coincide con la suma de sus albaranes (±0,50 €) y las cantidades por producto también.
 
 ## Explotación: agricultores y maquinaria
