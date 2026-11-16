@@ -2,7 +2,7 @@
 (function () {
   // ---------- Constantes ----------
   const KEY = 'cuadernoCampo.v1';
-  const VERSION = '2.2.1';
+  const VERSION = '2.3.0';
   const TIPOS_LABOR = ['Labrado', 'Siembra', 'Abonado', 'Tratamiento', 'Rodillo', 'Cosecha', 'Empacado', 'Otro'];
   const CON_DOSIS = ['Siembra', 'Abonado', 'Tratamiento'];
   const UNIDADES = ['kg/ha', 'L/ha', 'g/ha', 'cc/ha', 'kg', 'L'];
@@ -2352,6 +2352,126 @@
     });
   }
 
+  // ---------- Leer albaranes y facturas (sin IA, dentro del móvil) ----------
+  // PDF con texto: pdf.js. Foto o PDF escaneado: Tesseract (reconocimiento de letras en español). Luego, reglas.
+  const cargarScript = src => new Promise((ok, ko) => { if (document.querySelector(`script[src="${src}"]`)) { ok(); return; } const sc = document.createElement('script'); sc.src = src; sc.onload = ok; sc.onerror = () => ko(new Error('script')); document.head.appendChild(sc); });
+  let ocrWorker = null, ocrProgreso = null;
+  async function textoDeImagen(fuente) {
+    await cargarScript('vendor/tesseract/tesseract.min.js');
+    if (!ocrWorker) {
+      ocrWorker = await window.Tesseract.createWorker('spa', 1, { workerPath: 'vendor/tesseract/worker.min.js', corePath: 'vendor/tesseract/', langPath: 'vendor/tesseract', workerBlobURL: false, logger: m => { if (ocrProgreso && m.status === 'recognizing text') ocrProgreso(m.progress); } });
+      await ocrWorker.setParameters({ preserve_interword_spaces: '1', tessedit_pageseg_mode: '6' });
+    }
+    // escala de grises y más contraste: se lee mejor
+    let img = fuente;
+    if (!(fuente instanceof HTMLCanvasElement)) { img = await createImageBitmap(fuente); }
+    const k = Math.min(2.2, 2400 / Math.max(img.width, 1)); const cv = document.createElement('canvas'); cv.width = Math.round(img.width * k); cv.height = Math.round(img.height * k);
+    const cx = cv.getContext('2d'); cx.filter = 'grayscale(1) contrast(1.4)'; cx.drawImage(img, 0, 0, cv.width, cv.height); cx.filter = 'none';
+    // borrar las líneas de las tablas: confunden al lector y se pierden columnas
+    const W = cv.width, H = cv.height, id = cx.getImageData(0, 0, W, H), dd = id.data, largo = Math.round(Math.min(W, H) * 0.06);
+    const osc = i => dd[i * 4] < 140, blanco = i => { dd[i * 4] = dd[i * 4 + 1] = dd[i * 4 + 2] = 255; };
+    for (let y = 0; y < H; y++) { let run = 0; for (let x = 0; x <= W; x++) { if (x < W && osc(y * W + x)) run++; else { if (run > largo) for (let z = x - run; z < x; z++) blanco(y * W + z); run = 0; } } }
+    for (let x = 0; x < W; x++) { let run = 0; for (let y = 0; y <= H; y++) { if (y < H && osc(y * W + x)) run++; else { if (run > largo) for (let z = y - run; z < y; z++) blanco(z * W + x); run = 0; } } }
+    cx.putImageData(id, 0, 0);
+    const r = await ocrWorker.recognize(cv);
+    return r.data.text || '';
+  }
+  async function textoDePDF(blob) {
+    await cargarScript('vendor/pdfjs/pdf.min.js');
+    const pdfjs = window.pdfjsLib; pdfjs.GlobalWorkerOptions.workerSrc = 'vendor/pdfjs/pdf.worker.min.js';
+    const pdf = await pdfjs.getDocument({ data: await blob.arrayBuffer() }).promise;
+    let txt = '';
+    for (let i = 1; i <= Math.min(pdf.numPages, 4); i++) {
+      const pg = await pdf.getPage(i); const tc = await pg.getTextContent();
+      const its = tc.items.filter(it => it.str && it.str.trim()).map(it => ({ s: it.str, x: it.transform[4], y: it.transform[5] }));
+      if (its.length < 8) { // escaneado: es una imagen dentro del PDF
+        const vp = pg.getViewport({ scale: 2.2 }); const cv = document.createElement('canvas'); cv.width = vp.width; cv.height = vp.height;
+        await pg.render({ canvasContext: cv.getContext('2d'), viewport: vp }).promise; txt += await textoDeImagen(cv) + '\n'; continue;
+      }
+      its.sort((a, b) => b.y - a.y || a.x - b.x);
+      const filas = []; its.forEach(it => { const f = filas.find(r => Math.abs(r.y - it.y) < 3); if (f) f.its.push(it); else filas.push({ y: it.y, its: [it] }); });
+      txt += filas.map(f => f.its.sort((a, b) => a.x - b.x).map(x => x.s.trim()).join('   ')).join('\n') + '\n';
+    }
+    return txt;
+  }
+  // Números escritos en un papel: «1.000,50», «2500,00», «0,450», «2500.00». Sin códigos (ES-00599, B12345678) ni fechas.
+  function numerosDe(lin) {
+    const out = []; const re = /\d[\d.,]*/g; let m;
+    while ((m = re.exec(lin))) {
+      let t = m[0].replace(/[.,]+$/, ''); const a = lin[m.index - 1] || ' ', b = lin[m.index + m[0].length] || ' ';
+      if (/[A-Za-zÁÉÍÓÚÑáéíóúñ\-\/]/.test(a) || /^[\-\/]\d/.test(lin.slice(m.index + m[0].length, m.index + m[0].length + 2))) continue;
+      if (/^\d{1,2}[.\/-]\d{1,2}[.\/-]\d{2,4}$/.test(t)) continue;
+      let v;
+      if (t.includes(',')) v = +t.replace(/\./g, '').replace(',', '.');
+      else if (/^\d{1,3}(\.\d{3})+$/.test(t)) v = +t.replace(/\./g, '');
+      else v = +t;
+      if (!Number.isFinite(v)) continue;
+      out.push({ v, i: m.index, txt: m[0], pct: b === '%' || /^\s*%/.test(lin.slice(m.index + m[0].length, m.index + m[0].length + 2)) });
+    }
+    return out;
+  }
+  const RE_NO_LINEA = /\b(total|subtotal|base\s*imp|i\.?v\.?a|suma|a pagar|vencim|forma de pago|iban|retenci|recargo|portes|tel[eé]f|c\.?p\.?|n\.?i\.?f|c\.?i\.?f|domicilio|p[aá]gina)\b/i;
+  function analizarDocumento(txt, tipo) {
+    const lineas = txt.split('\n').map(x => x.replace(/\s+/g, ' ').trim()).filter(Boolean);
+    const C = compacto(txt);
+    const R = { lineas: [], sinEntender: [] };
+    // fecha
+    for (const l of lineas) { const m = l.match(/\b(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2}|\d{4})\b/); if (m) { let y = +m[3]; if (y < 100) y += 2000; const iso = `${y}-${String(+m[2]).padStart(2, '0')}-${String(+m[1]).padStart(2, '0')}`; if (y > 2000 && +m[2] <= 12 && +m[1] <= 31 && iso <= new Date(Date.now() + 60 * 864e5).toISOString().slice(0, 10)) { R.fecha = iso; break; } } }
+    // número del documento
+    const pal = tipo === 'factura' ? 'factura' : 'albar[aá]n';
+    const mNum = txt.match(new RegExp(`(?:${pal}|n[ºo°]\\.?\\s*(?:de\\s+)?${pal}|${pal}\\s*n[ºo°]\\.?|n[uú]m(?:ero)?\\.?\\s*(?:de\\s+)?${pal}|${pal}\\s*n[uú]m(?:ero)?\\.?)\\s*[:#.\\-]?\\s*([A-Z]{0,4}[\\-\\/ ]?\\d[\\w\\-\\/]{1,15})`, 'i')) || txt.match(/\bn[ºo°]\.?\s*[:#]?\s*([A-Z]{0,4}[\-\/]?\d[\w\-\/]{1,15})/i);
+    const mNum2 = !mNum && txt.match(new RegExp(`(?:${pal})\\s*\\S{0,3}\\s*[:#]\\s*([A-Z]{0,4}[\\-\\/]?\\d[\\w\\-\\/]{1,15})`, 'i'));
+    if (mNum || mNum2) R.numero = (mNum || mNum2)[1].trim().toUpperCase();
+    // titular: NIF o nombre completo de la ficha; si no, el nombre corto si es el único que aparece
+    const fichas = db.titulares.filter(f => (f.nif && C.includes(compacto(f.nif))) || (f.nombreCompleto && compacto(f.nombreCompleto).length > 6 && C.includes(compacto(f.nombreCompleto))));
+    if (fichas.length === 1) R.titular = fichas[0].nombre;
+    else { const ts = titularesTodos().filter(t => compacto(t).length >= 4 && new RegExp(`\\b${norm(t)}\\b`).test(norm(txt))); if (ts.length === 1) R.titular = ts[0]; }
+    // proveedor: uno que ya hayas usado, o una empresa de la cabecera
+    const conocidos = [...new Set(db.documentos.map(x => x.proveedor).filter(Boolean))];
+    R.proveedor = conocidos.filter(p => compacto(p).length >= 4 && C.includes(compacto(p))).sort((a, b) => b.length - a.length)[0] || '';
+    if (!R.proveedor) { const emp = lineas.slice(0, 10).find(l => /\b(s\.?\s?l\.?u?|s\.?\s?a\.?|s\.?\s?coop|sdad|cooperativa|soc\.?\s*coop|s\.?a\.?t\.?|agro\w*)\b/i.test(l) && !(R.titular && norm(l).includes(norm(R.titular)))); if (emp) { const m = emp.match(/^(.*?\b(?:s\.?\s?l\.?u?|s\.?\s?a\.?|s\.?\s?coop\.?|soc\.?\s*coop\.?|sdad\.?\s*coop\.?|s\.?a\.?t\.?(?:\s*n?º?\s*\d+)?)\.?)(?=\s|$)/i); R.proveedor = (m ? m[1] : emp).replace(/\b(c\.?i\.?f|n\.?i\.?f)\b.*$/i, '').replace(/\b(albar[aá]n|factura)\b.*$/i, '').replace(/[^\wÁÉÍÓÚÑáéíóúñ .,&-]/g, '').trim().slice(0, 60); } }
+    // productos
+    for (const l of lineas) {
+      if (RE_NO_LINEA.test(l)) continue;
+      const ns = numerosDe(l).filter(n => !n.pct); const pcts = numerosDe(l).filter(n => n.pct).map(n => n.v);
+      let tri = null;
+      for (let a = 0; a < ns.length && !tri; a++) for (let b = a + 1; b < ns.length && !tri; b++) for (let c = ns.length - 1; c > b && !tri; c--) {
+        const q = ns[a].v, pr = ns[b].v, im = ns[c].v; if (!(q > 0 && pr > 0 && im > 0)) continue;
+        const tol = Math.max(0.02, im * 0.006);
+        if (Math.abs(q * pr - im) <= tol) tri = { q: ns[a], p: ns[b], i: ns[c] };
+        else if (pcts.some(d => Math.abs(q * pr * (1 - d / 100) - im) <= tol)) tri = { q: ns[a], p: ns[b], i: ns[c], dto: pcts.find(d => Math.abs(q * pr * (1 - d / 100) - im) <= tol) };
+      }
+      const uni = n => (l.slice(n.i + n.txt.length, n.i + n.txt.length + 6).match(/^\s*(l\b|lts?\b|litros?|kg\b|kgs\b|kilos?|t\b|tn\b|tm\b|uds?\b|unid)/i) || [])[1] || '';
+      if (!tri && ns.length >= 2) {
+        // falta una columna: precio e importe → cantidad (si sale redonda); cantidad con unidad e importe → precio
+        const a = ns[ns.length - 2], b = ns[ns.length - 1], qq = a.v > 0 ? b.v / a.v : 0;
+        if (b.v > a.v && /,\d/.test(a.txt) && qq >= 1 && Math.abs(qq - Math.round(qq)) <= 0.002 * qq) tri = { q: { v: Math.round(qq), i: a.i, txt: '' }, p: a, i: b };
+        else { const qn = ns.slice(0, -1).filter(n => uni(n)).pop(); if (qn && b.i > qn.i && qn.v > 0) tri = { q: qn, p: { v: b.v / qn.v, i: b.i, txt: '' }, i: b }; }
+      }
+      const reg = (() => { if (!FITOS) return null; const m = l.match(/\bES[\s.\-]?0*(\d{3,5})\b/i) || l.match(/\breg(?:istro)?\.?\s*(?:n[ºo°]\.?)?\s*:?\s*(?:ES[\s\-]?)?0*(\d{4,5})\b/i); if (!m) return null; return FITOS.productos.find(p => String(p.r).toUpperCase().replace(/[^A-Z0-9]/g, '').replace(/^ES0*/, '') === m[1].replace(/^0+/, '')) || null; })();
+      if (!tri && !reg) continue;
+      // cuál es la cantidad: la que lleva la unidad detrás (L, kg…); si no, la primera
+      let q = tri ? tri.q : ns[0], p = tri ? tri.p : null; if (tri && !uni(q) && uni(p)) { const x = q; q = p; p = x; }
+      const u = norm(uni(q)); const base = /^(l|lt|lts|litro|litros)$/.test(u) ? 'L' : 'kg';
+      const desc = l.slice(0, (tri ? Math.min(tri.q.i, tri.p.i) : ns.length ? ns[0].i : l.length)).replace(/[|*_—]/g, ' ').trim().replace(/^[\w\-.\/]*\d[\w\-.\/]*\s+/, '').replace(/\s+/g, ' ').trim();
+      let r = null;
+      if (reg) { const ya = db.productos.find(x => x.regId === reg.id || (x.registro && norm(x.registro) === norm(reg.r))); r = ya ? { p: ya } : { nuevo: { nombre: reg.n, tipo: 'Fitosanitario', unidad: unidadDeFormulado(reg.f), regId: reg.id, registro: reg.r, formulado: reg.f } }; }
+      if (!r) { const cl = compacto(l); const mio = db.productos.filter(x => compacto(x.nombre).length >= 4 && cl.includes(compacto(x.nombre))).sort((a, b) => b.nombre.length - a.nombre.length)[0]; if (mio) r = { p: mio }; }
+      if (!r && FITOS) { const cl = compacto(l); const f = FITOS.productos.filter(x => x.e === 'Vigente' && compacto(x.n).length >= 5 && cl.includes(compacto(x.n))).sort((a, b) => b.n.length - a.n.length)[0]; if (f) r = { nuevo: { nombre: f.n, tipo: 'Fitosanitario', unidad: unidadDeFormulado(f.f), regId: f.id, registro: f.r, formulado: f.f } }; }
+      if (!r && desc.length >= 3) r = productoParaLinea({ nombre: desc, base });
+      if (!r || !tri) { R.sinEntender.push(l); continue; }
+      R.lineas.push({ r, cantidad: q.v, precio: p ? p.v : null, importe: tri.i.v, dto: tri.dto || null, texto: l });
+    }
+    { // base, IVA y total (en la factura rellenan sus casillas; en el albarán sirven para comprobar la suma)
+      const num = re => { const m = txt.match(re); if (!m) return null; const n = numerosDe(m[1])[0]; return n ? n.v : null; };
+      R.base = num(/base\s*imponible[^\d\n]{0,25}([\d.,]+)/i);
+      R.iva = num(/i\.?v\.?a\.?[^\d%\n]{0,20}(\d{1,2}(?:[.,]\d+)?)\s*%/i);
+      const tot = [...txt.matchAll(/total(?:\s*(?:factura|a pagar|eur|€|importe))?[^\d\n]{0,20}([\d.,]+)/gi)].map(m => (numerosDe(m[1])[0] || {}).v).filter(x => x > 0);
+      if (tot.length) R.total = Math.max(...tot);
+    }
+    return R;
+  }
+
   // Albarán o factura
   function formDocumento(tipo, id, pre) {
     const doc = id ? db.documentos.find(x => x.id === id) : null;
@@ -2369,7 +2489,7 @@
       <div class="grid2"><div class="field"><label for="dProv">Proveedor</label><input id="dProv" value="${esc(v.proveedor)}" list="dl_prov" autocomplete="off" placeholder="Ej.: Cooperativa"><datalist id="dl_prov">${proveedores.map(t => `<option value="${esc(t)}">`).join('')}</datalist></div>
       <div class="field"><label for="dNum">Nº de ${esFac ? 'factura' : 'albarán'}</label><input id="dNum" value="${esc(v.numero)}" autocomplete="off"></div></div>
       <div class="field"><label>Foto o PDF</label><div id="dArch" class="archivos"></div>
-        <div class="btns" style="justify-content:flex-start"><label class="btn sm">${ico.camara} Hacer foto<input type="file" accept="image/*" capture="environment" hidden data-sube></label><label class="btn sm">${ico.clip} Subir foto o PDF<input type="file" accept="image/*,application/pdf" multiple hidden data-sube></label></div></div>
+        <div class="btns" style="justify-content:flex-start"><label class="btn sm">${ico.camara} Hacer foto<input type="file" accept="image/*" capture="environment" hidden data-sube></label><label class="btn sm">${ico.clip} Subir foto o PDF<input type="file" accept="image/*,application/pdf" multiple hidden data-sube></label><button type="button" class="btn sm primary" data-leer hidden>Leer el documento</button></div><div id="dLeer" class="leer-res"></div></div>
       ${esFac ? `<div class="field"><label>Albaranes que incluye</label><div id="dAlbs"></div></div>` : ''}
       <div class="field"><label>${esFac ? 'Productos de la factura (opcional, para comparar cantidades)' : 'Productos'}</label><div id="dLineas"></div><button type="button" class="btn sm" data-addl>${ico.plus} Añadir producto</button></div>
       ${esFac ? `<div class="grid3"><div class="field"><label for="dBase">Base (sin IVA)</label><input id="dBase" inputmode="decimal" value="${esc(numStr(v.base))}" autocomplete="off"></div><div class="field"><label for="dIva">IVA %</label><input id="dIva" inputmode="decimal" value="${esc(numStr(v.iva))}" autocomplete="off"></div><div class="field"><label for="dTotal">Total</label><input id="dTotal" inputmode="decimal" value="${esc(numStr(v.total))}" autocomplete="off"></div></div>
@@ -2393,6 +2513,7 @@
         const cont = el.querySelector('#dArch');
         const items = [];
         for (const aid of v.archivos) { let a = nuevosArch.find(x => x.id === aid); if (!a) { try { a = await archivoLeer(aid); } catch (e) { a = null; } } items.push({ id: aid, a }); }
+        const bl = el.querySelector('[data-leer]'); if (bl) bl.hidden = !items.length;
         cont.innerHTML = items.length ? items.map(({ id: aid, a }) => `<div class="arch">${a && a.tipo.startsWith('image/') ? `<img src="${URL.createObjectURL(a.blob)}" alt="">` : `<span class="arch-pdf">${a ? 'PDF' : '?'}</span>`}<span class="arch-n">${esc(a ? a.nombre : 'No está en este teléfono')}</span><button type="button" class="btn sm" data-ver="${aid}">Ver</button><button type="button" class="iconbtn" data-quitar="${aid}" aria-label="Quitar archivo">${ico.x}</button></div>`).join('') : '<p class="note" style="margin:0">Sin foto ni PDF todavía.</p>';
       };
       const pintarLineas = () => {
@@ -2420,6 +2541,52 @@
           ${!c.conPrecio ? `<p class="small muted" style="margin:6px 0 0">Los albaranes no tienen precios: ${c.hayLineas ? 'se comparan solo las cantidades de cada producto.' : 'añade los productos de la factura para comparar cantidades.'}</p>` : c.base == null ? '<p class="small muted" style="margin:6px 0 0">Escribe la base o el total con IVA para comparar.</p>' : ''}`;
       };
       const todo = () => { leer(); pintarCot(); };
+      // Lee la foto o el PDF y rellena lo que esté vacío; tú lo revisas antes de guardar
+      const origLeer = new Map();
+      async function leerDocumento() {
+        const box = el.querySelector('#dLeer'), btn = el.querySelector('[data-leer]');
+        const ids = v.archivos.slice(); if (!ids.length) return;
+        leer(); btn.disabled = true;
+        const estado = t => { box.innerHTML = `<div class="small">${t}</div>`; };
+        try {
+          estado('Preparando…'); FITOS = await cargarFitos().catch(() => FITOS);
+          let txt = '';
+          for (const [k, aid] of ids.entries()) {
+            let a = nuevosArch.find(x => x.id === aid); const orig = origLeer.get(aid);
+            if (!a) { try { a = await archivoLeer(aid); } catch (err) { a = null; } }
+            const blob = orig || (a && a.blob); if (!blob) continue;
+            const pref = ids.length > 1 ? `Documento ${k + 1} de ${ids.length}: ` : '';
+            if (/pdf/.test(blob.type || (a && a.tipo) || '')) { estado(pref + 'Leyendo el PDF…'); ocrProgreso = x => estado(`${pref}Reconociendo las letras… ${Math.round(x * 100)} %`); txt += await textoDePDF(blob) + '\n'; }
+            else { estado(pref + 'Reconociendo las letras de la foto… (la primera vez tarda más: descarga el español)'); ocrProgreso = x => estado(`${pref}Reconociendo las letras… ${Math.round(x * 100)} %`); txt += await textoDeImagen(blob) + '\n'; }
+          }
+          ocrProgreso = null;
+          const R = analizarDocumento(txt, tipo); const hecho = [];
+          const pon = (sel, val, campo, txtCampo) => { const i = el.querySelector(sel); if (val && i && (!i.value || (campo === 'fecha' && i.value === hoyISO()))) { i.value = campo === 'fecha' ? val : val; hecho.push(txtCampo); } };
+          pon('#dTit', R.titular, 'titular', 'titular'); pon('#dFecha', R.fecha, 'fecha', 'fecha'); pon('#dProv', R.proveedor, 'proveedor', 'proveedor'); pon('#dNum', R.numero, 'numero', 'nº');
+          if (esFac) { if (R.base != null) pon('#dBase', numStr(R.base), 'base', 'base'); if (R.iva != null && R.iva <= 30) { el.querySelector('#dIva').value = numStr(R.iva); hecho.push('IVA'); } if (R.total != null) pon('#dTotal', numStr(R.total), 'total', 'total'); }
+          leer();
+          let nl = 0;
+          R.lineas.forEach(x => {
+            let p = x.r.p; if (!p) { p = db.productos.find(y => norm(y.nombre) === norm(x.r.nuevo.nombre)) || Object.assign({ id: uid() }, x.r.nuevo); if (!db.productos.includes(p)) db.productos.push(p); }
+            if (p.tipo === 'Abono' && p.n == null) { const ri = riquezaDeNombre(p.nombre); if (ri) Object.assign(p, { n: ri[0], p: ri[1], k: ri[2] }); }
+            if (v.lineas.some(y => y.productoId === p.id && Math.abs((+y.cantidad || 0) - x.cantidad) < 1e-6)) return;
+            v.lineas.push({ productoId: p.id, cantidad: x.cantidad, precio: x.precio != null ? Math.round(x.precio * 10000) / 10000 : null, importe: x.importe }); nl++;
+          });
+          if (nl) guardar(false);
+          pintarLineas(); pintarAlbs(); todo(); pintarTotal();
+          const nada = !hecho.length && !nl;
+          // ¿cuadra lo leído con la base del documento?
+          const suma = Math.round(sum(R.lineas, x => x.importe) * 100) / 100; const baseDoc = R.base != null ? R.base : (R.total && R.iva != null ? Math.round(R.total / (1 + R.iva / 100) * 100) / 100 : null);
+          const cuadra = baseDoc != null && R.lineas.length ? (Math.abs(suma - baseDoc) <= 0.5 ? `<div class="pos">✓ Los productos leídos suman ${eur(suma, 2)}, igual que la base del documento.</div>` : `<div class="neg"><b>⚠ Los productos leídos suman ${eur(suma, 2)} y la base del documento es ${eur(baseDoc, 2)}:</b> falta algún producto o hay algún número mal leído.</div>`) : '';
+          const esFoto = !ids.every(aid => { const a = nuevosArch.find(x => x.id === aid); return a && /pdf/.test(a.tipo); });
+          box.innerHTML = `<div class="card pad small leer-ok">${nada ? '<b class="neg">No he podido sacar datos de este documento.</b> Rellénalo a mano o prueba con una foto más recta y con más luz.' : `<b>He leído: ${[nl ? `${nl} producto${nl === 1 ? '' : 's'}` : '', ...hecho].filter(Boolean).join(', ')}.</b> Revisa cada dato antes de guardar.`}${cuadra}
+            ${esFoto && (R.sinEntender.length || nada || (cuadra && cuadra.includes('neg'))) ? '<div class="muted" style="margin-top:4px">Para que lea mejor: foto de cerca, recta, con buena luz y sin sombras. Si el proveedor te lo manda en PDF, mejor usa el PDF.</div>' : ''}
+            ${R.sinEntender.length ? `<div class="muted" style="margin-top:4px">Líneas que no he entendido (añádelas a mano si son productos):</div><ul class="notas" style="margin:2px 0 0;padding-left:18px">${R.sinEntender.slice(0, 8).map(x => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
+            <details style="margin-top:6px"><summary>Ver el texto leído</summary><pre class="leer-txt">${esc(txt.trim().slice(0, 4000))}</pre></details></div>`;
+        } catch (err) {
+          box.innerHTML = '<div class="small neg">No se ha podido leer. La primera vez hace falta cobertura para descargar el lector; después funciona sin ella.</div>';
+        } finally { btn.disabled = false; ocrProgreso = null; }
+      }
       pintarArch(); pintarLineas(); pintarAlbs(); pintarCot();
       form.addEventListener('input', e => {
         const row = e.target.closest('.linea');
@@ -2441,13 +2608,14 @@
       form.addEventListener('change', e => {
         if (e.target.matches('[data-sube]')) {
           const files = [...e.target.files]; e.target.value = '';
-          Promise.all(files.map(async f => { const pr = await prepararArchivo(f); const a = { id: uid(), nombre: pr.nombre, tipo: pr.tipo, blob: pr.blob, fecha: new Date().toISOString() }; nuevosArch.push(a); v.archivos.push(a.id); })).then(pintarArch);
+          Promise.all(files.map(async f => { const pr = await prepararArchivo(f); const a = { id: uid(), nombre: pr.nombre, tipo: pr.tipo, blob: pr.blob, fecha: new Date().toISOString() }; origLeer.set(a.id, f); nuevosArch.push(a); v.archivos.push(a.id); })).then(pintarArch);
           return;
         }
         if (e.target.id === 'dTit' || e.target.id === 'dProv') { leer(); pintarAlbs(); }
         todo(); if (e.target.matches('[data-alb]')) pintarCot();
       });
       form.addEventListener('click', e => {
+        if (e.target.closest('[data-leer]')) { leerDocumento(); return; }
         const ver = e.target.closest('[data-ver]'); if (ver) { const a = nuevosArch.find(x => x.id === ver.dataset.ver); if (a) { const u = URL.createObjectURL(a.blob); window.open(u, '_blank'); } else verArchivo(ver.dataset.ver); return; }
         const q = e.target.closest('[data-quitar]'); if (q) { v.archivos = v.archivos.filter(x => x !== q.dataset.quitar); quitarArch.push(q.dataset.quitar); pintarArch(); return; }
         const dl = e.target.closest('[data-dell]'); if (dl) { leer(); v.lineas.splice(+dl.dataset.dell, 1); pintarLineas(); pintarCot(); return; }

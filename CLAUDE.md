@@ -7,7 +7,7 @@ Habla con el usuario en español, con lenguaje sencillo y sin tecnicismos: es ag
 ## Estructura
 - `index.html`: estructura. `styles.css`: diseño (claro y oscuro). `app.js`: toda la lógica, en un único IIFE.
 - `sw.js`: service worker. **Sube `CACHE` (cuaderno-campo-vN) en cada cambio** de `app.js` o `styles.css`, si no los móviles no se actualizan. Al instalar pide todo con `cache: 'reload'` (si no, podía guardar el app.js viejo de la caché del navegador con el nombre nuevo). La app se recarga sola al activarse una versión nueva cuando no hay ventanas abiertas y avisa «App actualizada». Comprueba siempre `node --check sw.js`.
-- `vendor/`: Leaflet 1.9.4 y SheetJS 0.18.5, locales para que funcione sin cobertura.
+- `vendor/`: Leaflet 1.9.4 y SheetJS 0.18.5, locales para que funcione sin cobertura. También `vendor/pdfjs` (pdf.js 3.11.174) y `vendor/tesseract` (Tesseract.js 5.1.1 + núcleos simd/lstm + español `spa.traineddata.gz`), que solo se cargan al leer un documento; el service worker los guarda al usarlos.
 - Sin build ni dependencias: se sirve tal cual (`python3 -m http.server`).
 
 ## Datos
@@ -41,6 +41,7 @@ Habla con el usuario en español, con lenguaje sencillo y sin tecnicismos: es ag
 - El inventario es **por titular**: entradas de albaranes − `labor.consumo` + ajustes. En `movimientosProducto(pid, tit)`, `null` significa todos los titulares y `''` sin titular.
 - Las fotos y los PDF van en IndexedDB (`cuadernoCampoArchivos`, almacén `archivos`). Las fotos se reducen a 1800 px. La copia de seguridad JSON los incluye en base64 (`archivos`).
 - En cada línea, cantidad + precio calculan el importe y cantidad + importe calculan el precio (manda el último de los dos que se escribió, `row.dataset.manda`).
+- «Leer el documento» (sin IA, en el móvil): `textoDePDF` (pdf.js, junta el texto por renglones; si el PDF es escaneado lo pasa a imagen) y `textoDeImagen` (Tesseract en español, gris + contraste y **borrando las líneas de las tablas**, que si no se pierden columnas). `analizarDocumento(texto, tipo)` saca fecha, nº, proveedor (uno ya usado o la empresa S.L./S.A./Coop. de la cabecera), titular (NIF o nombre completo de la ficha), base/IVA/total y las líneas: producto por nº de registro, por nombre de tu almacén o del Registro, o nuevo (`productoParaLinea`); números con `numerosDe` y trío cantidad × precio = importe (con descuento %), o, si falta una columna, precio→cantidad redonda o cantidad con unidad→precio. Solo rellena lo vacío, avisa si la suma no cuadra con la base y enseña el texto leído.
 - Una factura cuadra si la base (sin IVA) coincide con la suma de sus albaranes (±0,50 €) y las cantidades por producto también.
 
 ## Explotación: agricultores y maquinaria
