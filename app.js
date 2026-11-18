@@ -2,7 +2,7 @@
 (function () {
   // ---------- Constantes ----------
   const KEY = 'cuadernoCampo.v1';
-  const VERSION = '2.6.1';
+  const VERSION = '2.6.2';
   const TIPOS_LABOR = ['Labrado', 'Siembra', 'Abonado', 'Tratamiento', 'Rodillo', 'Cosecha', 'Empacado', 'Otro'];
   const CON_DOSIS = ['Siembra', 'Abonado', 'Tratamiento'];
   const UNIDADES = ['kg/ha', 'L/ha', 'g/ha', 'cc/ha', 'kg', 'L'];
@@ -2402,6 +2402,8 @@
     if (a.vista === 'inventario') {
       const grupos = tit ? [tit] : (tits.length ? tits : ['']);
       let algo = false;
+      const sueltas = semillaSuelta();
+      if (sueltas.length) h += `<div class="banner"><p><b>Semilla de vuestra cosecha en la carpeta de un agricultor:</b> ${sueltas.map(x => `${fmtN(x.cantidad, 0)} kg de ${esc((producto(x.productoId) || {}).nombre || '¿?')} en <b>${esc(x.titular || 'sin titular')}</b>`).join('; ')}. Por eso, al sembrar las fincas de los demás, sale que no tienen semilla.</p><button class="btn" data-act="semillaAComun">Pasar al montón común</button></div>`;
       h += `<div class="card pad sp"><div style="min-width:0"><b>Semilla de vuestra cosecha</b><div class="small muted">Grano que guardáis para sembrar, valorado al precio de venta de esa cosecha.</div></div><button class="btn sm" data-act="semillaPropia">Guardar semilla</button></div>`;
       // Carpetas por tipo de producto; dentro, lo de cada titular (o solo el elegido arriba)
       const CARPETAS_INV = [['Fitosanitario', 'Fitosanitarios'], ['Abono', 'Abono'], ['Semilla', 'Semilla'], ['Combustible', 'Gasoil'], ['Otro', 'Otros']];
@@ -2801,6 +2803,28 @@
   }
 
   // Ficha de un producto del almacén
+  // Semilla de cosecha propia que quedó en la carpeta de un titular (por ejemplo, guardada antes de existir el «Común»)
+  const esSemillaPropia = a => +a.cantidad > 0 && (a.propia || a.motivo === 'Semilla de la cosecha propia');
+  const semillaSuelta = () => db.ajustes.filter(a => esSemillaPropia(a) && a.titular !== COMUN);
+  // Pasa esa semilla al montón común y, si el producto solo venía de vuestra cosecha, también lo que ya se sembró con ella
+  function moverSemillaAComun(a) {
+    const viejo = producto(a.productoId); if (!viejo) return;
+    const sp = a.propia || {}; const cultivo = sp.cultivo || db.cultivos.find(c => norm(viejo.nombre).includes(norm(c))) || viejo.nombre.split(' ')[0];
+    const variedad = sp.variedad || viejo.variedad || '';
+    const nombre = `${cultivo}${variedad ? ' ' + variedad : ''} de cosecha propia`;
+    let p = db.productos.find(x => x.tipo === 'Semilla' && norm(x.nombre) === norm(nombre));
+    if (!p) { p = { id: uid(), nombre, tipo: 'Semilla', unidad: viejo.unidad || 'kg' }; db.productos.push(p); }
+    p.comun = true; if (variedad) p.variedad = variedad;
+    a.productoId = p.id; a.titular = COMUN; a.propia = Object.assign({ cultivo, variedad, campana: campanaCosechaDe(a.fecha), precio: null, limpieza: null }, sp, { cultivo });
+    const comprado = db.documentos.some(d => (d.lineas || []).some(l => l.productoId === viejo.id));
+    const quedaPropia = db.ajustes.some(x => x !== a && x.productoId === viejo.id && esSemillaPropia(x) && x.titular !== COMUN);
+    if (comprado || quedaPropia || viejo.id === p.id) return;
+    db.labores.forEach(l => {
+      const its = [l, ...(l.mezcla || [])];
+      its.forEach(it => { if (it.productoId === viejo.id) { it.productoId = p.id; it.producto = p.nombre; } const c = it.consumo; if (c && c.productoId === viejo.id) { c.productoId = p.id; c.para = c.titular; c.titular = COMUN; } });
+      if (l.avisos) { l.avisos = l.avisos.filter(g => !(g.includes(`«${viejo.nombre}»`) && / solo (tiene|quedan) /.test(g))); if (!l.avisos.length) delete l.avisos; }
+    });
+  }
   function formSemillaPropia(id) {
     const a = id ? db.ajustes.find(x => x.id === id) : null; const sp = (a && a.propia) || {};
     const ts = titularesTodos(); const pa = a ? producto(a.productoId) : null;
@@ -2837,6 +2861,7 @@
         if (!p) { p = { id: uid(), nombre, tipo: 'Semilla', unidad: 'kg' }; db.productos.push(p); }
         if (comun) p.comun = true; if (varT) p.variedad = varT;
         const x = { productoId: p.id, titular: v.titular, cantidad: v.kg, fecha: v.fecha, motivo: v.motivo || 'Semilla de la cosecha propia', propia: { cultivo: v.cultivo, variedad: varT, campana: v.campana, precio: v.precio, limpieza: v.limpieza } };
+        if (a && comun && a.titular !== COMUN) { const pViejo = a.productoId; Object.assign(a, x, { titular: 'pendiente', productoId: pViejo }); moverSemillaAComun(a); a.productoId = p.id; a.titular = COMUN; return; }
         if (a) Object.assign(a, x); else db.ajustes.push(Object.assign({ id: uid() }, x));
         if (v.limpieza != null) db.ultLimpieza = v.limpieza;
       },
@@ -4188,6 +4213,12 @@
     editMaquina: b => formMaquina(b.dataset.id),
     nuevoEquipo: () => formEquipo(null),
     semillaPropia: () => formSemillaPropia(null),
+    semillaAComun: async () => {
+      const xs = semillaSuelta(); if (!xs.length) return;
+      const r = await confirmar('¿Pasar al montón común?', `Se pasarán ${xs.length === 1 ? 'esa semilla' : 'esas semillas'} a la carpeta «Común». Las siembras ya apuntadas con ${xs.length === 1 ? 'ella' : 'ellas'} pasan a gastar del común, cada una apuntada para su agricultor, y se quitan los avisos de falta de semilla.`, 'Pasar al común');
+      if (!r.ok) return;
+      xs.forEach(moverSemillaAComun); guardar(); volverA(0); render(); toast('Semilla pasada al montón común');
+    },
     cuaderno: b => { if (b.closest('.sheet')) volverA(profundidad() - 1); hojaCuaderno(b.dataset.k); },
     editEquipo: b => formEquipo(b.dataset.id),
     almTitular: b => { ui.alm.titular = b.dataset.k; render(); },
