@@ -2,7 +2,7 @@
 (function () {
   // ---------- Constantes ----------
   const KEY = 'cuadernoCampo.v1';
-  const VERSION = '2.5.2';
+  const VERSION = '2.5.3';
   const TIPOS_LABOR = ['Labrado', 'Siembra', 'Abonado', 'Tratamiento', 'Rodillo', 'Cosecha', 'Empacado', 'Otro'];
   const CON_DOSIS = ['Siembra', 'Abonado', 'Tratamiento'];
   const UNIDADES = ['kg/ha', 'L/ha', 'g/ha', 'cc/ha', 'kg', 'L'];
@@ -1170,7 +1170,7 @@
     const cands = db.productos.filter(p => p.tipo === 'Semilla' && norm(p.nombre).split(' ').join(' ').includes(cu));
     if (!cands.length) return null;
     const ex = p => p.comun ? existencias(p.id, COMUN) : sum(tits, t => Math.max(0, existencias(p.id, t)));
-    const pt = p => (p.id === prefer ? 1e9 : 0) + (variedad && norm(p.nombre).includes(norm(variedad)) ? 1e8 : 0) + Math.max(0, ex(p));
+    const pt = p => (ex(p) > 0 ? 1e10 : 0) + (variedad && norm(p.nombre).includes(norm(variedad)) ? 1e9 : 0) + (p.id === prefer ? 1e8 : 0) + Math.max(0, ex(p));
     return cands.slice().sort((a, b) => pt(b) - pt(a))[0];
   }
   // Cantidad de producto que gasta una labor en una parcela
@@ -1214,7 +1214,7 @@
     }
     const porTit = new Map();
     fs.forEach(f => { const q = gastoEnParcela(p, f, v, fs); if (q == null) { out.sinCalculo = true; return; } const t = titularConsumo(p, f.id); porTit.set(t, (porTit.get(t) || 0) + q); });
-    porTit.forEach((q, t) => { const ex = existencias(p.id, t) + (((v._propioP && v._propioP[p.id]) || {})[t] || 0); out.consumo.push({ t, q, ex }); if (q > ex + 1e-9) out.graves.push(`${t || 'El titular'} solo tiene ${fmtCant(ex, p.unidad)} de «${p.nombre}» y la labor gasta ${fmtCant(q, p.unidad)}.`); });
+    porTit.forEach((q, t) => { const ex = existencias(p.id, t) + (((v._propioP && v._propioP[p.id]) || {})[t] || 0); out.consumo.push({ t, q, ex }); if (q > ex + 1e-9) (p.tipo === 'Fitosanitario' ? out.graves : out.notas).push(`${t === COMUN ? 'En el montón común' : (t || 'El titular')} solo ${t === COMUN ? 'quedan' : 'tiene'} ${fmtCant(ex, p.unidad)} de «${p.nombre}» y la labor gasta ${fmtCant(q, p.unidad)}.`); });
     if (out.sinCalculo && v.dosis > 0) out.notas.push(`No puedo calcular cuánto se gasta: la dosis va en ${v.unidad} y el producto se mide en ${p.unidad}.`);
     return out;
   }
@@ -1273,7 +1273,7 @@
       if (p) {
         x.productoId = p.id; x.producto = p.nombre; if (p.registro) x.registro = p.registro;
         const q = gastoEnParcela(p, f, v, fs);
-        if (q != null) x.consumo = { productoId: p.id, cantidad: Math.round(q * 1000) / 1000, unidad: p.unidad, titular: titularConsumo(p, f.id) };
+        if (q != null) { x.consumo = { productoId: p.id, cantidad: Math.round(q * 1000) / 1000, unidad: p.unidad, titular: titularConsumo(p, f.id) }; if (x.consumo.titular === COMUN) x.consumo.para = titularDe(f.id); }
         const cu = cultivoDe(f.id, x.campana) || '';
         const pc = r && r.porCultivo.find(z => z.cu === cu);
         const av = [...(pc ? pc.r.graves : []), ...(pc && pc.r.porFinca ? pc.r.porFinca[f.id] || [] : []), ...(r ? r.graves.filter(g => / solo tiene /.test(g) && g.startsWith(titularConsumo(p, f.id) || 'El titular')) : [])];
@@ -1286,7 +1286,7 @@
       vs.slice(1).forEach((vi, j) => {
         const pj = producto(vi.prodAlm); if (!pj) return; const rj = rs[j + 1];
         const it = { productoId: pj.id, producto: pj.nombre, dosis: vi.dosis, unidad: vi.unidad }; if (pj.registro) it.registro = pj.registro;
-        const q = gastoEnParcela(pj, f, vi, fs); if (q != null) it.consumo = { productoId: pj.id, cantidad: Math.round(q * 1000) / 1000, unidad: pj.unidad, titular: titularConsumo(pj, f.id) };
+        const q = gastoEnParcela(pj, f, vi, fs); if (q != null) { it.consumo = { productoId: pj.id, cantidad: Math.round(q * 1000) / 1000, unidad: pj.unidad, titular: titularConsumo(pj, f.id) }; if (it.consumo.titular === COMUN) it.consumo.para = titularDe(f.id); }
         const cu = cultivoDe(f.id, x.campana) || ''; const pc = rj && rj.porCultivo.find(z => z.cu === cu);
         const av = [...(pc ? pc.r.graves : []), ...(pc && pc.r.porFinca ? pc.r.porFinca[f.id] || [] : []), ...(rj ? rj.graves.filter(g => / solo tiene /.test(g) && g.startsWith(titularConsumo(pj, f.id) || 'El titular')) : [])];
         if (av.length) x.avisos = [...new Set([...(x.avisos || []), ...av])];
@@ -2350,7 +2350,7 @@
   function movimientosProducto(pid, tit) {
     const out = [];
     db.documentos.filter(d => d.tipo === 'albaran' && (tit == null || d.titular === tit)).forEach(d => (d.lineas || []).forEach(l => { if (l.productoId === pid) out.push({ fecha: d.fecha, cant: +l.cantidad || 0, txt: `Albarán ${d.numero || ''} · ${d.proveedor || ''}`.trim(), titular: d.titular, doc: d.id }); }));
-    db.labores.forEach(l => consumosLabor(l).filter(c => c.productoId === pid && (tit == null || c.titular === tit)).forEach(c => out.push({ fecha: l.fecha, cant: -(+c.cantidad || 0), txt: `${l.tipo} · ${(finca(l.fincaId) || {}).nombre || ''}`, titular: c.titular, labor: l.id })));
+    db.labores.forEach(l => consumosLabor(l).filter(c => c.productoId === pid && (tit == null || c.titular === tit)).forEach(c => out.push({ fecha: l.fecha, cant: -(+c.cantidad || 0), txt: `${l.tipo} · ${(finca(l.fincaId) || {}).nombre || ''}${c.titular === COMUN ? ' · para ' + (c.para || titularDe(l.fincaId) || '¿?') : ''}`, titular: c.titular, labor: l.id })));
     db.ajustes.filter(a => a.productoId === pid && (tit == null || a.titular === tit)).forEach(a => out.push({ fecha: a.fecha, cant: +a.cantidad || 0, txt: `Ajuste${a.motivo ? ' · ' + a.motivo : ''}`, titular: a.titular, ajuste: a.id }));
     const g = gasoleoAlm();
     if (g && g.id === pid) { const R = repartoGasoleo(); db.labores.forEach(l => { const x = R.porLabor.get(l.id); if (!x) return; x.partes.forEach(pt => { if (tit == null || pt.t === tit) out.push({ fecha: l.fecha, cant: -Math.round(pt.q * 1000) / 1000, txt: `Gasóleo · ${l.tipo} · ${(finca(l.fincaId) || {}).nombre || ''}${pt.t ? '' : ''}`, titular: pt.t, labor: l.id }); }); }); }
@@ -2828,6 +2828,22 @@
       borrar: () => { db.ajustes = db.ajustes.filter(x => x !== a); }
     });
   }
+  // Lo que ha gastado cada titular del montón común (para hacer las facturas entre vosotros)
+  function repartoComun(pid) {
+    const m = new Map();
+    db.labores.forEach(l => consumosLabor(l).filter(c => c.productoId === pid && c.titular === COMUN).forEach(c => {
+      const k = l.campana + '|' + (c.para || titularDe(l.fincaId) || 'Sin titular'); const o = m.get(k) || { c: l.campana, t: c.para || titularDe(l.fincaId) || 'Sin titular', kg: 0, ha: 0 }; o.kg += +c.cantidad || 0; o.ha += haLabor(l); m.set(k, o); }));
+    return [...m.values()].sort((a, b) => b.c.localeCompare(a.c) || a.t.localeCompare(b.t, 'es'));
+  }
+  function repartoComunHTML(p) {
+    const rs = repartoComun(p.id); if (!rs.length) return '<p class="small muted" style="margin:0">Cuando sembréis con este grano, aquí verás cuánto ha gastado cada uno.</p>';
+    const pr = precioMedioProducto(p.id, COMUN); const prov = semillaProvisional(p.id);
+    const camps = [...new Set(rs.map(r => r.c))];
+    return `<h2 class="sec">Reparto: lo que ha gastado cada uno</h2>` + camps.map(c => { const xs = rs.filter(r => r.c === c);
+      return `<div class="tablewrap"><table><thead><tr><th>Siembra ${esc(c)}</th><th>ha</th><th>kg</th><th>Valor</th></tr></thead><tbody>${xs.map(r => `<tr><td style="text-align:left">${esc(r.t)}</td><td>${fmtN(r.ha)}</td><td>${fmtN(r.kg, 0)}</td><td>${pr != null ? eur(r.kg * pr, 2) : '—'}</td></tr>`).join('')}
+        <tr class="tot"><td style="text-align:left">Total</td><td>${fmtN(sum(xs, r => r.ha))}</td><td>${fmtN(sum(xs, r => r.kg), 0)}</td><td>${pr != null ? eur(sum(xs, r => r.kg) * pr, 2) : '—'}</td></tr></tbody></table></div>`; }).join('')
+      + `<p class="small muted" style="margin:4px 0 0">${pr != null ? `Valorado a ${fmtN(pr, 4)} €/${esc(p.unidad)}${prov ? ' (precio aproximado: cambia solo al apuntar las ventas de esa cosecha)' : ' (precio de venta de esa cosecha más la limpieza)'}.` : 'Sin precio todavía.'} Sirve para hacer las facturas entre vosotros.</p>`;
+  }
   function hojaProducto(pid, tit) {
     const p = producto(pid); if (!p) return;
     cargarFitos().then(dd => { FITOS = dd; }).catch(() => {});
@@ -2840,6 +2856,7 @@
       const ri = riqueza(p);
       return `<div class="kv"><dt>Tipo</dt><dd>${esc(p.tipo)}</dd><dt>Se mide en</dt><dd>${esc(p.unidad)}</dd>${p.tipo === 'Abono' ? `<dt>Riqueza N-P-K</dt><dd>${ri ? txtRiq(ri) + (ri.auto ? ' <span class="small muted">(del nombre)</span>' : '') : '<span class="neg">sin poner</span>'}</dd>` : ''}${p.registro ? `<dt>Nº de registro</dt><dd>${esc(p.registro)}</dd>` : ''}${reg ? `<dt>Estado</dt><dd class="${reg.e === 'Vigente' ? 'pos' : 'neg'}">${esc(reg.e)}</dd><dt>Caduca</dt><dd>${esc(reg.cad || '—')}</dd>` : ''}</div>
         ${reg ? `<p class="small" style="margin:0">${esc(reg.f)}</p><div><div class="tag">En tus cultivos de ${db.campanaActiva}</div><div class="chips">${autoriz || '<span class="small muted">Sin cultivos asignados</span>'}</div></div><a class="btn sm" href="${urlFicha(reg.id)}" target="_blank" rel="noopener">Ver ficha oficial (PDF del Ministerio)</a>` : ''}
+        ${p.comun ? repartoComunHTML(p) : ''}
         <h2 class="sec">Existencias</h2><div class="list">${(tits.length ? tits : [tit || '']).map(t => `<div class="row"><div class="main"><div class="t">${esc(t || 'Sin titular')}</div></div><div class="end big ${existencias(pid, t) < 0 ? 'neg' : ''}">${fmtCant(existencias(pid, t), p.unidad)}</div></div>`).join('')}</div>
         <div class="btns" style="justify-content:flex-start"><button type="button" class="btn sm" data-ajuste>Ajustar existencias</button><button type="button" class="btn sm" data-editp>${p.tipo === 'Abono' ? 'Cambiar nombre, unidad o riqueza' : 'Cambiar nombre o unidad'}</button></div>
         <h2 class="sec">Movimientos${tit ? ' · ' + esc(tit) : ''}</h2>${movs.length ? `<p class="small muted" style="margin:0">Toca un movimiento para corregirlo o borrarlo.</p><div class="list">${movs.map(m => `<button type="button" class="row" data-mov="${m.doc ? 'doc' : m.labor ? 'labor' : 'ajuste'}" data-id="${m.doc || m.labor || m.ajuste}">${fechaBox(m.fecha)}<div class="main"><div class="t">${esc(m.txt)}</div><div class="s">${esc(m.titular || '')}</div></div><div class="end big ${m.cant < 0 ? 'neg' : 'pos'}">${m.cant > 0 ? '+' : ''}${fmtCant(m.cant, p.unidad)}</div></button>`).join('')}</div>` : '<p class="note">Sin movimientos.</p>'}
