@@ -2,7 +2,7 @@
 (function () {
   // ---------- Constantes ----------
   const KEY = 'cuadernoCampo.v1';
-  const VERSION = '2.5.3';
+  const VERSION = '2.6.0';
   const TIPOS_LABOR = ['Labrado', 'Siembra', 'Abonado', 'Tratamiento', 'Rodillo', 'Cosecha', 'Empacado', 'Otro'];
   const CON_DOSIS = ['Siembra', 'Abonado', 'Tratamiento'];
   const UNIDADES = ['kg/ha', 'L/ha', 'g/ha', 'cc/ha', 'kg', 'L'];
@@ -1169,6 +1169,8 @@
     if (!cultivo) return null; const cu = norm(cultivo); const tits = [...new Set((fids || []).map(titularDe))];
     const cands = db.productos.filter(p => p.tipo === 'Semilla' && norm(p.nombre).split(' ').join(' ').includes(cu));
     if (!cands.length) return null;
+    const deVar = variedad ? cands.filter(p => norm(p.nombre).includes(norm(variedad)) || norm(p.variedad || '') === norm(variedad)) : [];
+    if (deVar.length) cands.splice(0, cands.length, ...deVar);
     const ex = p => p.comun ? existencias(p.id, COMUN) : sum(tits, t => Math.max(0, existencias(p.id, t)));
     const pt = p => (ex(p) > 0 ? 1e10 : 0) + (variedad && norm(p.nombre).includes(norm(variedad)) ? 1e9 : 0) + (p.id === prefer ? 1e8 : 0) + Math.max(0, ex(p));
     return cands.slice().sort((a, b) => pt(b) - pt(a))[0];
@@ -1214,7 +1216,7 @@
     }
     const porTit = new Map();
     fs.forEach(f => { const q = gastoEnParcela(p, f, v, fs); if (q == null) { out.sinCalculo = true; return; } const t = titularConsumo(p, f.id); porTit.set(t, (porTit.get(t) || 0) + q); });
-    porTit.forEach((q, t) => { const ex = existencias(p.id, t) + (((v._propioP && v._propioP[p.id]) || {})[t] || 0); out.consumo.push({ t, q, ex }); if (q > ex + 1e-9) (p.tipo === 'Fitosanitario' ? out.graves : out.notas).push(`${t === COMUN ? 'En el montón común' : (t || 'El titular')} solo ${t === COMUN ? 'quedan' : 'tiene'} ${fmtCant(ex, p.unidad)} de «${p.nombre}» y la labor gasta ${fmtCant(q, p.unidad)}.`); });
+    porTit.forEach((q, t) => { const ex = existencias(p.id, t) + (((v._propioP && v._propioP[p.id]) || {})[t] || 0); out.consumo.push({ t, q, ex }); if (q > ex + 1e-9) out.graves.push(`${t === COMUN ? 'En el montón común' : (t || 'El titular')} solo ${t === COMUN ? 'quedan' : 'tiene'} ${fmtCant(ex, p.unidad)} de «${p.nombre}» y la labor gasta ${fmtCant(q, p.unidad)}.`); });
     if (out.sinCalculo && v.dosis > 0) out.notas.push(`No puedo calcular cuánto se gasta: la dosis va en ${v.unidad} y el producto se mide en ${p.unidad}.`);
     return out;
   }
@@ -1268,7 +1270,7 @@
     if (v.tipo === 'Siembra' && v.laboreoSiembra) db.ultLaboreo = v.laboreoSiembra;
     fs.forEach((f, i) => {
       const x = Object.assign({}, v, { id: i === 0 && l ? l.id : uid(), fincaId: f.id, coste: costes[i], superficie: fs.length > 1 ? null : v.superficie });
-      delete x.fincas; delete x.prodAlm; delete x._propio; delete x._propioP; delete x.mezcla; delete x.cultivoSiembra; delete x.variedadSiembra; delete x.laboreoSiembra; delete x.estiercolSiembra; delete x.laboreoPorFinca; delete x._excl; if (lote) x.lote = lote; else delete x.lote;
+      delete x.fincas; delete x.prodAlm; delete x._propio; delete x._propioP; delete x.mezcla; delete x.cultivoSiembra; delete x.variedadSiembra; delete x.laboreoSiembra; delete x.estiercolSiembra; delete x.laboreoPorFinca; delete x._excl; delete x.semilla; if (lote) x.lote = lote; else delete x.lote;
       delete x.consumo; delete x.avisos; delete x.productoId;
       if (p) {
         x.productoId = p.id; x.producto = p.nombre; if (p.registro) x.registro = p.registro;
@@ -1276,7 +1278,7 @@
         if (q != null) { x.consumo = { productoId: p.id, cantidad: Math.round(q * 1000) / 1000, unidad: p.unidad, titular: titularConsumo(p, f.id) }; if (x.consumo.titular === COMUN) x.consumo.para = titularDe(f.id); }
         const cu = cultivoDe(f.id, x.campana) || '';
         const pc = r && r.porCultivo.find(z => z.cu === cu);
-        const av = [...(pc ? pc.r.graves : []), ...(pc && pc.r.porFinca ? pc.r.porFinca[f.id] || [] : []), ...(r ? r.graves.filter(g => / solo tiene /.test(g) && g.startsWith(titularConsumo(p, f.id) || 'El titular')) : [])];
+        const av = [...(pc ? pc.r.graves : []), ...(pc && pc.r.porFinca ? pc.r.porFinca[f.id] || [] : []), ...(r ? r.graves.filter(g => / solo (tiene|quedan) /.test(g) && g.startsWith(titularConsumo(p, f.id) === COMUN ? 'En el montón común' : (titularConsumo(p, f.id) || 'El titular'))) : [])];
         if (av.length) x.avisos = av;
   }
       const nz = r && r.nitro.find(z => z.fid === f.id);
@@ -1288,7 +1290,7 @@
         const it = { productoId: pj.id, producto: pj.nombre, dosis: vi.dosis, unidad: vi.unidad }; if (pj.registro) it.registro = pj.registro;
         const q = gastoEnParcela(pj, f, vi, fs); if (q != null) { it.consumo = { productoId: pj.id, cantidad: Math.round(q * 1000) / 1000, unidad: pj.unidad, titular: titularConsumo(pj, f.id) }; if (it.consumo.titular === COMUN) it.consumo.para = titularDe(f.id); }
         const cu = cultivoDe(f.id, x.campana) || ''; const pc = rj && rj.porCultivo.find(z => z.cu === cu);
-        const av = [...(pc ? pc.r.graves : []), ...(pc && pc.r.porFinca ? pc.r.porFinca[f.id] || [] : []), ...(rj ? rj.graves.filter(g => / solo tiene /.test(g) && g.startsWith(titularConsumo(pj, f.id) || 'El titular')) : [])];
+        const av = [...(pc ? pc.r.graves : []), ...(pc && pc.r.porFinca ? pc.r.porFinca[f.id] || [] : []), ...(rj ? rj.graves.filter(g => / solo (tiene|quedan) /.test(g) && g.startsWith(titularConsumo(pj, f.id) === COMUN ? 'En el montón común' : (titularConsumo(pj, f.id) || 'El titular'))) : [])];
         if (av.length) x.avisos = [...new Set([...(x.avisos || []), ...av])];
         mz.push(it);
       });
@@ -1365,12 +1367,16 @@
     let vActual = null;
     // en la siembra la semilla sale sola del cultivo sembrado
     const cultivoDeSiembra = v => v.cultivoSiembra || ((v.fincas || []).map(id => cultivoDe(id, v.campana || db.campanaActiva)).find(Boolean)) || '';
-    const ponSemilla = v => { if (v.tipo !== 'Siembra') return; const sp = semillaPara(cultivoDeSiembra(v), v.fincas, v.variedadSiembra, l && l.productoId); v.prodAlm = sp ? sp.id : ''; };
+    const semillasDe = v => { const cu = norm(cultivoDeSiembra(v)); return cu ? db.productos.filter(p => p.tipo === 'Semilla' && norm(p.nombre).includes(cu)) : []; };
+    const exSemilla = (p, v) => p.comun ? existencias(p.id, COMUN) + (((propioP[p.id] || {})[COMUN]) || 0) : sum([...new Set((v.fincas || []).map(titularDe))], t => existencias(p.id, t) + (((propioP[p.id] || {})[t]) || 0));
+    const opcionesSemilla = v => { const cs = semillasDe(v).filter(p => exSemilla(p, v) > 0 || p.id === v.semilla); const auto = semillaPara(cultivoDeSiembra(v), v.fincas, v.variedadSiembra, l && l.productoId);
+      return [['', `La que toque${auto ? ': ' + auto.nombre : ''}`], ...cs.map(p => [p.id, `${p.nombre} · quedan ${fmtN(Math.max(0, exSemilla(p, v)), 0)} kg${p.comun ? ' (común)' : ''}`])]; };
+    const ponSemilla = v => { if (v.tipo !== 'Siembra') return; const elegida = v.semilla && producto(v.semilla); const sp = elegida || semillaPara(cultivoDeSiembra(v), v.fincas, v.variedadSiembra, l && l.productoId); v.prodAlm = sp ? sp.id : ''; };
     const ini = l
       ? Object.assign({}, l, { fincas: miembros.map(x => x.fincaId), prodAlm: l.productoId || '', coste: miembros.some(x => x.coste) ? Math.round(sum(miembros, x => x.coste) * 100) / 100 : null })
       : Object.assign({ fecha: hoyISO(), tipo: 'Labrado', fincas: idsIniciales(pre), unidad: 'kg/ha', campana: db.campanaActiva, prodAlm: '' }, maqPorDefecto((pre.valores || {}).tipo || 'Labrado'), { aplicador: aplicadorPorDefecto() }, pre.valores || {});
     let maqTocada = !!l || !!(pre.valores && (pre.valores.tractorId || pre.valores.aperoId || pre.valores.equipoId));
-    if (l && l.tipo === 'Siembra') { const s = siembraDe(l.fincaId, l.campana); if (s) { ini.cultivoSiembra = s.cultivo; ini.variedadSiembra = s.variedad || ''; ini.laboreoSiembra = s.laboreo || ''; } }
+    if (l && l.tipo === 'Siembra') { const s = siembraDe(l.fincaId, l.campana); if (s) { ini.cultivoSiembra = s.cultivo; ini.variedadSiembra = s.variedad || ''; ini.laboreoSiembra = s.laboreo || ''; } ini.semilla = l.productoId || ''; }
     if (!l && ini.laboreoSiembra == null) ini.laboreoSiembra = db.ultLaboreo || '';
     // laboreo distinto en algunas parcelas de la misma siembra
     const lpf = {};
@@ -1413,6 +1419,7 @@
         { k: 'producto', label: 'Producto, variedad o apero', placeholder: 'Ej.: cultivador, vertedera', lista: () => ['Estiércol', 'Purín', 'Gallinaza'], show: v => v.tipo !== 'Siembra' && !(TIPO_DE_LABOR[v.tipo] && v.prodAlm) && (v.tipo !== 'Tratamiento' || viejo) },
         { k: 'cultivoSiembra', label: 'Cultivo sembrado', type: 'select', half: 1, opts: () => [['', 'No cambiar'], ...db.cultivos.map(c => [c, c])], show: v => v.tipo === 'Siembra', hint: 'Se asigna a las parcelas en la campaña.' },
         { k: 'variedadSiembra', label: 'Variedad', half: 1, placeholder: 'Ej.: Marcopolo', show: v => v.tipo === 'Siembra', lista: () => variedadesDe(ini.cultivoSiembra) },
+        { k: 'semilla', label: 'Semilla', type: 'select', dyn: 1, sinOpcional: 1, opts: v => opcionesSemilla(v), show: v => v.tipo === 'Siembra' && opcionesSemilla(v).length > 2, hint: 'Hay varias semillas de este cultivo: elige de cuál sale (la de vuestra cosecha, una R2…).' },
         { k: 'laboreoSiembra', label: 'Laboreo', type: 'select', sinOpcional: 1, opts: () => [['', 'No cambiar'], ['C', 'C · Directa con complemento'], ['D', 'D · Siembra directa'], ['T', 'T · Tradicional']], show: v => v.tipo === 'Siembra' },
         { k: 'dosis', label: 'Dosis', type: 'num', half: 1, show: conDosis },
         { k: 'unidad', label: 'Unidad', type: 'select', half: 1, opts: () => UNIDADES.map(u => [u, u]), show: conDosis },
@@ -1430,6 +1437,7 @@
       extra: '<div id="fitoInfo" class="fito-info" hidden></div>',
       alCambiar(v, form, origen) {
         ponSemilla(v);
+        if (origen === 'semilla' && v.semilla && form.elements.variedadSiembra && !form.elements.variedadSiembra.value) { const vs = (producto(v.semilla) || {}).variedad; if (vs) { form.elements.variedadSiembra.value = vs; v.variedadSiembra = vs; } }
         refrescarInfo = () => alCambiarReal(v, form);
         const ponMaq = d => { ['equipoId', 'tractorId', 'aperoId'].forEach(k => { if (form.elements[k] && d[k] !== undefined) { form.elements[k].value = d[k]; v[k] = d[k]; } }); };
         pintarLpf(v, form); vActual = v; pintarMezcla(v, form); v.mezcla = mezcla;
@@ -2407,17 +2415,32 @@
     }
     const docs = db.documentos.filter(d => d.tipo === a.vista && (!tit || d.titular === tit)).sort(byFechaDesc);
     if (!docs.length) return h + vacio(a.vista === 'albaran' ? 'No hay albaranes' : 'No hay facturas', a.vista === 'albaran' ? 'Haz una foto al albarán o sube el PDF, y apunta los productos y cantidades. Se guardan en la carpeta de cada titular.' : 'Sube la factura y marca los albaranes que incluye: la app comprueba si cuadran.', `<button class="btn primary" data-act="nuevoDoc" data-k="${a.vista}">${a.vista === 'albaran' ? 'Subir albarán' : 'Subir factura'}</button>`);
-    let mes = ''; let lista = '';
-    for (const d of docs) {
-      const m = (d.fecha || '').slice(0, 7);
-      if (m !== mes) { if (mes) lista += '</div>'; mes = m; lista += `<h2 class="sec">${m ? MESES_L[+m.slice(5) - 1] + ' ' + m.slice(0, 4) : 'Sin fecha'}</h2><div class="list">`; }
-      let estado = '';
-      if (d.tipo === 'albaran') { const fac = db.documentos.find(f => f.tipo === 'factura' && (f.albaranes || []).includes(d.id)); estado = fac ? `<span class="pill pos">Facturado</span>` : '<span class="pill warn">Sin factura</span>'; }
-      else { const c = cotejo(d); estado = `<span class="pill ${ESTADO_COT[c.estado][1]}">${ESTADO_COT[c.estado][0]}</span>`; }
-      const importe = d.tipo === 'factura' ? (d.total || totalDoc(d)) : totalDoc(d);
-      lista += `<button class="row" data-act="editDoc" data-id="${d.id}">${fechaBox(d.fecha)}<div class="main"><div class="t">${esc(d.proveedor || 'Sin proveedor')}${d.numero ? ' · nº ' + esc(d.numero) : ''}</div><div class="s">${esc([tit ? '' : d.titular, `${(d.lineas || []).length} producto${(d.lineas || []).length === 1 ? '' : 's'}`, (d.archivos || []).length ? `${d.archivos.length} archivo${d.archivos.length === 1 ? '' : 's'}` : 'sin archivo'].filter(Boolean).join(' · '))}</div>${estado}</div><div class="end big">${importe ? eur(importe, 2) : ''}</div></button>`;
+    // Primero por tipo de producto (fitosanitarios, abonos, semillas, gasóleo…) y dentro de cada tipo por fecha.
+    // Un albarán con productos de varios tipos sale en cada uno, con lo de ese tipo.
+    const GRUPOS_DOC = [['Fitosanitario', 'Fitosanitarios'], ['Abono', 'Abonos'], ['Semilla', 'Semillas'], ['Combustible', 'Gasóleo'], ['Otro', 'Otros'], ['', 'Sin productos']];
+    const lineasDe = d => (d.lineas || []).length ? d.lineas : (d.tipo === 'factura' ? db.documentos.filter(x => (d.albaranes || []).includes(x.id)).flatMap(x => x.lineas || []) : []);
+    const tipoLinea = l => { const t = (producto(l.productoId) || {}).tipo; return GRUPOS_DOC.some(g => g[0] === t) ? t : 'Otro'; };
+    const estadoDe = d => { if (d.tipo === 'albaran') { const fac = db.documentos.find(f => f.tipo === 'factura' && (f.albaranes || []).includes(d.id)); return fac ? '<span class="pill pos">Facturado</span>' : '<span class="pill warn">Sin factura</span>'; }
+      const c = cotejo(d); return `<span class="pill ${ESTADO_COT[c.estado][1]}">${ESTADO_COT[c.estado][0]}</span>`; };
+    const abiertos = ui.alm.gruposCerrados || (ui.alm.gruposCerrados = new Set());
+    let lista = '';
+    for (const [tipoG, nombreG] of GRUPOS_DOC) {
+      const items = docs.map(d => { const ls = lineasDe(d); const mias = tipoG ? ls.filter(l => tipoLinea(l) === tipoG) : []; return (tipoG ? mias.length : !ls.length) ? { d, ls: mias, todas: ls } : null; }).filter(Boolean);
+      if (!items.length) continue;
+      const importeG = sum(items, x => x.ls.length ? sum(x.ls, l => +l.importe || 0) : (x.d.tipo === 'factura' ? (x.d.total || 0) : totalDoc(x.d)));
+      lista += `<details class="grupo-doc"${abiertos.has(tipoG) ? '' : ' open'} data-gdoc="${tipoG}"><summary><b>${nombreG}</b> <span class="small muted">${items.length} ${a.vista === 'albaran' ? 'albarán' : 'factura'}${items.length === 1 ? '' : (a.vista === 'albaran' ? 'es' : 's')}${importeG ? ' · ' + eur(importeG) : ''}</span></summary>`;
+      let mes = '';
+      for (const { d, ls, todas } of items) {
+        const m = (d.fecha || '').slice(0, 7);
+        if (m !== mes) { if (mes) lista += '</div>'; mes = m; lista += `<h3 class="sec sub">${m ? MESES_L[+m.slice(5) - 1] + ' ' + m.slice(0, 4) : 'Sin fecha'}</h3><div class="list">`; }
+        const nombres = [...new Set(ls.map(l => (producto(l.productoId) || {}).nombre).filter(Boolean))];
+        const imp = ls.length && ls.some(l => +l.importe > 0) ? sum(ls, l => +l.importe || 0) : (d.tipo === 'factura' ? (d.total || totalDoc(d)) : totalDoc(d));
+        const otros = todas.length - ls.length;
+        lista += `<button class="row" data-act="editDoc" data-id="${d.id}">${fechaBox(d.fecha)}<div class="main"><div class="t">${esc(d.proveedor || 'Sin proveedor')}${d.numero ? ' · nº ' + esc(d.numero) : ''}</div><div class="s">${esc([tit ? '' : d.titular, nombres.slice(0, 3).join(', ') + (nombres.length > 3 ? '…' : ''), otros > 0 ? `y ${otros} de otro tipo` : '', (d.archivos || []).length ? `${d.archivos.length} archivo${d.archivos.length === 1 ? '' : 's'}` : 'sin archivo'].filter(Boolean).join(' · '))}</div>${estadoDe(d)}</div>${imp ? `<div class="end big">${eur(imp, 2)}</div>` : ''}</button>`;
+      }
+      lista += '</div></details>';
     }
-    return h + lista + '</div>';
+    return h + lista;
   }
 
   // Elegir producto: los del almacén, buscar en el Registro oficial o crear uno nuevo
@@ -2780,10 +2803,11 @@
         : `Aún no hay ventas de ${esc(String(v.cultivo).toLowerCase())} de ${esc(v.campana)} apuntadas en Cuentas. Se usa el precio aproximado y, en cuanto apuntes las ventas, se cambia solo por el real y se recalcula el coste de las siembras.`; };
     formulario({
       titulo: a ? 'Semilla de cosecha propia' : 'Guardar semilla de la cosecha',
-      valores: { titular: a ? a.titular : (ui.alm.titular && ui.alm.titular !== COMUN ? ui.alm.titular : (ts.length === 1 ? ts[0] : COMUN)), cultivo: cultivoIni, kg: a ? a.cantidad : null, fecha: fecha0, campana: sp.campana || campanaCosechaDe(fecha0), precio: sp.precio != null ? sp.precio : null, limpieza: sp.limpieza != null ? sp.limpieza : (a ? null : (db.ultLimpieza != null ? db.ultLimpieza : null)), motivo: a ? (a.motivo === 'Semilla de la cosecha propia' ? '' : a.motivo) : '' },
+      valores: { titular: a ? a.titular : (ui.alm.titular && ui.alm.titular !== COMUN ? ui.alm.titular : (ts.length === 1 ? ts[0] : COMUN)), cultivo: cultivoIni, variedad: sp.variedad || (pa && pa.variedad) || '', kg: a ? a.cantidad : null, fecha: fecha0, campana: sp.campana || campanaCosechaDe(fecha0), precio: sp.precio != null ? sp.precio : null, limpieza: sp.limpieza != null ? sp.limpieza : (a ? null : (db.ultLimpieza != null ? db.ultLimpieza : null)), motivo: a ? (a.motivo === 'Semilla de la cosecha propia' ? '' : a.motivo) : '' },
       campos: [
         { k: 'titular', label: 'De quién es', type: 'select', req: 1, half: 1, opts: () => [[COMUN, 'Común (de todos)'], ...ts.map(t => [t, t])] },
         { k: 'cultivo', label: 'Cultivo', type: 'select', req: 1, half: 1, opts: () => db.cultivos.map(c => [c, c]) },
+        { k: 'variedad', label: 'Variedad', placeholder: 'Ej.: Marcopolo', lista: () => variedadesDe(cultivoIni), hint: 'Si guardáis dos variedades, cada una va aparte y al sembrar eliges cuál.' },
         { k: 'kg', label: 'Kilos', type: 'num', miles: 1, req: 1, half: 1, placeholder: 'Ej.: 5.000' },
         { k: 'fecha', label: 'Fecha', type: 'date', req: 1, half: 1 },
         { k: 'campana', label: 'Cosecha de la campaña', type: 'select', req: 1, opts: () => camps.map(c => [c, c]), hint: 'De qué cosecha sale el grano: su precio de venta es el que vale.' },
@@ -2792,17 +2816,18 @@
         { k: 'motivo', label: 'Notas', placeholder: 'Ej.: seleccionada en la cooperativa' }
       ],
       extra: '<div id="spInfo" class="card pad small"></div><p class="small muted" style="margin:0">«Común»: la semilla que seleccionáis juntos. Al sembrar cualquier finca, de quien sea, se descuenta de ese montón y su coste se suma a cada finca.</p>',
-      alCambiar(v, form) { const b = form.querySelector('#spInfo'); if (b) b.innerHTML = info(v); },
+      alCambiar(v, form, origen) { const b = form.querySelector('#spInfo'); if (b) b.innerHTML = info(v); if (origen === 'cultivo') pintarVariedades(form, 'variedad', v.cultivo); },
       guardar(v) {
         if (!(v.kg > 0)) return 'Pon los kilos';
         if (!ventasGrano(v.cultivo, v.campana) && !(v.precio > 0)) return 'Aún no hay ventas de esa cosecha: pon un precio aproximado';
         // común: un montón de todos, del que se descuenta al sembrar cualquier finca; si no, el de ese titular
         const comun = v.titular === COMUN;
-        const nombre = comun ? `${v.cultivo} de cosecha propia` : (a && pa && !pa.comun ? pa.nombre : `${v.cultivo} para sembrar`);
+        const varT = String(v.variedad || '').trim().replace(/^./, x => x.toUpperCase());
+        const nombre = `${v.cultivo}${varT ? ' ' + varT : ''} ${comun ? 'de cosecha propia' : `de cosecha propia de ${v.titular}`}`;
         let p = db.productos.find(x => x.tipo === 'Semilla' && norm(x.nombre) === norm(nombre));
         if (!p) { p = { id: uid(), nombre, tipo: 'Semilla', unidad: 'kg' }; db.productos.push(p); }
-        if (comun) p.comun = true;
-        const x = { productoId: p.id, titular: v.titular, cantidad: v.kg, fecha: v.fecha, motivo: v.motivo || 'Semilla de la cosecha propia', propia: { cultivo: v.cultivo, campana: v.campana, precio: v.precio, limpieza: v.limpieza } };
+        if (comun) p.comun = true; if (varT) p.variedad = varT;
+        const x = { productoId: p.id, titular: v.titular, cantidad: v.kg, fecha: v.fecha, motivo: v.motivo || 'Semilla de la cosecha propia', propia: { cultivo: v.cultivo, variedad: varT, campana: v.campana, precio: v.precio, limpieza: v.limpieza } };
         if (a) Object.assign(a, x); else db.ajustes.push(Object.assign({ id: uid() }, x));
         if (v.limpieza != null) db.ultLimpieza = v.limpieza;
       },
@@ -3520,7 +3545,8 @@
     const ml = t.match(/\b(?:limpi\w*|trat\w*|seleccion\w*|desinfect\w*)(?: y \w+)?(?: a| de| por| cuesta| cuestan)? (\d+(?:\.\d+)?) (centimos?|euros?)/);
     const t2 = ml ? t.replace(ml[0], ' ') : t;
     const mp = t2.match(/\b(?:a|precio(?: de)?) (\d+(?:\.\d+)?) (centimos?|euros?)(?: el| por| cada)? ?(?:kilo|kg)?/);
-    R.semilla = { cultivo: cult.length ? cult[0].c.c : '', titular: tit.length ? tit[0].c.t : (titularesTodos().length === 1 ? titularesTodos()[0] : COMUN), kg: c ? c.q : null, fecha: R.fecha, precio: mp ? euros(mp[1], mp[2]) : null, limpieza: ml ? euros(ml[1], ml[2]) : (db.ultLimpieza != null ? db.ultLimpieza : null) };
+    const varS = ((t.match(/\bvariedad ([a-z0-9]+(?: [a-z0-9]+)?)/) || [])[1] || '').replace(/ (a|de|para|limpi\w*)$/, '');
+    R.semilla = { variedad: varS ? varS.replace(/\b\w/g, x => x.toUpperCase()) : '', cultivo: cult.length ? cult[0].c.c : '', titular: tit.length ? tit[0].c.t : (titularesTodos().length === 1 ? titularesTodos()[0] : COMUN), kg: c ? c.q : null, fecha: R.fecha, precio: mp ? euros(mp[1], mp[2]) : null, limpieza: ml ? euros(ml[1], ml[2]) : (db.ultLimpieza != null ? db.ultLimpieza : null) };
     if (!R.semilla.cultivo) R.dudas.push('¿De qué cultivo es la semilla?');
     if (!R.semilla.titular) R.dudas.push('¿Para qué titular? Di «para Iván», «de Tomás»…');
     if (!R.semilla.kg) R.dudas.push('¿Cuántos kilos?');
@@ -3674,7 +3700,7 @@
       puedeGuardar = v.importe > 0; abrir = 'mov';
     } else if (R.intencion === 'semilla') {
       const v = R.semilla;
-      h += `<dl class="kv">${fila('Semilla propia', v.cultivo ? `${esc(v.cultivo)} ${v.titular === COMUN ? 'de cosecha propia' : 'para sembrar'}` : '?')}${fila('Kilos', v.kg ? fmtKg(v.kg) : '?')}${fila('Titular', esc(v.titular) || '?')}${fila('Fecha', fmtFecha(v.fecha))}${(() => { const camp = campanaCosechaDe(v.fecha); const vv = v.cultivo ? ventasGrano(v.cultivo, camp) : null; return fila('Precio', vv ? `${fmtN(vv.precio, 4)} €/kg <span class="small muted">(ventas de ${esc(camp)})</span>` : v.precio ? `${fmtN(v.precio, 4)} €/kg <span class="small muted">(aproximado, hasta apuntar las ventas de ${esc(camp)})</span>` : '<span class="neg">sin ventas de esa cosecha: di «a 0,22 euros el kilo»</span>') + fila('Limpiar y tratar', v.limpieza ? `${fmtN(v.limpieza, 4)} €/kg` : ''); })()}</dl><p class="small muted" style="margin:0">${v.titular === COMUN ? 'Va al montón común: al sembrar cualquier finca se descuenta de ahí.' : 'Se suma al almacén del titular como semilla de vuestra cosecha.'}</p>`;
+      h += `<dl class="kv">${fila('Semilla propia', v.cultivo ? `${esc(v.cultivo)}${v.variedad ? ' ' + esc(v.variedad) : ''} de cosecha propia` : '?')}${fila('Kilos', v.kg ? fmtKg(v.kg) : '?')}${fila('Titular', esc(v.titular) || '?')}${fila('Fecha', fmtFecha(v.fecha))}${(() => { const camp = campanaCosechaDe(v.fecha); const vv = v.cultivo ? ventasGrano(v.cultivo, camp) : null; return fila('Precio', vv ? `${fmtN(vv.precio, 4)} €/kg <span class="small muted">(ventas de ${esc(camp)})</span>` : v.precio ? `${fmtN(v.precio, 4)} €/kg <span class="small muted">(aproximado, hasta apuntar las ventas de ${esc(camp)})</span>` : '<span class="neg">sin ventas de esa cosecha: di «a 0,22 euros el kilo»</span>') + fila('Limpiar y tratar', v.limpieza ? `${fmtN(v.limpieza, 4)} €/kg` : ''); })()}</dl><p class="small muted" style="margin:0">${v.titular === COMUN ? 'Va al montón común: al sembrar cualquier finca se descuenta de ahí.' : 'Se suma al almacén del titular como semilla de vuestra cosecha.'}</p>`;
       puedeGuardar = !!(v.cultivo && v.kg && v.titular);
     } else if (R.intencion === 'albaran' || R.intencion === 'factura') {
       const v = R.doc;
@@ -3716,12 +3742,12 @@
     }
     if (R.intencion === 'gasto' || R.intencion === 'ingreso') { registrarMov(Object.assign({}, R.mov)); return R.intencion === 'gasto' ? 'Gasto apuntado' : 'Ingreso apuntado'; }
     if (R.intencion === 'semilla') {
-      const v = R.semilla; const nombre = v.titular === COMUN ? `${v.cultivo} de cosecha propia` : `${v.cultivo} para sembrar`;
+      const v = R.semilla; const nombre = `${v.cultivo}${v.variedad ? ' ' + v.variedad : ''} ${v.titular === COMUN ? 'de cosecha propia' : 'de cosecha propia de ' + v.titular}`;
       let p = db.productos.find(x => x.tipo === 'Semilla' && norm(x.nombre) === norm(nombre));
       if (!p) { p = { id: uid(), nombre, tipo: 'Semilla', unidad: 'kg' }; db.productos.push(p); }
-      if (v.titular === COMUN) p.comun = true;
+      if (v.titular === COMUN) p.comun = true; if (v.variedad) p.variedad = v.variedad;
       const camp = campanaCosechaDe(v.fecha);
-      db.ajustes.push({ id: uid(), productoId: p.id, titular: v.titular, cantidad: v.kg, fecha: v.fecha, motivo: 'Semilla de la cosecha propia', propia: { cultivo: v.cultivo, campana: camp, precio: v.precio || null, limpieza: v.limpieza || null } });
+      db.ajustes.push({ id: uid(), productoId: p.id, titular: v.titular, cantidad: v.kg, fecha: v.fecha, motivo: 'Semilla de la cosecha propia', propia: { cultivo: v.cultivo, variedad: v.variedad || '', campana: camp, precio: v.precio || null, limpieza: v.limpieza || null } });
       if (v.limpieza != null) db.ultLimpieza = v.limpieza;
       return `${fmtKg(v.kg)} de ${nombre.toLowerCase()} para ${v.titular}`;
     }
@@ -4195,6 +4221,8 @@
     if (e.target.id === 'fLabTipo') { ui.filtroLabor.tipo = e.target.value; render(); }
     if (e.target.dataset.zvp != null) { db.zvPueblos = db.zvPueblos || {}; if (e.target.value) db.zvPueblos[e.target.dataset.zvp] = e.target.value; else delete db.zvPueblos[e.target.dataset.zvp]; guardar(); render(); toast('Guardado'); }
   });
+  // grupos de albaranes abiertos o cerrados: se recuerda mientras usas la app
+  document.addEventListener('toggle', e => { const g = e.target; if (!g.matches || !g.matches('details.grupo-doc')) return; const set = ui.alm.gruposCerrados || (ui.alm.gruposCerrados = new Set()); if (g.open) set.delete(g.dataset.gdoc); else set.add(g.dataset.gdoc); }, true);
   $('#cfgBtn').addEventListener('click', hojaAjustes);
   $('#vozBtn').addEventListener('click', hojaVoz);
   $('#campBtn').addEventListener('click', hojaCampanas);
