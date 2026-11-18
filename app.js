@@ -2,7 +2,7 @@
 (function () {
   // ---------- Constantes ----------
   const KEY = 'cuadernoCampo.v1';
-  const VERSION = '2.5.0';
+  const VERSION = '2.5.1';
   const TIPOS_LABOR = ['Labrado', 'Siembra', 'Abonado', 'Tratamiento', 'Rodillo', 'Cosecha', 'Empacado', 'Otro'];
   const CON_DOSIS = ['Siembra', 'Abonado', 'Tratamiento'];
   const UNIDADES = ['kg/ha', 'L/ha', 'g/ha', 'cc/ha', 'kg', 'L'];
@@ -497,7 +497,7 @@
     const aviso = n.some(x => x.avisos && x.avisos.length);
     return `<button class="row" data-act="editLabor" data-id="${l.id}">${fechaBox(l.fecha)}<div class="main"><div class="t">${esc(l.tipo)}${conFinca ? ' · ' + esc(nombreLote(n)) : ''}</div>${det ? `<div class="s">${esc(det)}</div>` : ''}${aviso ? '<span class="pill neg">⚠ Revisar normativa</span>' : ''}</div>${coste ? `<div class="end small muted">${eur(coste)}${maqC || prodC ? `<div class="small">${[prodC ? 'productos' : '', maqC ? 'maquinaria' : ''].filter(Boolean).join(' y ')}</div>` : ''}</div>` : ''}</button>`;
   }
-  const notaMaq = st => st.maq || st.prod ? `<p class="small muted" style="margin:0">Los gastos incluyen ${[st.prod ? `<b>${eur(st.prod)}</b> de productos del almacén (al precio de tus albaranes)` : '', st.maq ? `<b>${eur(st.maq)}</b> de maquinaria propia: ${[st.amort ? eur(st.amort) + ' de amortización' : '', st.gas ? `${eur(st.gas)} de gasóleo (${fmtN(st.litros, 0)} L)` : ''].filter(Boolean).join(' y ')}` : ''].filter(Boolean).join(' y ')}.</p>` : '';
+  const notaMaq = st => st.maq || st.prod ? `<p class="small muted" style="margin:0">Los gastos incluyen ${[st.prod ? `<b>${eur(st.prod)}</b> de productos del almacén (semilla, abono, fitosanitarios…)` : '', st.maq ? `<b>${eur(st.maq)}</b> de maquinaria propia: ${[st.amort ? eur(st.amort) + ' de amortización' : '', st.gas ? `${eur(st.gas)} de gasóleo (${fmtN(st.litros, 0)} L)` : ''].filter(Boolean).join(' y ')}` : ''].filter(Boolean).join(' y ')}.</p>` : '';
   function filaMov(m, conFinca = true, n = [m]) {
     const sub = [m.categoria, conFinca ? (finca(m.fincaId) ? nombreLote(n) : 'General') : '', m.laborId ? 'desde el cuaderno' : ''].filter(Boolean).join(' · ');
     const imp = sum(n, x => x.importe); const v = m.tipo === 'gasto' ? -imp : imp;
@@ -1158,10 +1158,10 @@
   function opcionesAlmacen(v, actual) {
     const tipoP = TIPO_DE_LABOR[v.tipo]; if (!tipoP) return [['', '—']];
     const tits = [...new Set((v.fincas || []).map(titularDe))];
-    const ps = db.productos.filter(p => p.tipo === tipoP).map(p => ({ p, ex: tits.map(t => existencias(p.id, t)) }))
+    const ps = db.productos.filter(p => p.tipo === tipoP).map(p => ({ p, ex: p.comun ? [existencias(p.id, COMUN)] : tits.map(t => existencias(p.id, t)) }))
       .filter(x => x.ex.some(e => e > 0) || x.p.id === actual);
     const prim = v.tipo === 'Tratamiento' ? ['', ps.length ? 'Elige el producto' : 'No hay fitosanitarios en el almacén'] : ['', 'No descontar del almacén'];
-    return [prim, ...ps.sort((a, b) => a.p.nombre.localeCompare(b.p.nombre, 'es')).map(x => [x.p.id, `${x.p.nombre} · quedan ${tits.length > 1 ? tits.map((t, i) => `${t || '¿?'} ${fmtN(x.ex[i], 3)}`).join(', ') : fmtN(x.ex[0] || 0, 3)} ${x.p.unidad}`])];
+    return [prim, ...ps.sort((a, b) => a.p.nombre.localeCompare(b.p.nombre, 'es')).map(x => [x.p.id, `${x.p.nombre} · quedan ${x.p.comun ? `${fmtN(x.ex[0] || 0, 3)} (común)` : tits.length > 1 ? tits.map((t, i) => `${t || '¿?'} ${fmtN(x.ex[i], 3)}`).join(', ') : fmtN(x.ex[0] || 0, 3)} ${x.p.unidad}`])];
   }
   // Cantidad de producto que gasta una labor en una parcela
   function gastoEnParcela(p, f, v, fs) {
@@ -1203,7 +1203,7 @@
       });
     }
     const porTit = new Map();
-    fs.forEach(f => { const q = gastoEnParcela(p, f, v, fs); if (q == null) { out.sinCalculo = true; return; } const t = titularDe(f.id); porTit.set(t, (porTit.get(t) || 0) + q); });
+    fs.forEach(f => { const q = gastoEnParcela(p, f, v, fs); if (q == null) { out.sinCalculo = true; return; } const t = titularConsumo(p, f.id); porTit.set(t, (porTit.get(t) || 0) + q); });
     porTit.forEach((q, t) => { const ex = existencias(p.id, t) + (((v._propioP && v._propioP[p.id]) || {})[t] || 0); out.consumo.push({ t, q, ex }); if (q > ex + 1e-9) out.graves.push(`${t || 'El titular'} solo tiene ${fmtCant(ex, p.unidad)} de «${p.nombre}» y la labor gasta ${fmtCant(q, p.unidad)}.`); });
     if (out.sinCalculo && v.dosis > 0) out.notas.push(`No puedo calcular cuánto se gasta: la dosis va en ${v.unidad} y el producto se mide en ${p.unidad}.`);
     return out;
@@ -1263,10 +1263,10 @@
       if (p) {
         x.productoId = p.id; x.producto = p.nombre; if (p.registro) x.registro = p.registro;
         const q = gastoEnParcela(p, f, v, fs);
-        if (q != null) x.consumo = { productoId: p.id, cantidad: Math.round(q * 1000) / 1000, unidad: p.unidad, titular: titularDe(f.id) };
+        if (q != null) x.consumo = { productoId: p.id, cantidad: Math.round(q * 1000) / 1000, unidad: p.unidad, titular: titularConsumo(p, f.id) };
         const cu = cultivoDe(f.id, x.campana) || '';
         const pc = r && r.porCultivo.find(z => z.cu === cu);
-        const av = [...(pc ? pc.r.graves : []), ...(pc && pc.r.porFinca ? pc.r.porFinca[f.id] || [] : []), ...(r ? r.graves.filter(g => / solo tiene /.test(g) && g.startsWith(titularDe(f.id) || 'El titular')) : [])];
+        const av = [...(pc ? pc.r.graves : []), ...(pc && pc.r.porFinca ? pc.r.porFinca[f.id] || [] : []), ...(r ? r.graves.filter(g => / solo tiene /.test(g) && g.startsWith(titularConsumo(p, f.id) || 'El titular')) : [])];
         if (av.length) x.avisos = av;
   }
       const nz = r && r.nitro.find(z => z.fid === f.id);
@@ -1276,9 +1276,9 @@
       vs.slice(1).forEach((vi, j) => {
         const pj = producto(vi.prodAlm); if (!pj) return; const rj = rs[j + 1];
         const it = { productoId: pj.id, producto: pj.nombre, dosis: vi.dosis, unidad: vi.unidad }; if (pj.registro) it.registro = pj.registro;
-        const q = gastoEnParcela(pj, f, vi, fs); if (q != null) it.consumo = { productoId: pj.id, cantidad: Math.round(q * 1000) / 1000, unidad: pj.unidad, titular: titularDe(f.id) };
+        const q = gastoEnParcela(pj, f, vi, fs); if (q != null) it.consumo = { productoId: pj.id, cantidad: Math.round(q * 1000) / 1000, unidad: pj.unidad, titular: titularConsumo(pj, f.id) };
         const cu = cultivoDe(f.id, x.campana) || ''; const pc = rj && rj.porCultivo.find(z => z.cu === cu);
-        const av = [...(pc ? pc.r.graves : []), ...(pc && pc.r.porFinca ? pc.r.porFinca[f.id] || [] : []), ...(rj ? rj.graves.filter(g => / solo tiene /.test(g) && g.startsWith(titularDe(f.id) || 'El titular')) : [])];
+        const av = [...(pc ? pc.r.graves : []), ...(pc && pc.r.porFinca ? pc.r.porFinca[f.id] || [] : []), ...(rj ? rj.graves.filter(g => / solo tiene /.test(g) && g.startsWith(titularConsumo(pj, f.id) || 'El titular')) : [])];
         if (av.length) x.avisos = [...new Set([...(x.avisos || []), ...av])];
         mz.push(it);
       });
@@ -2326,7 +2326,10 @@
   const UNI_PROD = ['L', 'kg', 't', 'ud'];
   const TIPO_DE_LABOR = { Tratamiento: 'Fitosanitario', Abonado: 'Abono', Siembra: 'Semilla' };
   const producto = id => db.productos.find(p => p.id === id);
-  const titularesTodos = () => [...new Set([...titulares(), ...db.titulares.map(t => t.nombre), ...db.maquinas.map(m => m.titular), ...db.documentos.map(d => d.titular), ...db.ajustes.map(a => a.titular)].map(t => String(t || '').trim()).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
+  // Montón común de los titulares (la semilla de cosecha propia que se selecciona junta): su carpeta es «Común»
+  const COMUN = 'Común';
+  const titularConsumo = (p, fid) => p && p.comun ? COMUN : titularDe(fid);
+  const titularesTodos = () => [...new Set([...titulares(), ...db.titulares.map(t => t.nombre), ...db.maquinas.map(m => m.titular), ...db.documentos.map(d => d.titular), ...db.ajustes.map(a => a.titular)].map(t => String(t || '').trim()).filter(t => t && t !== COMUN))].sort((a, b) => a.localeCompare(b, 'es'));
   const titularDe = fid => String((finca(fid) || {}).titular || '').trim();
   function movimientosProducto(pid, tit) {
     const out = [];
@@ -2368,7 +2371,7 @@
   const ESTADO_COT = { ok: ['Cuadra', 'pos'], mal: ['No cuadra', 'neg'], sin: ['Sin cotejar', 'muted'] };
 
   function vAlmacen() {
-    const a = ui.alm; const tits = titularesTodos();
+    const a = ui.alm; const tits = [...titularesTodos(), ...(db.ajustes.some(x => x.titular === COMUN) ? [COMUN] : [])];
     let h = `<div class="segs" role="group" aria-label="Apartado">${[['inventario', 'Inventario'], ['albaran', 'Albaranes'], ['factura', 'Facturas']].map(([k, t]) => `<button data-act="almVista" data-k="${k}" aria-pressed="${a.vista === k}">${t}</button>`).join('')}</div>`;
     if (tits.length) h += `<div class="carpetas" role="group" aria-label="Carpeta del titular">${[['', 'Todos'], ...tits.map(t => [t, t])].map(([k, t]) => `<button data-act="almTitular" data-k="${esc(k)}" aria-pressed="${a.titular === k}">${k ? ico.carpeta : ''}${esc(t)}</button>`).join('')}</div>`;
     const tit = a.titular;
@@ -2761,9 +2764,9 @@
         : `Aún no hay ventas de ${esc(String(v.cultivo).toLowerCase())} de ${esc(v.campana)} apuntadas en Cuentas. Se usa el precio aproximado y, en cuanto apuntes las ventas, se cambia solo por el real y se recalcula el coste de las siembras.`; };
     formulario({
       titulo: a ? 'Semilla de cosecha propia' : 'Guardar semilla de la cosecha',
-      valores: { titular: a ? a.titular : (ui.alm.titular || (ts.length === 1 ? ts[0] : '')), cultivo: cultivoIni, kg: a ? a.cantidad : null, fecha: fecha0, campana: sp.campana || campanaCosechaDe(fecha0), precio: sp.precio != null ? sp.precio : null, limpieza: sp.limpieza != null ? sp.limpieza : (a ? null : (db.ultLimpieza != null ? db.ultLimpieza : null)), motivo: a ? (a.motivo === 'Semilla de la cosecha propia' ? '' : a.motivo) : '' },
+      valores: { titular: a ? a.titular : (ui.alm.titular && ui.alm.titular !== COMUN ? ui.alm.titular : (ts.length === 1 ? ts[0] : COMUN)), cultivo: cultivoIni, kg: a ? a.cantidad : null, fecha: fecha0, campana: sp.campana || campanaCosechaDe(fecha0), precio: sp.precio != null ? sp.precio : null, limpieza: sp.limpieza != null ? sp.limpieza : (a ? null : (db.ultLimpieza != null ? db.ultLimpieza : null)), motivo: a ? (a.motivo === 'Semilla de la cosecha propia' ? '' : a.motivo) : '' },
       campos: [
-        { k: 'titular', label: 'Titular', type: 'select', req: 1, half: 1, opts: () => ts.map(t => [t, t]) },
+        { k: 'titular', label: 'De quién es', type: 'select', req: 1, half: 1, opts: () => [[COMUN, 'Común (de todos)'], ...ts.map(t => [t, t])] },
         { k: 'cultivo', label: 'Cultivo', type: 'select', req: 1, half: 1, opts: () => db.cultivos.map(c => [c, c]) },
         { k: 'kg', label: 'Kilos', type: 'num', miles: 1, req: 1, half: 1, placeholder: 'Ej.: 5.000' },
         { k: 'fecha', label: 'Fecha', type: 'date', req: 1, half: 1 },
@@ -2772,14 +2775,17 @@
         { k: 'limpieza', label: 'Limpiar y tratar (€/kg)', type: 'num', half: 1, placeholder: 'Ej.: 0,03', hint: 'Seleccionar, limpiar y desinfectar. Recuerda el último.' },
         { k: 'motivo', label: 'Notas', placeholder: 'Ej.: seleccionada en la cooperativa' }
       ],
-      extra: '<div id="spInfo" class="card pad small"></div>',
+      extra: '<div id="spInfo" class="card pad small"></div><p class="small muted" style="margin:0">«Común»: la semilla que seleccionáis juntos. Al sembrar cualquier finca, de quien sea, se descuenta de ese montón y su coste se suma a cada finca.</p>',
       alCambiar(v, form) { const b = form.querySelector('#spInfo'); if (b) b.innerHTML = info(v); },
       guardar(v) {
         if (!(v.kg > 0)) return 'Pon los kilos';
         if (!ventasGrano(v.cultivo, v.campana) && !(v.precio > 0)) return 'Aún no hay ventas de esa cosecha: pon un precio aproximado';
-        const nombre = `${v.cultivo} para sembrar`;
+        // común: un montón de todos, del que se descuenta al sembrar cualquier finca; si no, el de ese titular
+        const comun = v.titular === COMUN;
+        const nombre = comun ? `${v.cultivo} de cosecha propia` : (a && pa && !pa.comun ? pa.nombre : `${v.cultivo} para sembrar`);
         let p = db.productos.find(x => x.tipo === 'Semilla' && norm(x.nombre) === norm(nombre));
         if (!p) { p = { id: uid(), nombre, tipo: 'Semilla', unidad: 'kg' }; db.productos.push(p); }
+        if (comun) p.comun = true;
         const x = { productoId: p.id, titular: v.titular, cantidad: v.kg, fecha: v.fecha, motivo: v.motivo || 'Semilla de la cosecha propia', propia: { cultivo: v.cultivo, campana: v.campana, precio: v.precio, limpieza: v.limpieza } };
         if (a) Object.assign(a, x); else db.ajustes.push(Object.assign({ id: uid() }, x));
         if (v.limpieza != null) db.ultLimpieza = v.limpieza;
@@ -3420,7 +3426,7 @@
     // semilla: si no la has dicho, la del cultivo que tengas en el almacén
     if (tipo === 'Siembra' && !p && cultivo) {
       const tits = [...new Set(fs.map(f => titularDe(f.id)))];
-      const sem = db.productos.filter(x => x.tipo === 'Semilla' && norm(x.nombre).includes(norm(cultivo))).map(x => ({ x, ex: sum(tits, ti => Math.max(0, existencias(x.id, ti))) })).sort((a, b) => b.ex - a.ex);
+      const sem = db.productos.filter(x => x.tipo === 'Semilla' && norm(x.nombre).includes(norm(cultivo))).map(x => ({ x, ex: x.comun ? Math.max(0, existencias(x.id, COMUN)) : sum(tits, ti => Math.max(0, existencias(x.id, ti))) })).sort((a, b) => b.ex - a.ex);
       if (sem.length) p = sem[0].x;
       else R.avisos.push(`No hay semilla de ${cultivo.toLowerCase()} en el almacén: la siembra se apunta sin descontar nada. Puedes darla de alta con un albarán o diciendo «guardar … kilos de ${cultivo.toLowerCase()} de la cosecha como semilla».`);
     }
@@ -3481,7 +3487,7 @@
     const ml = t.match(/\b(?:limpi\w*|trat\w*|seleccion\w*|desinfect\w*)(?: y \w+)?(?: a| de| por| cuesta| cuestan)? (\d+(?:\.\d+)?) (centimos?|euros?)/);
     const t2 = ml ? t.replace(ml[0], ' ') : t;
     const mp = t2.match(/\b(?:a|precio(?: de)?) (\d+(?:\.\d+)?) (centimos?|euros?)(?: el| por| cada)? ?(?:kilo|kg)?/);
-    R.semilla = { cultivo: cult.length ? cult[0].c.c : '', titular: tit.length ? tit[0].c.t : (titularesTodos().length === 1 ? titularesTodos()[0] : ''), kg: c ? c.q : null, fecha: R.fecha, precio: mp ? euros(mp[1], mp[2]) : null, limpieza: ml ? euros(ml[1], ml[2]) : (db.ultLimpieza != null ? db.ultLimpieza : null) };
+    R.semilla = { cultivo: cult.length ? cult[0].c.c : '', titular: tit.length ? tit[0].c.t : (titularesTodos().length === 1 ? titularesTodos()[0] : COMUN), kg: c ? c.q : null, fecha: R.fecha, precio: mp ? euros(mp[1], mp[2]) : null, limpieza: ml ? euros(ml[1], ml[2]) : (db.ultLimpieza != null ? db.ultLimpieza : null) };
     if (!R.semilla.cultivo) R.dudas.push('¿De qué cultivo es la semilla?');
     if (!R.semilla.titular) R.dudas.push('¿Para qué titular? Di «para Iván», «de Tomás»…');
     if (!R.semilla.kg) R.dudas.push('¿Cuántos kilos?');
@@ -3635,7 +3641,7 @@
       puedeGuardar = v.importe > 0; abrir = 'mov';
     } else if (R.intencion === 'semilla') {
       const v = R.semilla;
-      h += `<dl class="kv">${fila('Semilla propia', v.cultivo ? `${esc(v.cultivo)} para sembrar` : '?')}${fila('Kilos', v.kg ? fmtKg(v.kg) : '?')}${fila('Titular', esc(v.titular) || '?')}${fila('Fecha', fmtFecha(v.fecha))}${(() => { const camp = campanaCosechaDe(v.fecha); const vv = v.cultivo ? ventasGrano(v.cultivo, camp) : null; return fila('Precio', vv ? `${fmtN(vv.precio, 4)} €/kg <span class="small muted">(ventas de ${esc(camp)})</span>` : v.precio ? `${fmtN(v.precio, 4)} €/kg <span class="small muted">(aproximado, hasta apuntar las ventas de ${esc(camp)})</span>` : '<span class="neg">sin ventas de esa cosecha: di «a 0,22 euros el kilo»</span>') + fila('Limpiar y tratar', v.limpieza ? `${fmtN(v.limpieza, 4)} €/kg` : ''); })()}</dl><p class="small muted" style="margin:0">Se suma al almacén del titular como semilla de vuestra cosecha.</p>`;
+      h += `<dl class="kv">${fila('Semilla propia', v.cultivo ? `${esc(v.cultivo)} ${v.titular === COMUN ? 'de cosecha propia' : 'para sembrar'}` : '?')}${fila('Kilos', v.kg ? fmtKg(v.kg) : '?')}${fila('Titular', esc(v.titular) || '?')}${fila('Fecha', fmtFecha(v.fecha))}${(() => { const camp = campanaCosechaDe(v.fecha); const vv = v.cultivo ? ventasGrano(v.cultivo, camp) : null; return fila('Precio', vv ? `${fmtN(vv.precio, 4)} €/kg <span class="small muted">(ventas de ${esc(camp)})</span>` : v.precio ? `${fmtN(v.precio, 4)} €/kg <span class="small muted">(aproximado, hasta apuntar las ventas de ${esc(camp)})</span>` : '<span class="neg">sin ventas de esa cosecha: di «a 0,22 euros el kilo»</span>') + fila('Limpiar y tratar', v.limpieza ? `${fmtN(v.limpieza, 4)} €/kg` : ''); })()}</dl><p class="small muted" style="margin:0">${v.titular === COMUN ? 'Va al montón común: al sembrar cualquier finca se descuenta de ahí.' : 'Se suma al almacén del titular como semilla de vuestra cosecha.'}</p>`;
       puedeGuardar = !!(v.cultivo && v.kg && v.titular);
     } else if (R.intencion === 'albaran' || R.intencion === 'factura') {
       const v = R.doc;
@@ -3677,9 +3683,10 @@
     }
     if (R.intencion === 'gasto' || R.intencion === 'ingreso') { registrarMov(Object.assign({}, R.mov)); return R.intencion === 'gasto' ? 'Gasto apuntado' : 'Ingreso apuntado'; }
     if (R.intencion === 'semilla') {
-      const v = R.semilla; const nombre = `${v.cultivo} para sembrar`;
+      const v = R.semilla; const nombre = v.titular === COMUN ? `${v.cultivo} de cosecha propia` : `${v.cultivo} para sembrar`;
       let p = db.productos.find(x => x.tipo === 'Semilla' && norm(x.nombre) === norm(nombre));
       if (!p) { p = { id: uid(), nombre, tipo: 'Semilla', unidad: 'kg' }; db.productos.push(p); }
+      if (v.titular === COMUN) p.comun = true;
       const camp = campanaCosechaDe(v.fecha);
       db.ajustes.push({ id: uid(), productoId: p.id, titular: v.titular, cantidad: v.kg, fecha: v.fecha, motivo: 'Semilla de la cosecha propia', propia: { cultivo: v.cultivo, campana: camp, precio: v.precio || null, limpieza: v.limpieza || null } });
       if (v.limpieza != null) db.ultLimpieza = v.limpieza;
