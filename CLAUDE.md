@@ -31,6 +31,7 @@ Habla con el usuario en español, con lenguaje sencillo y sin tecnicismos: es ag
 - El estiércol NO va en la siembra (es otra labor): `conEstiercol(fid, c)` es true si hay un Abonado con estiércol/basura/purín… (`esEstiercol`) en la campaña, o si la siembra trae `estiercol` (Excel o «Cambiar cultivo»). Úsalo siempre en vez de `s.estiercol`.
 - En la misma siembra cada parcela puede llevar un laboreo distinto («Laboreo distinto en alguna parcela», `laboreoPorFinca`). Los recintos con distinto régimen ya vienen separados al importar el Excel.
 - Variedades: `variedadesDe(cultivo)` sugiere las ya usadas con ese cultivo (datalist en la siembra y en «Cambiar cultivo»).
+- En la Siembra no se elige «Producto del almacén»: `semillaPara(cultivo, fincas, variedad)` coge sola la semilla del cultivo sembrado (primero la de la variedad; si no, la que más existencias tenga: común o de los titulares de esas fincas) y se descuenta dosis × ha.
 - Una parcela solo se puede sembrar una vez por campaña: en la labor «Siembra» las ya sembradas salen grises y no se pueden marcar (`sembradas(campaña)`, campo `bloquear` del selector de fincas). La voz también las quita. Las demás labores se pueden repetir.
 - «Lindan» se calcula con los contornos SIGPAC guardados en `f.geo` (vértice a menos de 5 m del borde de la otra parcela).
 
@@ -90,7 +91,7 @@ Habla con el usuario en español, con lenguaje sencillo y sin tecnicismos: es ag
 - Fincas: se aplica la finca agrupada entera, salvo lo que vaya tras «excepto / menos / salvo» (parcelas por número, titulares u otras fincas). También entiende «las de trigo de Tomás».
 - Albaranes dictados: el producto se busca primero por el nº de registro dicho (`fitoPorRegistro`), y si no, por nombre comparando sin espacios ni guiones (`mejorPorNombre`: «U46 de comple» ≈ «U-46 D COMPLET»). El proveedor sale de «empresa/proveedor X», «albarán de X» o «compra a X», y se reconocen los ya usados. «Compro/compra» con cantidades se entiende como albarán. También admite la forma ordenada «proveedor X producto Y cantidad 80 litros precio Z» (`lineasEstructuradas`).
 - Siempre enseña una tarjeta de confirmación. **Guardar** usa `registrarLabor` / `registrarCosecha` / `registrarMov`, con las mismas comprobaciones de normativa que el formulario. **Corregir** abre el formulario relleno.
-- Siembra: asigna el cultivo (`cultivoSiembra`) y descuenta la semilla «<Cultivo> para sembrar» del almacén de cada titular. La semilla propia entra como ajuste.
+- Siembra: asigna el cultivo (`cultivoSiembra`) y descuenta la semilla del cultivo del almacén (común o del titular). La semilla propia entra como ajuste.
 - Historial: `empujar()` espera si hay un `history.go` pendiente (`pendientes`). Sin eso, al cerrar una ventana y abrir otra seguidas, la app se salía al pulsar atrás.
 
 ## Excel

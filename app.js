@@ -2,7 +2,7 @@
 (function () {
   // ---------- Constantes ----------
   const KEY = 'cuadernoCampo.v1';
-  const VERSION = '2.5.1';
+  const VERSION = '2.5.2';
   const TIPOS_LABOR = ['Labrado', 'Siembra', 'Abonado', 'Tratamiento', 'Rodillo', 'Cosecha', 'Empacado', 'Otro'];
   const CON_DOSIS = ['Siembra', 'Abonado', 'Tratamiento'];
   const UNIDADES = ['kg/ha', 'L/ha', 'g/ha', 'cc/ha', 'kg', 'L'];
@@ -1163,6 +1163,16 @@
     const prim = v.tipo === 'Tratamiento' ? ['', ps.length ? 'Elige el producto' : 'No hay fitosanitarios en el almacén'] : ['', 'No descontar del almacén'];
     return [prim, ...ps.sort((a, b) => a.p.nombre.localeCompare(b.p.nombre, 'es')).map(x => [x.p.id, `${x.p.nombre} · quedan ${x.p.comun ? `${fmtN(x.ex[0] || 0, 3)} (común)` : tits.length > 1 ? tits.map((t, i) => `${t || '¿?'} ${fmtN(x.ex[i], 3)}`).join(', ') : fmtN(x.ex[0] || 0, 3)} ${x.p.unidad}`])];
   }
+  // Semilla que se gasta en una siembra: la del cultivo sembrado que haya en el almacén
+  // (primero la de la variedad, si se ha puesto; si no, la que más tenga para esas fincas: común o de sus titulares)
+  function semillaPara(cultivo, fids, variedad, prefer) {
+    if (!cultivo) return null; const cu = norm(cultivo); const tits = [...new Set((fids || []).map(titularDe))];
+    const cands = db.productos.filter(p => p.tipo === 'Semilla' && norm(p.nombre).split(' ').join(' ').includes(cu));
+    if (!cands.length) return null;
+    const ex = p => p.comun ? existencias(p.id, COMUN) : sum(tits, t => Math.max(0, existencias(p.id, t)));
+    const pt = p => (p.id === prefer ? 1e9 : 0) + (variedad && norm(p.nombre).includes(norm(variedad)) ? 1e8 : 0) + Math.max(0, ex(p));
+    return cands.slice().sort((a, b) => pt(b) - pt(a))[0];
+  }
   // Cantidad de producto que gasta una labor en una parcela
   function gastoEnParcela(p, f, v, fs) {
     const u = String(v.unidad || '').toLowerCase();
@@ -1353,6 +1363,9 @@
         + `<button type="button" class="btn sm" data-mz-add>${ico.plus} Añadir otro producto (mezcla)</button>`;
     }
     let vActual = null;
+    // en la siembra la semilla sale sola del cultivo sembrado
+    const cultivoDeSiembra = v => v.cultivoSiembra || ((v.fincas || []).map(id => cultivoDe(id, v.campana || db.campanaActiva)).find(Boolean)) || '';
+    const ponSemilla = v => { if (v.tipo !== 'Siembra') return; const sp = semillaPara(cultivoDeSiembra(v), v.fincas, v.variedadSiembra, l && l.productoId); v.prodAlm = sp ? sp.id : ''; };
     const ini = l
       ? Object.assign({}, l, { fincas: miembros.map(x => x.fincaId), prodAlm: l.productoId || '', coste: miembros.some(x => x.coste) ? Math.round(sum(miembros, x => x.coste) * 100) / 100 : null })
       : Object.assign({ fecha: hoyISO(), tipo: 'Labrado', fincas: idsIniciales(pre), unidad: 'kg/ha', campana: db.campanaActiva, prodAlm: '' }, maqPorDefecto((pre.valores || {}).tipo || 'Labrado'), { aplicador: aplicadorPorDefecto() }, pre.valores || {});
@@ -1396,7 +1409,7 @@
         { k: 'fecha', label: 'Fecha', type: 'date', req: 1, half: 1 },
         { k: 'tipo', label: 'Labor', type: 'select', req: 1, half: 1, opts: () => TIPOS_LABOR.map(t => [t, t]) },
         { k: 'fincas', label: 'Fincas', type: 'fincas', req: 1, hint: 'Marca una o varias. Al marcar una finca agrupada se marcan todas sus parcelas.', bloquear: v => v.tipo === 'Siembra' ? sembradas(v.campana, propiosIds) : null },
-        { k: 'prodAlm', label: 'Producto del almacén', sinOpcional: 1, type: 'select', dyn: 1, opts: v => opcionesAlmacen(v, l && l.productoId), show: v => !!TIPO_DE_LABOR[v.tipo] && !(viejo && !v.prodAlm && v.tipo === 'Tratamiento' && l.producto) },
+        { k: 'prodAlm', label: 'Producto del almacén', sinOpcional: 1, type: 'select', dyn: 1, opts: v => opcionesAlmacen(v, l && l.productoId), show: v => !!TIPO_DE_LABOR[v.tipo] && v.tipo !== 'Siembra' && !(viejo && !v.prodAlm && v.tipo === 'Tratamiento' && l.producto) },
         { k: 'producto', label: 'Producto, variedad o apero', placeholder: 'Ej.: cultivador, vertedera', lista: () => ['Estiércol', 'Purín', 'Gallinaza'], show: v => v.tipo !== 'Siembra' && !(TIPO_DE_LABOR[v.tipo] && v.prodAlm) && (v.tipo !== 'Tratamiento' || viejo) },
         { k: 'cultivoSiembra', label: 'Cultivo sembrado', type: 'select', half: 1, opts: () => [['', 'No cambiar'], ...db.cultivos.map(c => [c, c])], show: v => v.tipo === 'Siembra', hint: 'Se asigna a las parcelas en la campaña.' },
         { k: 'variedadSiembra', label: 'Variedad', half: 1, placeholder: 'Ej.: Marcopolo', show: v => v.tipo === 'Siembra', lista: () => variedadesDe(ini.cultivoSiembra) },
@@ -1416,6 +1429,7 @@
       ],
       extra: '<div id="fitoInfo" class="fito-info" hidden></div>',
       alCambiar(v, form, origen) {
+        ponSemilla(v);
         refrescarInfo = () => alCambiarReal(v, form);
         const ponMaq = d => { ['equipoId', 'tractorId', 'aperoId'].forEach(k => { if (form.elements[k] && d[k] !== undefined) { form.elements[k].value = d[k]; v[k] = d[k]; } }); };
         pintarLpf(v, form); vActual = v; pintarMezcla(v, form); v.mezcla = mezcla;
@@ -1451,6 +1465,7 @@
         alCambiarReal(v, form);
       },
       antesDeGuardar(v) {
+        ponSemilla(v);
         if (v.tipo === 'Siembra') { const ya = sembradas(v.campana, propiosIds); const rep = v.fincas.filter(id => ya.has(id)); if (rep.length) { toast(`${rep.length === 1 ? 'Una parcela ya está sembrada' : rep.length + ' parcelas ya están sembradas'} en ${v.campana}: quítala${rep.length === 1 ? '' : 's'} de la lista`); return Promise.resolve(false); } }
         if (v.tipo === 'Tratamiento' && !v.prodAlm && !viejo) { toast('Elige el fitosanitario del almacén. Si no aparece, sube primero su albarán.'); return Promise.resolve(false); }
         if (!v.prodAlm && v.tipo !== 'Abonado') return Promise.resolve(true);
@@ -1462,7 +1477,7 @@
       },
       guardar(v) {
         if (v.tipo === 'Siembra') { document.querySelectorAll('#lpf [data-lpf]').forEach(sel => { if (sel.value) lpf[sel.dataset.lpf] = sel.value; else delete lpf[sel.dataset.lpf]; }); v.laboreoPorFinca = Object.fromEntries(Object.entries(lpf).filter(([id]) => v.fincas.includes(id))); }
-        v.mezcla = mezcla;
+        v.mezcla = mezcla; ponSemilla(v);
         registrarLabor(v, { l, miembros, propioP });
       },
       textoBorrar: miembros.length > 1 ? `Se borrará esta labor en las ${miembros.length} parcelas y, si tenía coste, también sus gastos. Lo gastado del almacén vuelve al inventario.` : 'Se borrará la labor y, si tenía coste, también su gasto. Lo gastado del almacén vuelve al inventario.',
@@ -1474,7 +1489,8 @@
       if (anc && box.previousElementSibling !== anc) anc.after(box);
       const base = Object.assign({}, v, { dosis: parseNum(v.dosis), superficie: parseNum(v.superficie), _excl: propiosIds, _propioP: propioP, mezcla });
       const vs = TIPO_DE_LABOR[v.tipo] ? variantesLabor(base) : [];
-      const html = vs.map(vi => infoLaborHTML(vi)).filter(Boolean).join('<hr class="mz-sep">');
+      let html = vs.map(vi => infoLaborHTML(vi)).filter(Boolean).join('<hr class="mz-sep">');
+      if (v.tipo === 'Siembra') { const cu = cultivoDeSiembra(v); html = (cu ? (v.prodAlm ? `<div class="small"><b>La semilla sale sola del almacén:</b> ${esc(producto(v.prodAlm).nombre)}${v.dosis ? '' : ' · pon la dosis para descontarla'}</div>` : `<div class="small neg">No hay semilla de ${esc(cu.toLowerCase())} en el almacén: la siembra se apunta sin descontar nada. Métela con su albarán o en Almacén → «Guardar semilla».</div>`) : '<div class="small muted">Elige el cultivo sembrado y pon la dosis: la semilla se descuenta sola del almacén.</div>') + html; }
       box.hidden = !html; box.innerHTML = html;
     }
   }
