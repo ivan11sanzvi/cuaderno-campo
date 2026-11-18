@@ -2,7 +2,7 @@
 (function () {
   // ---------- Constantes ----------
   const KEY = 'cuadernoCampo.v1';
-  const VERSION = '2.6.0';
+  const VERSION = '2.6.1';
   const TIPOS_LABOR = ['Labrado', 'Siembra', 'Abonado', 'Tratamiento', 'Rodillo', 'Cosecha', 'Empacado', 'Otro'];
   const CON_DOSIS = ['Siembra', 'Abonado', 'Tratamiento'];
   const UNIDADES = ['kg/ha', 'L/ha', 'g/ha', 'cc/ha', 'kg', 'L'];
@@ -2403,10 +2403,19 @@
       const grupos = tit ? [tit] : (tits.length ? tits : ['']);
       let algo = false;
       h += `<div class="card pad sp"><div style="min-width:0"><b>Semilla de vuestra cosecha</b><div class="small muted">Grano que guardáis para sembrar, valorado al precio de venta de esa cosecha.</div></div><button class="btn sm" data-act="semillaPropia">Guardar semilla</button></div>`;
-      for (const t of grupos) {
-        const ps = productosConMovimiento(t || null); if (!ps.length) continue; algo = true;
-        h += `${grupos.length > 1 ? `<h2 class="sec">${esc(t)}</h2>` : ''}<div class="list">${ps.map(p => { const ex = existencias(p.id, t || null); const reg = regProducto(p);
-          return `<button class="row" data-act="verProducto" data-id="${p.id}" data-t="${esc(t)}"><div class="main"><div class="t">${esc(p.nombre)}</div><div class="s">${esc([p.tipo, p.registro ? 'Nº reg. ' + p.registro : '', reg && reg.e !== 'Vigente' ? reg.e : ''].filter(Boolean).join(' · '))}</div></div><div class="end big ${ex < 0 ? 'neg' : ex === 0 ? 'muted' : ''}">${fmtCant(ex, p.unidad)}</div></button>`; }).join('')}</div>`;
+      // Carpetas por tipo de producto; dentro, lo de cada titular (o solo el elegido arriba)
+      const CARPETAS_INV = [['Fitosanitario', 'Fitosanitarios'], ['Abono', 'Abono'], ['Semilla', 'Semilla'], ['Combustible', 'Gasoil'], ['Otro', 'Otros']];
+      const tipoDe = p => CARPETAS_INV.some(c => c[0] === p.tipo) ? p.tipo : 'Otro';
+      const fila = (p, t) => { const ex = existencias(p.id, t || null); const reg = regProducto(p);
+        return `<button class="row" data-act="verProducto" data-id="${p.id}" data-t="${esc(t)}"><div class="main"><div class="t">${esc(p.nombre)}</div><div class="s">${esc([p.registro ? 'Nº reg. ' + p.registro : '', p.comun ? 'común' : '', reg && reg.e !== 'Vigente' ? reg.e : ''].filter(Boolean).join(' · '))}</div></div><div class="end big ${ex < 0 ? 'neg' : ex === 0 ? 'muted' : ''}">${fmtCant(ex, p.unidad)}</div></button>`; };
+      const porTit = grupos.map(t => ({ t, ps: productosConMovimiento(t || null) })).filter(x => x.ps.length);
+      const cerrados = ui.alm.gruposCerrados || (ui.alm.gruposCerrados = new Set());
+      for (const [tipo, nombre] of CARPETAS_INV) {
+        const bloques = porTit.map(x => ({ t: x.t, ps: x.ps.filter(p => tipoDe(p) === tipo) })).filter(x => x.ps.length);
+        if (!bloques.length) continue; algo = true;
+        const n = new Set(bloques.flatMap(x => x.ps.map(p => p.id))).size;
+        h += `<details class="grupo-doc carpeta-inv" data-gdoc="inv-${tipo}"${cerrados.has('inv-' + tipo) ? '' : ' open'}><summary>${ico.carpeta}<b>${nombre}</b> <span class="small muted">${n} producto${n === 1 ? '' : 's'}</span></summary>`
+          + bloques.map(x => `${bloques.length > 1 || (!tit && grupos.length > 1) ? `<h3 class="sec sub">${esc(x.t || 'Sin titular')}</h3>` : ''}<div class="list">${x.ps.map(p => fila(p, x.t)).join('')}</div>`).join('') + '</details>';
       }
       const huerfanos = !tit ? db.productos.filter(p => !movimientosProducto(p.id).length) : [];
       if (huerfanos.length) { algo = true; h += `<h2 class="sec">Sin movimientos</h2><div class="list">${huerfanos.map(p => `<button class="row" data-act="verProducto" data-id="${p.id}" data-t=""><div class="main"><div class="t">${esc(p.nombre)}</div><div class="s">${esc(p.tipo)} · sin albaranes ni labores</div></div><div class="end small muted">Tocar para borrar</div></button>`).join('')}</div>`; }
