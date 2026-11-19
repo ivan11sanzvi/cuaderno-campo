@@ -2,7 +2,7 @@
 (function () {
   // ---------- Constantes ----------
   const KEY = 'cuadernoCampo.v1';
-  const VERSION = '2.6.7';
+  const VERSION = '2.6.8';
   const TIPOS_LABOR = ['Labrado', 'Siembra', 'Abonado', 'Tratamiento', 'Rodillo', 'Cosecha', 'Empacado', 'Otro'];
   const CON_DOSIS = ['Siembra', 'Abonado', 'Tratamiento'];
   const UNIDADES = ['kg/ha', 'L/ha', 'g/ha', 'cc/ha', 'kg', 'L'];
@@ -1275,7 +1275,7 @@
       if (p) {
         x.productoId = p.id; x.producto = p.nombre; if (p.registro) x.registro = p.registro;
         const q = gastoEnParcela(p, f, v, fs);
-        if (q != null) { x.consumo = { productoId: p.id, cantidad: Math.round(q * 1000) / 1000, unidad: p.unidad, titular: titularConsumo(p, f.id) }; if (x.consumo.titular === COMUN) x.consumo.para = titularDe(f.id); }
+        if (q != null) { x.consumo = { productoId: p.id, cantidad: redondeoCant(p, q), unidad: p.unidad, titular: titularConsumo(p, f.id) }; if (x.consumo.titular === COMUN) x.consumo.para = titularDe(f.id); }
         const cu = cultivoDe(f.id, x.campana) || '';
         const pc = r && r.porCultivo.find(z => z.cu === cu);
         const av = [...(pc ? pc.r.graves : []), ...(pc && pc.r.porFinca ? pc.r.porFinca[f.id] || [] : []), ...(r ? r.graves.filter(g => / solo (tiene|quedan) /.test(g) && g.startsWith(titularConsumo(p, f.id) === COMUN ? 'En el montón común' : (titularConsumo(p, f.id) || 'El titular'))) : [])];
@@ -1288,7 +1288,7 @@
       vs.slice(1).forEach((vi, j) => {
         const pj = producto(vi.prodAlm); if (!pj) return; const rj = rs[j + 1];
         const it = { productoId: pj.id, producto: pj.nombre, dosis: vi.dosis, unidad: vi.unidad }; if (pj.registro) it.registro = pj.registro;
-        const q = gastoEnParcela(pj, f, vi, fs); if (q != null) { it.consumo = { productoId: pj.id, cantidad: Math.round(q * 1000) / 1000, unidad: pj.unidad, titular: titularConsumo(pj, f.id) }; if (it.consumo.titular === COMUN) it.consumo.para = titularDe(f.id); }
+        const q = gastoEnParcela(pj, f, vi, fs); if (q != null) { it.consumo = { productoId: pj.id, cantidad: redondeoCant(pj, q), unidad: pj.unidad, titular: titularConsumo(pj, f.id) }; if (it.consumo.titular === COMUN) it.consumo.para = titularDe(f.id); }
         const cu = cultivoDe(f.id, x.campana) || ''; const pc = rj && rj.porCultivo.find(z => z.cu === cu);
         const av = [...(pc ? pc.r.graves : []), ...(pc && pc.r.porFinca ? pc.r.porFinca[f.id] || [] : []), ...(rj ? rj.graves.filter(g => / solo (tiene|quedan) /.test(g) && g.startsWith(titularConsumo(pj, f.id) === COMUN ? 'En el montón común' : (titularConsumo(pj, f.id) || 'El titular'))) : [])];
         if (av.length) x.avisos = [...new Set([...(x.avisos || []), ...av])];
@@ -2365,7 +2365,10 @@
     return out.sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
   }
   const existencias = (pid, tit) => (Math.round(sum(movimientosProducto(pid, tit), m => m.cant) * 1000) / 1000) || 0;
-  const fmtCant = (v, u) => `${fmtN(v, 3)} ${u || ''}`.trim();
+  // Kilos y litros a partir de 100 sin decimales (12.520 kg); las cantidades pequeñas (fitosanitarios) con decimales
+  const fmtCant = (v, u) => `${fmtN(v, /^(kg|l|t)$/i.test(u || '') && Math.abs(+v || 0) >= 100 ? 0 : 3)} ${u || ''}`.trim();
+  // La semilla se cuenta en kilos enteros
+  const redondeoCant = (p, q) => p && p.tipo === 'Semilla' && p.unidad === 'kg' ? Math.round(q) : Math.round(q * 1000) / 1000;
   function productosConMovimiento(tit) {
     const ids = new Set();
     db.documentos.filter(d => d.tipo === 'albaran' && (tit == null || d.titular === tit)).forEach(d => (d.lineas || []).forEach(l => ids.add(l.productoId)));
@@ -2853,7 +2856,7 @@
       const cu = cultivoDe(l.fincaId, l.campana); if (!cu) return;
       const kgHa = kgAbonoHa(null, +l.dosis, l.unidad, haLabor(l)); if (!(kgHa > 0)) return;
       const dest = db.productos.filter(x => x.comun && x.tipo === 'Semilla' && norm(x.nombre).includes(norm(cu))).sort((a, b) => existencias(b.id, COMUN) - existencias(a.id, COMUN))[0];
-      if (dest) out.push({ l, it: l, de: null, a: dest, q: Math.round(kgHa * haLabor(l) * 1000) / 1000 });
+      if (dest) out.push({ l, it: l, de: null, a: dest, q: redondeoCant(dest, kgHa * haLabor(l)) });
     });
     return out;
   }
@@ -2977,7 +2980,7 @@
         const kgFijas = sum(kFijas, x => fijas[x.l.id + '|' + x.it.productoId] * haLabor(x.l)), haResto = sum(xs.filter(x => !kFijas.includes(x)), x => haLabor(x.l));
         const nueva = real != null && haResto > 0 ? (real - kgFijas) / haResto : null;
         res.innerHTML = `Con las dosis apuntadas se gastaban <b>${fmtN(teorico, 0)} kg</b> en ${fmtN(sum(xs, x => haLabor(x.l)))} ha. Ahora quedan ${fmtN(ex, 0)} kg según la app.`
-          + (real != null ? (Math.abs(real - teorico) < 0.5 ? '<br><span class="neg">Con esto no cambia nada: los kilos reales son los mismos que los apuntados.</span>' : `<br>De verdad se han gastado <b>${fmtN(real, 0)} kg</b>: se ${real > teorico ? 'reparten' : 'quitan'} <b>${fmtN(Math.abs(real - teorico), 0)} kg</b> ${real > teorico ? 'más' : 'menos'} entre las siembras.`) : '<br>Escribe los kilos.')
+          + (real != null ? (Math.abs(real - teorico) < 0.5 ? '<br><span class="neg">Con esto no cambia nada: los kilos reales son los mismos que los apuntados.</span>' : `<br>De verdad se han gastado <b>${fmtN(real, 0)} kg</b>: ${real > teorico ? `se reparten <b>${fmtN(real - teorico, 0)} kg</b> más entre las siembras` : `se quitan <b>${fmtN(teorico - real, 0)} kg</b> a las siembras`}.`) : '<br>Escribe los kilos.')
           + (nueva != null ? (nueva > 0 ? `<br>Dosis para el resto de parcelas: <b>${fmtN(nueva, 1)} kg/ha</b>.` : '<br><span class="neg">Con las dosis fijas ya se pasa de lo gastado.</span>') : '');
         return { xs, real, nueva };
       };
@@ -2991,8 +2994,10 @@
         if (Math.abs(real - sum(xs, x => +x.it.consumo.cantidad || 0)) < 0.5 && !Object.keys(fijas).length) { toast('No cambia nada: los kilos reales son los mismos que los apuntados'); return; }
         if (!(nueva > 0) && xs.some(x => fijas[x.l.id + '|' + x.it.productoId] == null)) { toast('Revisa las dosis fijas: se pasan de lo gastado'); return; }
         xs.forEach(x => { const k = x.l.id + '|' + x.it.productoId; const exacta = fijas[k] != null ? fijas[k] : nueva; const dosis = Math.round(exacta * 100) / 100;
-          x.it.dosis = dosis; x.it.unidad = 'kg/ha'; x.it.consumo.cantidad = Math.round(exacta * haLabor(x.l) * 1000) / 1000; x.l.ajusteDosis = hoyISO();
+          x.it.dosis = dosis; x.it.unidad = 'kg/ha'; x.it.consumo.cantidad = redondeoCant(p, exacta * haLabor(x.l)); x.l.ajusteDosis = hoyISO();
           if (x.l.avisos && existencias(pid, carpeta != null ? carpeta : x.it.consumo.titular) >= -1e-6) { x.l.avisos = x.l.avisos.filter(g => !(g.includes(`«${p.nombre}»`) && / solo (tiene|quedan) /.test(g))); if (!x.l.avisos.length) delete x.l.avisos; } });
+        // al redondear a kilos enteros puede sobrar o faltar algún kilo: a la parcela más grande que no sea fija
+        if (p.tipo === 'Semilla' && p.unidad === 'kg') { const dif = Math.round(real) - sum(xs, x => x.it.consumo.cantidad); const libres = xs.filter(x => fijas[x.l.id + '|' + x.it.productoId] == null).sort((a, b) => haLabor(b.l) - haLabor(a.l)); if (dif && libres.length) libres[0].it.consumo.cantidad += dif; }
         guardar(); volverA(d - 1); render(); if (despues) despues(); toast(`Dosis ajustada en ${xs.length} parcela${xs.length === 1 ? '' : 's'}`);
       });
     });
