@@ -379,3 +379,6 @@ details.carpeta-inv > summary svg { width: 18px; height: 18px; color: var(--stra
 .aj-op { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-weight: 400; padding: 6px 0; }
 .aj-op input[type=radio] { width: 20px; height: 20px; flex: none; }
 .aj-op input[inputmode] { width: 90px; min-height: 38px; border: 1px solid var(--line); border-radius: 10px; padding: 0 8px; background: var(--surface); color: var(--ink); }
+.coste-total { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.coste-total .big-n { font-size: 1.35rem; font-weight: 800; }
+.coste-total dt.sub { padding-left: 10px; font-weight: 400; color: var(--muted); }

@@ -2,7 +2,7 @@
 (function () {
   // ---------- Constantes ----------
   const KEY = 'cuadernoCampo.v1';
-  const VERSION = '2.6.11';
+  const VERSION = '2.6.12';
   const TIPOS_LABOR = ['Labrado', 'Siembra', 'Abonado', 'Tratamiento', 'Rodillo', 'Cosecha', 'Empacado', 'Otro'];
   const CON_DOSIS = ['Siembra', 'Abonado', 'Tratamiento'];
   const UNIDADES = ['kg/ha', 'L/ha', 'g/ha', 'cc/ha', 'kg', 'L'];
@@ -677,6 +677,15 @@
     const c = db.campanaActiva; const st = statsCampana(c);
     const movs = db.movimientos.filter(m => m.campana === c && (ui.filtroMov === 'todos' || m.tipo === ui.filtroMov)).sort(byFechaDesc);
     let h = `<div class="stats">${stat('Ingresos', eur(st.ingresos), 'pos')}${stat('Gastos', eur(st.gastos), 'neg')}${stat('Resultado', eur(st.resultado), signo(st.resultado))}</div>`;
+    // Coste total del año: lo gastado en las fincas (apuntado, productos del almacén, maquinaria) + gastos generales sin finca,
+    // sin las facturas de compras del almacén (ya están dentro de las fincas como producto gastado)
+    { const fs = db.fincas.map(f => statsFinca(f.id, c)); const enFincas = sum(fs, x => x.gastos), prodF = sum(fs, x => x.prod), maqF = sum(fs, x => x.maq), directo = enFincas - prodF - maqF;
+      const generales = sum(db.movimientos.filter(m => m.campana === c && m.tipo === 'gasto' && !finca(m.fincaId) && !m.docId), m => m.importe);
+      const total = enFincas + generales; const ha = sum(db.fincas, f => +f.superficie || 0);
+      if (total) h += `<div class="card pad coste-total"><div class="sp"><b>Coste total del año</b><span class="big-n">${eur(total)}</span></div>
+        <div class="small">${ha ? `<b>${eur(total / ha, 2)} por hectárea</b> (${fmtN(ha)} ha) · ` : ''}aunque no esté facturado</div>
+        <div class="kv small"><dt>En las fincas</dt><dd>${eur(enFincas)}</dd>${directo ? `<dt class="sub">· apuntado en las fincas</dt><dd>${eur(directo)}</dd>` : ''}${prodF ? `<dt class="sub">· productos del almacén</dt><dd>${eur(prodF)}</dd>` : ''}${maqF ? `<dt class="sub">· maquinaria propia</dt><dd>${eur(maqF)}</dd>` : ''}<dt>Gastos generales sin finca</dt><dd>${eur(generales)}</dd></div>
+        <p class="small muted" style="margin:0">Las facturas de compras del almacén no se suman aquí: lo comprado cuenta cuando se gasta en una finca.</p></div>`; }
     if (st.maq) h += `<p class="note" style="margin-top:-4px">Los gastos incluyen <b>${eur(st.maq)}</b> de amortización de la maquinaria propia, calculada con los equipos de trabajo. No es dinero que salga ahora, pero sí lo que cuesta hacer las labores.</p>`;
     if (st.gas) h += `<p class="note" style="margin-top:-4px">En las fincas se reparten <b>${eur(st.gas)}</b> de gasóleo gastado por los equipos. Aquí no se suma otra vez: ya cuenta con la factura del gasóleo.</p>`;
     if (st.prod) { const compr = Math.round((st.prod - (st.prodPropia || 0)) * 100) / 100;
