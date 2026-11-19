@@ -2,7 +2,7 @@
 (function () {
   // ---------- Constantes ----------
   const KEY = 'cuadernoCampo.v1';
-  const VERSION = '2.6.10';
+  const VERSION = '2.6.11';
   const TIPOS_LABOR = ['Labrado', 'Siembra', 'Abonado', 'Tratamiento', 'Rodillo', 'Cosecha', 'Empacado', 'Otro'];
   const CON_DOSIS = ['Siembra', 'Abonado', 'Tratamiento'];
   const UNIDADES = ['kg/ha', 'L/ha', 'g/ha', 'cc/ha', 'kg', 'L'];
@@ -429,8 +429,12 @@
     // el gasóleo ya está en los gastos con su factura: en las fincas solo se reparte, no se suma otra vez
     const gastos = sum(movs.filter(m => m.tipo === 'gasto'), m => m.importe) + maq;
     const haSemb = sum(lista.filter(o => o.cultivo !== 'Barbecho' && o.cultivo !== 'Sin cultivo'), o => o.ha);
-    const prod = sum(db.labores.filter(l => l.campana === c && finca(l.fincaId)), costeProdLabor);
-    return { lista, genG, genI, ingresos, gastos, maq, gas, prod, resultado: ingresos - gastos, kg: sum(lista, o => o.kg), haSemb };
+    const lsP = db.labores.filter(l => l.campana === c && finca(l.fincaId) && !(+l.coste > 0));
+    const prod = sum(lsP, costeProdLabor);
+    // semilla de vuestra cosecha: no es dinero que salga, es grano que no se vendió
+    const esPropia = pid => db.ajustes.some(a => a.productoId === pid && a.propia && +a.cantidad > 0) && !db.documentos.some(d => (d.lineas || []).some(x => x.productoId === pid));
+    const prodPropia = Math.round(sum(lsP, l => sum(consumosLabor(l).filter(x => esPropia(x.productoId)), x => { const pr = precioMedioProducto(x.productoId, x.titular); return pr != null ? (+x.cantidad || 0) * pr : 0; })) * 100) / 100;
+    return { lista, genG, genI, ingresos, gastos, maq, gas, prod, prodPropia, resultado: ingresos - gastos, kg: sum(lista, o => o.kg), haSemb };
   }
 
   // ---------- Estado de la interfaz y navegación (botón atrás de Android) ----------
@@ -675,7 +679,8 @@
     let h = `<div class="stats">${stat('Ingresos', eur(st.ingresos), 'pos')}${stat('Gastos', eur(st.gastos), 'neg')}${stat('Resultado', eur(st.resultado), signo(st.resultado))}</div>`;
     if (st.maq) h += `<p class="note" style="margin-top:-4px">Los gastos incluyen <b>${eur(st.maq)}</b> de amortización de la maquinaria propia, calculada con los equipos de trabajo. No es dinero que salga ahora, pero sí lo que cuesta hacer las labores.</p>`;
     if (st.gas) h += `<p class="note" style="margin-top:-4px">En las fincas se reparten <b>${eur(st.gas)}</b> de gasóleo gastado por los equipos. Aquí no se suma otra vez: ya cuenta con la factura del gasóleo.</p>`;
-    if (st.prod) h += `<p class="note" style="margin-top:-4px">En las fincas se reparten <b>${eur(st.prod)}</b> de productos del almacén gastados en las labores (semilla, abono, fitosanitarios), al precio de tus albaranes. Aquí no se suman otra vez: ya cuentan con sus facturas.</p>`;
+    if (st.prod) { const compr = Math.round((st.prod - (st.prodPropia || 0)) * 100) / 100;
+      h += `<p class="note" style="margin-top:-4px">En las fincas se reparten <b>${eur(st.prod)}</b> de productos del almacén gastados en las labores: ${[compr > 0 ? `${eur(compr)} comprados (semilla, abono, fitosanitarios), que no se suman aquí otra vez porque ya cuentan con sus facturas` : '', st.prodPropia ? `${eur(st.prodPropia)} de semilla de vuestra cosecha, que tampoco se suma aquí: no es dinero que salga, sino grano que no se vendió` : ''].filter(Boolean).join('; ')}.</p>`; }
     h += `<div class="segs" role="group" aria-label="Mostrar">${[['todos', 'Todo'], ['gasto', 'Gastos'], ['ingreso', 'Ingresos']].map(([k, t]) => `<button data-act="filtroMov" data-k="${k}" aria-pressed="${ui.filtroMov === k}">${t}</button>`).join('')}</div>`;
     const tipo = ui.filtroMov === 'ingreso' ? 'ingreso' : 'gasto';
     const porCat = {};
