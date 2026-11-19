@@ -2,7 +2,7 @@
 (function () {
   // ---------- Constantes ----------
   const KEY = 'cuadernoCampo.v1';
-  const VERSION = '2.6.5';
+  const VERSION = '2.6.6';
   const TIPOS_LABOR = ['Labrado', 'Siembra', 'Abonado', 'Tratamiento', 'Rodillo', 'Cosecha', 'Empacado', 'Otro'];
   const CON_DOSIS = ['Siembra', 'Abonado', 'Tratamiento'];
   const UNIDADES = ['kg/ha', 'L/ha', 'g/ha', 'cc/ha', 'kg', 'L'];
@@ -2986,8 +2986,8 @@
         e.preventDefault(); const { xs, real, nueva } = calcular();
         if (real == null) { toast('Pon los kilos que quedan o los gastados'); return; }
         if (!(nueva > 0) && xs.some(x => fijas[x.l.id + '|' + x.it.productoId] == null)) { toast('Revisa las dosis fijas: se pasan de lo gastado'); return; }
-        xs.forEach(x => { const k = x.l.id + '|' + x.it.productoId; const dosis = Math.round((fijas[k] != null ? fijas[k] : nueva) * 100) / 100;
-          x.it.dosis = dosis; x.it.unidad = 'kg/ha'; x.it.consumo.cantidad = Math.round(dosis * haLabor(x.l) * 1000) / 1000; x.l.ajusteDosis = hoyISO();
+        xs.forEach(x => { const k = x.l.id + '|' + x.it.productoId; const exacta = fijas[k] != null ? fijas[k] : nueva; const dosis = Math.round(exacta * 100) / 100;
+          x.it.dosis = dosis; x.it.unidad = 'kg/ha'; x.it.consumo.cantidad = Math.round(exacta * haLabor(x.l) * 1000) / 1000; x.l.ajusteDosis = hoyISO();
           if (x.l.avisos && existencias(pid, carpeta != null ? carpeta : x.it.consumo.titular) >= -1e-6) { x.l.avisos = x.l.avisos.filter(g => !(g.includes(`«${p.nombre}»`) && / solo (tiene|quedan) /.test(g))); if (!x.l.avisos.length) delete x.l.avisos; } });
         guardar(); volverA(d - 1); render(); if (despues) despues(); toast(`Dosis ajustada en ${xs.length} parcela${xs.length === 1 ? '' : 's'}`);
       });
