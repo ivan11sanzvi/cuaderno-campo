@@ -2,7 +2,7 @@
 (function () {
   // ---------- Constantes ----------
   const KEY = 'cuadernoCampo.v1';
-  const VERSION = '2.6.8';
+  const VERSION = '2.6.9';
   const TIPOS_LABOR = ['Labrado', 'Siembra', 'Abonado', 'Tratamiento', 'Rodillo', 'Cosecha', 'Empacado', 'Otro'];
   const CON_DOSIS = ['Siembra', 'Abonado', 'Tratamiento'];
   const UNIDADES = ['kg/ha', 'L/ha', 'g/ha', 'cc/ha', 'kg', 'L'];
@@ -1161,7 +1161,7 @@
     const ps = db.productos.filter(p => p.tipo === tipoP).map(p => ({ p, ex: p.comun ? [existencias(p.id, COMUN)] : tits.map(t => existencias(p.id, t)) }))
       .filter(x => x.ex.some(e => e > 0) || x.p.id === actual);
     const prim = v.tipo === 'Tratamiento' ? ['', ps.length ? 'Elige el producto' : 'No hay fitosanitarios en el almacén'] : ['', 'No descontar del almacén'];
-    return [prim, ...ps.sort((a, b) => a.p.nombre.localeCompare(b.p.nombre, 'es')).map(x => [x.p.id, `${x.p.nombre} · quedan ${x.p.comun ? `${fmtN(x.ex[0] || 0, 3)} (común)` : tits.length > 1 ? tits.map((t, i) => `${t || '¿?'} ${fmtN(x.ex[i], 3)}`).join(', ') : fmtN(x.ex[0] || 0, 3)} ${x.p.unidad}`])];
+    return [prim, ...ps.sort((a, b) => a.p.nombre.localeCompare(b.p.nombre, 'es')).map(x => [x.p.id, `${x.p.nombre} · quedan ${x.p.comun ? `${fmtN(x.ex[0] || 0, Math.abs(x.ex[0] || 0) >= 10 ? 0 : 2)} (común)` : tits.length > 1 ? tits.map((t, i) => `${t || '¿?'} ${fmtN(x.ex[i], Math.abs(x.ex[i]) >= 10 ? 0 : 2)}`).join(', ') : fmtN(x.ex[0] || 0, Math.abs(x.ex[0] || 0) >= 10 ? 0 : 2)} ${x.p.unidad}`])];
   }
   // Semilla que se gasta en una siembra: la del cultivo sembrado que haya en el almacén
   // (primero la de la variedad, si se ha puesto; si no, la que más tenga para esas fincas: común o de sus titulares)
@@ -2365,8 +2365,8 @@
     return out.sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
   }
   const existencias = (pid, tit) => (Math.round(sum(movimientosProducto(pid, tit), m => m.cant) * 1000) / 1000) || 0;
-  // Kilos y litros a partir de 100 sin decimales (12.520 kg); las cantidades pequeñas (fitosanitarios) con decimales
-  const fmtCant = (v, u) => `${fmtN(v, /^(kg|l|t)$/i.test(u || '') && Math.abs(+v || 0) >= 100 ? 0 : 3)} ${u || ''}`.trim();
+  // Totales sin decimales (12.520 kg); por debajo de 10, como mucho 2 decimales para que no salga «0 L». Las dosis van aparte.
+  const fmtCant = (v, u) => `${fmtN(v, Math.abs(+v || 0) >= 10 ? 0 : 2)} ${u || ''}`.trim();
   // La semilla se cuenta en kilos enteros
   const redondeoCant = (p, q) => p && p.tipo === 'Semilla' && p.unidad === 'kg' ? Math.round(q) : Math.round(q * 1000) / 1000;
   function productosConMovimiento(tit) {
@@ -3194,7 +3194,7 @@
     const tr = [['Fecha', 'Nº orden parcelas', 'Cultivo', 'Superficie tratada (ha)', 'Problema fitosanitario', 'Producto (nombre comercial)', 'Nº registro', 'Dosis', 'Unidad', 'Cantidad total', 'Aplicador', 'Nº ROPO aplicador', 'Equipo', 'Nº ROMA equipo', 'Eficacia', 'Observaciones']];
     D.trat.forEach(({ x, n }) => { const a = fichaTitular(x.aplicador) || {}; const eq = maquina(x.aperoId) || maquina(x.tractorId);
       (productosLabor(x).length ? productosLabor(x) : [x]).forEach((it, k) => { const tot = sum(n, y => { const c = (productosLabor(y)[k] || {}).consumo; return c ? +c.cantidad || 0 : 0; });
-      tr.push([dmy(x.fecha), nums(n), cultG(n), haG(n), x.motivo || '', it.producto || '', it.registro || '', it.dosis != null ? it.dosis : '', it.unidad || '', tot ? `${fmtN(tot, 3)} ${(it.consumo || {}).unidad || ''}` : '', a.nombreCompleto || x.aplicador || '', a.ropo || '', equipoTxt(x), eq ? eq.roma || '' : '', '', [k === 0 ? x.notas : '', productosLabor(x).length > 1 ? 'En mezcla' : '', ...(k === 0 ? x.avisos || [] : [])].filter(Boolean).join(' · ')]); }); });
+      tr.push([dmy(x.fecha), nums(n), cultG(n), haG(n), x.motivo || '', it.producto || '', it.registro || '', it.dosis != null ? it.dosis : '', it.unidad || '', tot ? fmtCant(tot, (it.consumo || {}).unidad || '') : '', a.nombreCompleto || x.aplicador || '', a.ropo || '', equipoTxt(x), eq ? eq.roma || '' : '', '', [k === 0 ? x.notas : '', productosLabor(x).length > 1 ? 'En mezcla' : '', ...(k === 0 ? x.avisos || [] : [])].filter(Boolean).join(' · ')]); }); });
     XLSX.utils.book_append_sheet(wb, hoja(tr, [11, 14, 14, 11, 20, 24, 11, 7, 8, 12, 20, 16, 24, 14, 9, 30]), '3 Tratamientos');
     // 4. Fertilización
     const fe = [['Fecha', 'Nº orden parcelas', 'Cultivo', 'Superficie (ha)', 'Abono', 'Tipo', 'Riqueza N-P₂O₅-K₂O (%)', 'Dosis', 'Unidad', 'kg de abono/ha', 'N (UF/ha)', 'P₂O₅ (UF/ha)', 'K₂O (UF/ha)', 'Equipo', 'Observaciones']];
