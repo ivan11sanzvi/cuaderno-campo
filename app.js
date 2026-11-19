@@ -2,7 +2,7 @@
 (function () {
   // ---------- Constantes ----------
   const KEY = 'cuadernoCampo.v1';
-  const VERSION = '2.6.6';
+  const VERSION = '2.6.7';
   const TIPOS_LABOR = ['Labrado', 'Siembra', 'Abonado', 'Tratamiento', 'Rodillo', 'Cosecha', 'Empacado', 'Otro'];
   const CON_DOSIS = ['Siembra', 'Abonado', 'Tratamiento'];
   const UNIDADES = ['kg/ha', 'L/ha', 'g/ha', 'cc/ha', 'kg', 'L'];
@@ -2364,7 +2364,7 @@
     if (g && g.id === pid) { const R = repartoGasoleo(); db.labores.forEach(l => { const x = R.porLabor.get(l.id); if (!x) return; x.partes.forEach(pt => { if (tit == null || pt.t === tit) out.push({ fecha: l.fecha, cant: -Math.round(pt.q * 1000) / 1000, txt: `Gasóleo · ${l.tipo} · ${(finca(l.fincaId) || {}).nombre || ''}${pt.t ? '' : ''}`, titular: pt.t, labor: l.id }); }); }); }
     return out.sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
   }
-  const existencias = (pid, tit) => Math.round(sum(movimientosProducto(pid, tit), m => m.cant) * 1000) / 1000;
+  const existencias = (pid, tit) => (Math.round(sum(movimientosProducto(pid, tit), m => m.cant) * 1000) / 1000) || 0;
   const fmtCant = (v, u) => `${fmtN(v, 3)} ${u || ''}`.trim();
   function productosConMovimiento(tit) {
     const ids = new Set();
@@ -2956,10 +2956,12 @@
     const deCamp = () => items.filter(x => x.l.campana === camp).sort((a, b) => (finca(a.l.fincaId) || {}).nombre > (finca(b.l.fincaId) || {}).nombre ? 1 : -1);
     const dosisDe = x => x.it.consumo.cantidad / (haLabor(x.l) || 1);
     abrirCapa(`<div class="sheet" role="dialog" aria-modal="true">${cabecera('Ajustar dosis de las siembras')}<form class="body" id="frmAjd" novalidate>
-      <p class="small muted" style="margin:0">«${esc(p.nombre)}». Pon los kilos que se han gastado de verdad y la app los reparte a la misma dosis entre todas las parcelas sembradas, salvo las que marques con dosis fija.</p>
+      <p class="small muted" style="margin:0">«${esc(p.nombre)}». La sembradora no echa justo la dosis puesta: la app reparte los kilos reales a la misma dosis entre todas las parcelas sembradas, salvo las que marques con dosis fija.</p>
       <div class="field"><label for="ajCamp">Campaña</label><select id="ajCamp">${camps.map(c => `<option${c === camp ? ' selected' : ''}>${c}</option>`).join('')}</select></div>
-      <div class="grid2"><div class="field"><label for="ajQuedan">Kilos que quedan de verdad</label><input id="ajQuedan" inputmode="decimal" autocomplete="off" placeholder="Lo que hay en el montón"></div>
-      <div class="field"><label for="ajGastado">o kilos gastados en la campaña</label><input id="ajGastado" inputmode="decimal" autocomplete="off"></div></div>
+      <div class="field"><label>¿Qué ha pasado con la semilla?</label>
+        <label class="aj-op"><input type="radio" name="ajModo" value="cero" checked> Se ha gastado toda: <b>repartir lo que queda en el montón</b> (se queda a 0)</label>
+        <label class="aj-op"><input type="radio" name="ajModo" value="quedan"> Quedan de verdad <input id="ajQuedan" inputmode="decimal" autocomplete="off" placeholder="kg"> kg en el montón</label>
+        <label class="aj-op"><input type="radio" name="ajModo" value="gastado"> Se han gastado de verdad <input id="ajGastado" inputmode="decimal" autocomplete="off" placeholder="kg"> kg en estas siembras</label></div>
       <div id="ajLista"></div><div id="ajRes" class="card pad small"></div></form>
       <footer><button class="btn primary" type="submit" form="frmAjd">Aplicar</button></footer></div>`, (el, d) => {
       const lista = el.querySelector('#ajLista'), res = el.querySelector('#ajRes');
@@ -2967,24 +2969,26 @@
         return `<div class="row ajd"><div class="main"><div class="t">${esc(f.nombre || '¿?')}</div><div class="s">${fmtN(haLabor(x.l))} ha · ahora ${fmtN(dosisDe(x), 1)} kg/ha · ${fmtN(x.it.consumo.cantidad, 0)} kg</div></div><label class="ajd-fija"><input type="checkbox" data-fija="${esc(k)}"${fj != null ? ' checked' : ''}> fija</label><input class="ajd-dosis" data-dfija="${esc(k)}" inputmode="decimal" value="${esc(numStr(fj != null ? fj : Math.round(dosisDe(x) * 10) / 10))}"${fj != null ? '' : ' hidden'} aria-label="Dosis fija"></div>`; }).join('')}</div>`; };
       const calcular = () => {
         const xs = deCamp(); const teorico = sum(xs, x => +x.it.consumo.cantidad || 0);
+        const modo = (el.querySelector('[name=ajModo]:checked') || {}).value || 'cero';
         const q = parseNum(el.querySelector('#ajQuedan').value, true), g = parseNum(el.querySelector('#ajGastado').value, true);
         const ex = existencias(pid, carpeta);
-        const real = g > 0 ? g : (q != null && !Number.isNaN(q) ? teorico + ex - q : null);
+        const real = modo === 'cero' ? teorico + ex : modo === 'gastado' ? (g > 0 ? g : null) : (q != null && !Number.isNaN(q) ? teorico + ex - q : null);
         const kFijas = xs.filter(x => fijas[x.l.id + '|' + x.it.productoId] != null);
         const kgFijas = sum(kFijas, x => fijas[x.l.id + '|' + x.it.productoId] * haLabor(x.l)), haResto = sum(xs.filter(x => !kFijas.includes(x)), x => haLabor(x.l));
         const nueva = real != null && haResto > 0 ? (real - kgFijas) / haResto : null;
         res.innerHTML = `Con las dosis apuntadas se gastaban <b>${fmtN(teorico, 0)} kg</b> en ${fmtN(sum(xs, x => haLabor(x.l)))} ha. Ahora quedan ${fmtN(ex, 0)} kg según la app.`
-          + (real != null ? `<br>De verdad se han gastado <b>${fmtN(real, 0)} kg</b> (${real >= teorico ? '+' : ''}${fmtN(real - teorico, 0)} kg).` : '<br>Escribe los kilos que quedan o los gastados.')
+          + (real != null ? (Math.abs(real - teorico) < 0.5 ? '<br><span class="neg">Con esto no cambia nada: los kilos reales son los mismos que los apuntados.</span>' : `<br>De verdad se han gastado <b>${fmtN(real, 0)} kg</b>: se ${real > teorico ? 'reparten' : 'quitan'} <b>${fmtN(Math.abs(real - teorico), 0)} kg</b> ${real > teorico ? 'más' : 'menos'} entre las siembras.`) : '<br>Escribe los kilos.')
           + (nueva != null ? (nueva > 0 ? `<br>Dosis para el resto de parcelas: <b>${fmtN(nueva, 1)} kg/ha</b>.` : '<br><span class="neg">Con las dosis fijas ya se pasa de lo gastado.</span>') : '');
         return { xs, real, nueva };
       };
       el.querySelector('#ajCamp').addEventListener('change', e => { camp = e.target.value; pintarLista(); calcular(); });
-      el.addEventListener('input', e => { if (e.target.dataset.dfija) fijas[e.target.dataset.dfija] = parseNum(e.target.value) || 0; if (e.target.id === 'ajQuedan' && e.target.value) el.querySelector('#ajGastado').value = ''; if (e.target.id === 'ajGastado' && e.target.value) el.querySelector('#ajQuedan').value = ''; calcular(); });
-      el.addEventListener('change', e => { const c = e.target.dataset.fija; if (c == null) return; const inp = el.querySelector(`[data-dfija="${CSS.escape(c)}"]`); if (e.target.checked) { inp.hidden = false; fijas[c] = parseNum(inp.value) || 0; } else { inp.hidden = true; delete fijas[c]; } calcular(); });
+      el.addEventListener('input', e => { if (e.target.dataset.dfija) fijas[e.target.dataset.dfija] = parseNum(e.target.value) || 0; if (e.target.id === 'ajQuedan') el.querySelector('[name=ajModo][value=quedan]').checked = true; if (e.target.id === 'ajGastado') el.querySelector('[name=ajModo][value=gastado]').checked = true; calcular(); });
+      el.addEventListener('change', e => { if (e.target.name === 'ajModo') { calcular(); return; } const c = e.target.dataset.fija; if (c == null) return; const inp = el.querySelector(`[data-dfija="${CSS.escape(c)}"]`); if (e.target.checked) { inp.hidden = false; fijas[c] = parseNum(inp.value) || 0; } else { inp.hidden = true; delete fijas[c]; } calcular(); });
       pintarLista(); calcular();
       el.querySelector('form').addEventListener('submit', e => {
         e.preventDefault(); const { xs, real, nueva } = calcular();
-        if (real == null) { toast('Pon los kilos que quedan o los gastados'); return; }
+        if (real == null) { toast('Escribe los kilos en la opción que has marcado'); return; }
+        if (Math.abs(real - sum(xs, x => +x.it.consumo.cantidad || 0)) < 0.5 && !Object.keys(fijas).length) { toast('No cambia nada: los kilos reales son los mismos que los apuntados'); return; }
         if (!(nueva > 0) && xs.some(x => fijas[x.l.id + '|' + x.it.productoId] == null)) { toast('Revisa las dosis fijas: se pasan de lo gastado'); return; }
         xs.forEach(x => { const k = x.l.id + '|' + x.it.productoId; const exacta = fijas[k] != null ? fijas[k] : nueva; const dosis = Math.round(exacta * 100) / 100;
           x.it.dosis = dosis; x.it.unidad = 'kg/ha'; x.it.consumo.cantidad = Math.round(exacta * haLabor(x.l) * 1000) / 1000; x.l.ajusteDosis = hoyISO();

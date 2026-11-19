@@ -376,3 +376,6 @@ details.carpeta-inv > summary svg { width: 18px; height: 18px; color: var(--stra
 .row.ajd { cursor: default; gap: 8px; align-items: center; }
 .ajd-fija { display: flex; gap: 4px; align-items: center; font-size: .85rem; white-space: nowrap; }
 .ajd-dosis { width: 72px; min-height: 38px; border: 1px solid var(--line); border-radius: 10px; padding: 0 6px; background: var(--surface); color: var(--ink); }
+.aj-op { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-weight: 400; padding: 6px 0; }
+.aj-op input[type=radio] { width: 20px; height: 20px; flex: none; }
+.aj-op input[inputmode] { width: 90px; min-height: 38px; border: 1px solid var(--line); border-radius: 10px; padding: 0 8px; background: var(--surface); color: var(--ink); }
