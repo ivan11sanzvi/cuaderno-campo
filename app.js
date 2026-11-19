@@ -2,7 +2,7 @@
 (function () {
   // ---------- Constantes ----------
   const KEY = 'cuadernoCampo.v1';
-  const VERSION = '2.6.12';
+  const VERSION = '2.7.0';
   const TIPOS_LABOR = ['Labrado', 'Siembra', 'Abonado', 'Tratamiento', 'Rodillo', 'Cosecha', 'Empacado', 'Otro'];
   const CON_DOSIS = ['Siembra', 'Abonado', 'Tratamiento'];
   const UNIDADES = ['kg/ha', 'L/ha', 'g/ha', 'cc/ha', 'kg', 'L'];
@@ -18,7 +18,7 @@
   const HUES = { Trigo: 40, Cebada: 55, Titarro: 150, Lenteja: 18, 'Anís dulce': 85, Cilantro: 120, Esparceta: 320, Barbecho: 30 };
   const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
   const MESES_L = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
-  const TITULOS = { fincas: 'Fincas', cuaderno: 'Cuaderno de campo', cuentas: 'Cuentas', cosechas: 'Cosechas', almacen: 'Almacén', explotacion: 'Explotación', resumen: 'Resumen' };
+  const TITULOS = { fincas: 'Fincas', cuaderno: 'Cuaderno de campo', cuentas: 'Cuentas', cosechas: 'Cosechas', almacen: 'Almacén', explotacion: 'Explotación', ayudas: 'PAC y seguros', resumen: 'Resumen' };
   // Servicios públicos: SIGPAC (FEGA) y ortofoto PNOA (IGN).
   const SIGPAC = 'https://sigpac-hubcloud.es';
   const PNOA = 'https://tms-pnoa-ma.idee.es/1.0.0/pnoa-ma/{z}/{x}/{y}.jpeg';
@@ -61,12 +61,12 @@
   // ---------- Datos ----------
   function nuevoDB() {
     const c = campanaDe(hoyISO());
-    return { v: 1, campanaActiva: c, campanas: [c], cultivos: CULTIVOS_BASE.slice(), fincas: [], siembras: [], labores: [], movimientos: [], cosechas: [], productos: [], documentos: [], ajustes: [], titulares: [], maquinas: [], equipos: [], ultimaCopia: null, ultimoCambio: null, ejemplo: false };
+    return { v: 1, campanaActiva: c, campanas: [c], cultivos: CULTIVOS_BASE.slice(), fincas: [], siembras: [], labores: [], movimientos: [], cosechas: [], productos: [], documentos: [], ajustes: [], titulares: [], maquinas: [], equipos: [], fijos: [], ultimaCopia: null, ultimoCambio: null, ejemplo: false };
   }
   function normalizar(d) {
     const base = nuevoDB();
     const o = Object.assign(base, d && typeof d === 'object' ? d : {});
-    for (const k of ['campanas', 'fincas', 'siembras', 'labores', 'movimientos', 'cosechas', 'productos', 'documentos', 'ajustes', 'titulares', 'maquinas', 'equipos']) if (!Array.isArray(o[k])) o[k] = [];
+    for (const k of ['campanas', 'fincas', 'siembras', 'labores', 'movimientos', 'cosechas', 'productos', 'documentos', 'ajustes', 'titulares', 'maquinas', 'equipos', 'fijos']) if (!Array.isArray(o[k])) o[k] = [];
     if (!Array.isArray(o.cultivos) || !o.cultivos.length) o.cultivos = CULTIVOS_BASE.slice();
     if (!o.campanaActiva) o.campanaActiva = campanaDe(hoyISO());
     if (!o.campanas.includes(o.campanaActiva)) o.campanas.push(o.campanaActiva);
@@ -399,27 +399,32 @@
     const amort = sum(ls, l => costeMaqLabor(l) || 0), gas = sum(ls, l => costeGasLabor(l) || 0), litros = sum(ls, litrosLabor);
     const maq = amort + gas;
     const prod = sum(db.labores.filter(l => l.fincaId === fid && l.campana === c), costeProdLabor);
-    const gastos = sum(movs.filter(m => m.tipo === 'gasto'), m => m.importe) + maq + prod;
+    const fj = fijosFinca(fid, c); const seg = fj.seg, pac = fj.pac;
+    const gastos = sum(movs.filter(m => m.tipo === 'gasto'), m => m.importe) + maq + prod + seg;
     const ingresos = sum(movs.filter(m => m.tipo === 'ingreso'), m => m.importe);
-    return { ha, kg, maq, amort, gas, litros, prod, kgHa: ha && kg ? kg / ha : null, gastos, ingresos, margen: ingresos - gastos, margenHa: ha && (gastos || ingresos) ? (ingresos - gastos) / ha : null };
+    // margen: lo que da la finca con vuestro trabajo (sin PAC); margenPac: sumando la PAC repartida
+    return { ha, kg, maq, amort, gas, litros, prod, seg, pac, kgHa: ha && kg ? kg / ha : null, gastos, ingresos, margen: ingresos - gastos, margenHa: ha && (gastos || ingresos) ? (ingresos - gastos) / ha : null,
+      margenPac: ingresos + pac - gastos, margenPacHa: ha && (gastos || ingresos || pac) ? (ingresos + pac - gastos) / ha : null };
   }
   function statsGrupo(fs, c) {
-    let ha = 0, haCos = 0, kg = 0, gastos = 0, ingresos = 0, maq = 0, amort = 0, gas = 0, litros = 0, prod = 0;
-    for (const f of fs) { const s = statsFinca(f.id, c); ha += s.ha; kg += s.kg; if (s.kg > 0) haCos += s.ha; gastos += s.gastos; ingresos += s.ingresos; maq += s.maq; amort += s.amort; gas += s.gas; litros += s.litros; prod += s.prod; }
-    return { ha, kg, maq, amort, gas, litros, prod, kgHa: haCos ? kg / haCos : null, gastos, ingresos, margen: ingresos - gastos, margenHa: ha && (gastos || ingresos) ? (ingresos - gastos) / ha : null };
+    let ha = 0, haCos = 0, kg = 0, gastos = 0, ingresos = 0, maq = 0, amort = 0, gas = 0, litros = 0, prod = 0, seg = 0, pac = 0;
+    for (const f of fs) { const s = statsFinca(f.id, c); ha += s.ha; kg += s.kg; if (s.kg > 0) haCos += s.ha; gastos += s.gastos; ingresos += s.ingresos; maq += s.maq; amort += s.amort; gas += s.gas; litros += s.litros; prod += s.prod; seg += s.seg; pac += s.pac; }
+    return { ha, kg, maq, amort, gas, litros, prod, seg, pac, kgHa: haCos ? kg / haCos : null, gastos, ingresos, margen: ingresos - gastos, margenHa: ha && (gastos || ingresos) ? (ingresos - gastos) / ha : null,
+      margenPac: ingresos + pac - gastos, margenPacHa: ha && (gastos || ingresos || pac) ? (ingresos + pac - gastos) / ha : null };
   }
   function statsCampana(c) {
     const cult = {};
     for (const f of db.fincas) {
       const cu = cultivoDe(f.id, c); const st = statsFinca(f.id, c);
-      if (!cu && !st.kg && !st.gastos && !st.ingresos) continue;
+      if (!cu && !st.kg && !st.gastos && !st.ingresos && !st.pac) continue;
       const k = cu || 'Sin cultivo';
-      const o = cult[k] || (cult[k] = { cultivo: k, ha: 0, haCos: 0, kg: 0, gastos: 0, ingresos: 0 });
-      o.ha += st.ha; o.kg += st.kg; if (st.kg > 0) o.haCos += st.ha; o.gastos += st.gastos; o.ingresos += st.ingresos;
+      const o = cult[k] || (cult[k] = { cultivo: k, ha: 0, haCos: 0, kg: 0, gastos: 0, ingresos: 0, pac: 0 });
+      o.ha += st.ha; o.kg += st.kg; if (st.kg > 0) o.haCos += st.ha; o.gastos += st.gastos; o.ingresos += st.ingresos; o.pac += st.pac;
     }
-    const lista = Object.values(cult).map(o => Object.assign(o, { kgHa: o.haCos ? o.kg / o.haCos : null, margenHa: o.ha && (o.gastos || o.ingresos) ? (o.ingresos - o.gastos) / o.ha : null }))
+    const lista = Object.values(cult).map(o => Object.assign(o, { kgHa: o.haCos ? o.kg / o.haCos : null, margenHa: o.ha && (o.gastos || o.ingresos) ? (o.ingresos - o.gastos) / o.ha : null, margenPacHa: o.ha && (o.gastos || o.ingresos || o.pac) ? (o.ingresos + o.pac - o.gastos) / o.ha : null }))
       .sort((a, b) => b.ha - a.ha);
-    const generales = db.movimientos.filter(m => m.campana === c && !finca(m.fincaId));
+    // la PAC y los seguros (fijoId) se reparten entre las fincas: no son «generales»
+    const generales = db.movimientos.filter(m => m.campana === c && !finca(m.fincaId) && !m.fijoId);
     const genG = sum(generales.filter(m => m.tipo === 'gasto'), m => m.importe);
     const genI = sum(generales.filter(m => m.tipo === 'ingreso'), m => m.importe);
     const movs = db.movimientos.filter(m => m.campana === c);
@@ -435,6 +440,53 @@
     const esPropia = pid => db.ajustes.some(a => a.productoId === pid && a.propia && +a.cantidad > 0) && !db.documentos.some(d => (d.lineas || []).some(x => x.productoId === pid));
     const prodPropia = Math.round(sum(lsP, l => sum(consumosLabor(l).filter(x => esPropia(x.productoId)), x => { const pr = precioMedioProducto(x.productoId, x.titular); return pr != null ? (+x.cantidad || 0) * pr : 0; })) * 100) / 100;
     return { lista, genG, genI, ingresos, gastos, maq, gas, prod, prodPropia, resultado: ingresos - gastos, kg: sum(lista, o => o.kg), haSemb };
+  }
+
+  // ---------- PAC y seguros: gastos e ingresos fijos del año, repartidos por hectárea ----------
+  // db.fijos: {clase: pac|agrario|seguro, titular (o Común), concepto, …}
+  //  · pac: anio (PAC del año N → campaña N-1/N, aunque se cobre después), cobros [{fecha, importe}], repartoPac: todas|leguminosa
+  //  · agrario: fecha, importe, aseguradora, poliza, vence, fincas (parcelas aseguradas)
+  //  · seguro: fecha, importe, aseguradora, poliza, vence, reparto: titular|todos, maquinaId
+  // Los seguros van a la campaña de la fecha de pago (sept-agosto). Cada fijo crea un movimiento general (fijoId) para Cuentas.
+  const CLASES_FIJO = [['pac', 'PAC'], ['agrario', 'Seguros agrarios'], ['seguro', 'Seguros']];
+  const CONCEPTOS_PAC = ['Pago básico', 'Pago redistributivo', 'Ecorrégimen', 'Complemento de siembra directa', 'Ayuda a las leguminosas'];
+  const campanaPAC = anio => (anio - 1) + '/' + String(anio % 100).padStart(2, '0');
+  const anioPAC = c => +String(c).slice(0, 4) + 1;
+  const importeFijo = x => x.clase === 'pac' ? Math.round(sum(x.cobros || [], k => +k.importe || 0) * 100) / 100 : +x.importe || 0;
+  const campanaFijo = x => x.clase === 'pac' ? campanaPAC(+x.anio) : campanaDe(x.fecha || hoyISO());
+  const fincasDeTit = t => !t || t === COMUN ? db.fincas.slice() : db.fincas.filter(f => titularDe(f.id) === t);
+  const esLegumCult = cu => LEGUMINOSAS.has(norm(cu || ''));
+  const sembradasTit = (t, c) => fincasDeTit(t).filter(f => { const cu = cultivoDe(f.id, c); return cu && cu !== 'Barbecho'; }).map(f => f.id);
+  function fincasFijo(x, c = campanaFijo(x)) {
+    if (x.clase === 'agrario') return (x.fincas || []).map(finca).filter(Boolean);
+    if (x.clase === 'seguro' && x.reparto === 'todos') return db.fincas.slice();
+    const fs = fincasDeTit(x.titular);
+    return x.clase === 'pac' && x.repartoPac === 'leguminosa' ? fs.filter(f => esLegumCult(cultivoDe(f.id, c))) : fs;
+  }
+  let cacheFijos = { k: '', m: new Map() };
+  function repartoFijos(c) {
+    const k = `${db.ultimoCambio}|${db.fijos.length}|${db.siembras.length}|${db.fincas.length}`; if (cacheFijos.k !== k) cacheFijos = { k, m: new Map() };
+    if (cacheFijos.m.has(c)) return cacheFijos.m.get(c);
+    const r = { fincas: new Map(), sinSeg: 0, sinPac: 0 };
+    const get = fid => { if (!r.fincas.has(fid)) r.fincas.set(fid, { seg: 0, pac: 0 }); return r.fincas.get(fid); };
+    for (const x of db.fijos) {
+      if (campanaFijo(x) !== c) continue; const imp = importeFijo(x); if (!imp) continue;
+      const fs = fincasFijo(x, c); const ha = sum(fs, f => +f.superficie || 0);
+      if (!ha) { if (x.clase === 'pac') r.sinPac += imp; else r.sinSeg += imp; continue; }
+      fs.forEach(f => { const v = imp * (+f.superficie || 0) / ha; const o = get(f.id); if (x.clase === 'pac') o.pac += v; else o.seg += v; });
+    }
+    cacheFijos.m.set(c, r); return r;
+  }
+  const fijosFinca = (fid, c) => repartoFijos(c).fincas.get(fid) || { seg: 0, pac: 0 };
+  const tituloFijo = x => x.clase === 'pac' ? `PAC ${x.anio} · ${x.concepto || 'Ayuda'}` : (x.concepto || (x.clase === 'agrario' ? 'Seguro agrario' : 'Seguro')) + (x.aseguradora ? ' · ' + x.aseguradora : '');
+  // El movimiento de Cuentas de cada fijo (general, sin finca: en las fincas se reparte con fijosFinca)
+  function syncMovFijo(x) {
+    db.movimientos = db.movimientos.filter(m => m.fijoId !== x.id);
+    if (!db.fijos.includes(x)) return;
+    const imp = importeFijo(x); if (!imp) return;
+    const pac = x.clase === 'pac'; const fechas = (x.cobros || []).map(k => k.fecha).filter(Boolean).sort();
+    db.movimientos.push({ id: uid(), fijoId: x.id, tipo: pac ? 'ingreso' : 'gasto', fecha: pac ? fechas[fechas.length - 1] || hoyISO() : x.fecha, fincaId: '', campana: campanaFijo(x),
+      categoria: pac ? 'Subvención PAC' : 'Seguro', concepto: `${tituloFijo(x)} (${x.titular})`, importe: imp });
   }
 
   // ---------- Estado de la interfaz y navegación (botón atrás de Android) ----------
@@ -501,9 +553,10 @@
     const aviso = n.some(x => x.avisos && x.avisos.length);
     return `<button class="row" data-act="editLabor" data-id="${l.id}">${fechaBox(l.fecha)}<div class="main"><div class="t">${esc(l.tipo)}${conFinca ? ' · ' + esc(nombreLote(n)) : ''}</div>${det ? `<div class="s">${esc(det)}</div>` : ''}${aviso ? '<span class="pill neg">⚠ Revisar normativa</span>' : ''}</div>${coste ? `<div class="end small muted">${eur(coste)}${maqC || prodC ? `<div class="small">${[prodC ? 'productos' : '', maqC ? 'maquinaria' : ''].filter(Boolean).join(' y ')}</div>` : ''}</div>` : ''}</button>`;
   }
-  const notaMaq = st => st.maq || st.prod ? `<p class="small muted" style="margin:0">Los gastos incluyen ${[st.prod ? `<b>${eur(st.prod)}</b> de productos del almacén (semilla, abono, fitosanitarios…)` : '', st.maq ? `<b>${eur(st.maq)}</b> de maquinaria propia: ${[st.amort ? eur(st.amort) + ' de amortización' : '', st.gas ? `${eur(st.gas)} de gasóleo (${fmtN(st.litros, 0)} L)` : ''].filter(Boolean).join(' y ')}` : ''].filter(Boolean).join(' y ')}.</p>` : '';
+  const lineaPac = st => st.pac && st.ha ? `<div class="pacl small">Con la PAC (<b class="pos">+${eur(st.pac / st.ha)}/ha</b>, ${eur(st.pac)}): margen <b class="${signo(st.margenPac)}">${eur(st.margenPacHa)}/ha</b>.<span class="muted"> Sin PAC es lo que da la tierra con vuestro trabajo.</span></div>` : '';
+  const notaMaq = st => st.maq || st.prod || st.seg ? `<p class="small muted" style="margin:0">Los gastos incluyen ${[st.prod ? `<b>${eur(st.prod)}</b> de productos del almacén (semilla, abono, fitosanitarios…)` : '', st.maq ? `<b>${eur(st.maq)}</b> de maquinaria propia: ${[st.amort ? eur(st.amort) + ' de amortización' : '', st.gas ? `${eur(st.gas)} de gasóleo (${fmtN(st.litros, 0)} L)` : ''].filter(Boolean).join(' y ')}` : '', st.seg ? `<b>${eur(st.seg)}</b> de seguros repartidos por hectárea` : ''].filter(Boolean).join(' y ')}.</p>` : '';
   function filaMov(m, conFinca = true, n = [m]) {
-    const sub = [m.categoria, conFinca ? (finca(m.fincaId) ? nombreLote(n) : 'General') : '', m.laborId ? 'desde el cuaderno' : ''].filter(Boolean).join(' · ');
+    const sub = [m.categoria, m.fijoId ? 'repartido entre las fincas · desde PAC y seguros' : conFinca ? (finca(m.fincaId) ? nombreLote(n) : 'General') : '', m.laborId ? 'desde el cuaderno' : ''].filter(Boolean).join(' · ');
     const imp = sum(n, x => x.importe); const v = m.tipo === 'gasto' ? -imp : imp;
     return `<button class="row" data-act="editMov" data-id="${m.id}">${fechaBox(m.fecha)}<div class="main"><div class="t">${esc(m.concepto || m.categoria)}</div><div class="s">${esc(sub)}</div></div><div class="end big ${signo(v)}">${v > 0 ? '+' : ''}${eur(v, 2)}</div></button>`;
   }
@@ -589,7 +642,7 @@
       ${tits.length ? `<div class="meta"><span>Titular${tits.length > 1 ? 'es' : ''}: <b>${esc(tits.join(', '))}</b></span></div>` : ''}`;
     h += `<div class="card pad" style="display:flex;flex-direction:column;gap:12px">
       <div><div class="tag">Campaña ${c}</div><div class="chips">${Object.entries(porCult).sort((a, b) => b[1] - a[1]).map(([cu, ha]) => `<span>${chip(cu || null)} <span class="small muted">${fmtN(ha)} ha</span></span>`).join('')}</div></div>
-      <div class="stats">${stat('Rendimiento', st.kgHa ? fmtN(st.kgHa, 0) + ' kg/ha' : '—')}${stat('Gastos', eur(st.gastos))}${stat('Margen', st.margenHa != null ? eur(st.margenHa) + '/ha' : '—', signo(st.margen))}</div>${notaMaq(st)}
+      <div class="stats">${stat('Rendimiento', st.kgHa ? fmtN(st.kgHa, 0) + ' kg/ha' : '—')}${stat('Gastos', eur(st.gastos))}${stat(st.pac ? 'Margen sin PAC' : 'Margen', st.margenHa != null ? eur(st.margenHa) + '/ha' : '—', signo(st.margen))}</div>${lineaPac(st)}${notaMaq(st)}
       <div class="actions"><button class="btn sm" data-act="nuevaLabor" data-grupo="${G}">${ico.plus} Labor</button><button class="btn sm" data-act="nuevoMov" data-grupo="${G}" data-tipo="gasto">${ico.plus} Gasto</button><button class="btn sm" data-act="nuevoMov" data-grupo="${G}" data-tipo="ingreso">${ico.plus} Ingreso</button><button class="btn sm" data-act="nuevaCosecha" data-grupo="${G}">${ico.plus} Cosecha</button></div>
       <p class="small muted" style="margin:0">Lo que apuntes aquí se guarda en cada parcela. Costes, importes y kilos se reparten según la superficie de cada una.</p></div>`;
     h += `<h2 class="sec">Parcelas</h2><div class="list">${fs.map(f => filaFinca(f, true)).join('')}</div>
@@ -632,7 +685,7 @@
     h += `<div class="card pad" style="display:flex;flex-direction:column;gap:12px">
       <div class="sp"><div><div class="tag">Campaña ${c}</div><div class="chips">${chip(s && s.cultivo)}${s && s.variedad ? `<span class="muted small">${esc(s.variedad)}</span>` : ''}</div>${s && (s.laboreo || conEstiercol(id, c)) ? `<div class="small muted" style="margin-top:4px">${[s.laboreo ? 'Laboreo: ' + esc(etiquetaLaboreo(s.laboreo)) : '', conEstiercol(id, c) ? 'Con estiércol' : ''].filter(Boolean).join(' · ')}</div>` : ''}</div>
       <button class="btn sm" data-act="asignar" data-id="${id}">${s ? 'Cambiar cultivo' : 'Asignar cultivo'}</button></div>
-      <div class="stats">${stat('Rendimiento', st.kgHa ? fmtN(st.kgHa, 0) + ' kg/ha' : '—')}${stat('Gastos', eur(st.gastos))}${stat('Margen', st.margenHa != null ? eur(st.margenHa) + '/ha' : '—', signo(st.margen))}</div>${notaMaq(st)}
+      <div class="stats">${stat('Rendimiento', st.kgHa ? fmtN(st.kgHa, 0) + ' kg/ha' : '—')}${stat('Gastos', eur(st.gastos))}${stat(st.pac ? 'Margen sin PAC' : 'Margen', st.margenHa != null ? eur(st.margenHa) + '/ha' : '—', signo(st.margen))}</div>${lineaPac(st)}${notaMaq(st)}
       <div class="actions"><button class="btn sm" data-act="nuevaLabor" data-finca="${id}">${ico.plus} Labor</button><button class="btn sm" data-act="nuevoMov" data-finca="${id}" data-tipo="gasto">${ico.plus} Gasto</button><button class="btn sm" data-act="nuevoMov" data-finca="${id}" data-tipo="ingreso">${ico.plus} Ingreso</button><button class="btn sm" data-act="nuevaCosecha" data-finca="${id}">${ico.plus} Cosecha</button></div></div>`;
     const lab = db.labores.filter(l => l.fincaId === id && l.campana === c).sort(byFechaDesc);
     h += `<h2 class="sec">Labores · ${c}</h2>` + (lab.length ? `<div class="list">${lab.map(l => filaLabor(l, false)).join('')}</div>` : '<p class="note">Sin labores apuntadas en esta campaña.</p>');
@@ -679,12 +732,12 @@
     let h = `<div class="stats">${stat('Ingresos', eur(st.ingresos), 'pos')}${stat('Gastos', eur(st.gastos), 'neg')}${stat('Resultado', eur(st.resultado), signo(st.resultado))}</div>`;
     // Coste total del año: lo gastado en las fincas (apuntado, productos del almacén, maquinaria) + gastos generales sin finca,
     // sin las facturas de compras del almacén (ya están dentro de las fincas como producto gastado)
-    { const fs = db.fincas.map(f => statsFinca(f.id, c)); const enFincas = sum(fs, x => x.gastos), prodF = sum(fs, x => x.prod), maqF = sum(fs, x => x.maq), directo = enFincas - prodF - maqF;
-      const generales = sum(db.movimientos.filter(m => m.campana === c && m.tipo === 'gasto' && !finca(m.fincaId) && !m.docId), m => m.importe);
+    { const fs = db.fincas.map(f => statsFinca(f.id, c)); const enFincas = sum(fs, x => x.gastos), prodF = sum(fs, x => x.prod), maqF = sum(fs, x => x.maq), segF = sum(fs, x => x.seg), directo = enFincas - prodF - maqF - segF;
+      const generales = sum(db.movimientos.filter(m => m.campana === c && m.tipo === 'gasto' && !finca(m.fincaId) && !m.docId && !m.fijoId), m => m.importe) + repartoFijos(c).sinSeg;
       const total = enFincas + generales; const ha = sum(db.fincas, f => +f.superficie || 0);
       if (total) h += `<div class="card pad coste-total"><div class="sp"><b>Coste total del año</b><span class="big-n">${eur(total)}</span></div>
         <div class="small">${ha ? `<b>${eur(total / ha, 2)} por hectárea</b> (${fmtN(ha)} ha) · ` : ''}aunque no esté facturado</div>
-        <div class="kv small"><dt>En las fincas</dt><dd>${eur(enFincas)}</dd>${directo ? `<dt class="sub">· apuntado en las fincas</dt><dd>${eur(directo)}</dd>` : ''}${prodF ? `<dt class="sub">· productos del almacén</dt><dd>${eur(prodF)}</dd>` : ''}${maqF ? `<dt class="sub">· maquinaria propia</dt><dd>${eur(maqF)}</dd>` : ''}<dt>Gastos generales sin finca</dt><dd>${eur(generales)}</dd></div>
+        <div class="kv small"><dt>En las fincas</dt><dd>${eur(enFincas)}</dd>${directo ? `<dt class="sub">· apuntado en las fincas</dt><dd>${eur(directo)}</dd>` : ''}${prodF ? `<dt class="sub">· productos del almacén</dt><dd>${eur(prodF)}</dd>` : ''}${maqF ? `<dt class="sub">· maquinaria propia</dt><dd>${eur(maqF)}</dd>` : ''}${segF ? `<dt class="sub">· seguros</dt><dd>${eur(segF)}</dd>` : ''}<dt>Gastos generales sin finca</dt><dd>${eur(generales)}</dd></div>
         <p class="small muted" style="margin:0">Las facturas de compras del almacén no se suman aquí: lo comprado cuenta cuando se gasta en una finca.</p></div>`; }
     if (st.maq) h += `<p class="note" style="margin-top:-4px">Los gastos incluyen <b>${eur(st.maq)}</b> de amortización de la maquinaria propia, calculada con los equipos de trabajo. No es dinero que salga ahora, pero sí lo que cuesta hacer las labores.</p>`;
     if (st.gas) h += `<p class="note" style="margin-top:-4px">En las fincas se reparten <b>${eur(st.gas)}</b> de gasóleo gastado por los equipos. Aquí no se suma otra vez: ya cuenta con la factura del gasóleo.</p>`;
@@ -734,14 +787,15 @@
     if (st.lista.length) {
       const maxHa = Math.max(...st.lista.map(o => o.ha));
       h += `<h2 class="sec">Superficie por cultivo · ${c}</h2><div class="card pad">${barras(st.lista.map(o => ({ label: o.cultivo, valor: fmtN(o.ha) + ' ha', n: o.ha, h: hue(o.cultivo) })), maxHa)}</div>`;
-      h += `<h2 class="sec">Por cultivo</h2><div class="tablewrap"><table><thead><tr><th>Cultivo</th><th>ha</th><th>kg/ha</th><th>Ingresos</th><th>Gastos</th><th>Margen €/ha</th></tr></thead><tbody>${st.lista.map(o =>
-        `<tr><td>${chip(o.cultivo)}</td><td>${fmtN(o.ha)}</td><td>${o.kgHa ? fmtN(o.kgHa, 0) : '—'}</td><td>${eur(o.ingresos)}</td><td>${eur(o.gastos)}</td><td class="${signo(o.ingresos - o.gastos)}">${o.margenHa != null ? fmtN(o.margenHa, 0) : '—'}</td></tr>`).join('')}</tbody></table></div>`;
+      const hayPac = st.lista.some(o => o.pac);
+      h += `<h2 class="sec">Por cultivo</h2><div class="tablewrap"><table><thead><tr><th>Cultivo</th><th>ha</th><th>kg/ha</th><th>Ingresos</th><th>Gastos</th><th>${hayPac ? 'Sin PAC €/ha' : 'Margen €/ha'}</th>${hayPac ? '<th>Con PAC €/ha</th>' : ''}</tr></thead><tbody>${st.lista.map(o =>
+        `<tr><td>${chip(o.cultivo)}</td><td>${fmtN(o.ha)}</td><td>${o.kgHa ? fmtN(o.kgHa, 0) : '—'}</td><td>${eur(o.ingresos)}</td><td>${eur(o.gastos)}</td><td class="${signo(o.ingresos - o.gastos)}">${o.margenHa != null ? fmtN(o.margenHa, 0) : '—'}</td>${hayPac ? `<td class="${signo(o.ingresos + o.pac - o.gastos)}">${o.margenPacHa != null ? fmtN(o.margenPacHa, 0) : '—'}</td>` : ''}</tr>`).join('')}</tbody></table></div>`;
     }
     if (st.genG || st.genI) h += `<p class="note">Gastos generales sin finca: <b>${eur(st.genG)}</b>${st.genI ? ` · ingresos generales (PAC, etc.): <b>${eur(st.genI)}</b>` : ''}. No se reparten por cultivo, pero sí cuentan en el resultado total.</p>`;
-    const fs = db.fincas.slice().sort(byNombre);
-    h += `<h2 class="sec">Por finca · ${c}</h2><div class="tablewrap"><table><thead><tr><th>Finca</th><th>Cultivo</th><th>ha</th><th>kg/ha</th><th>Margen €/ha</th></tr></thead><tbody>${fs.map(f => {
+    const fs = db.fincas.slice().sort(byNombre); const conPac = fs.some(f => fijosFinca(f.id, c).pac);
+    h += `<h2 class="sec">Por finca · ${c}</h2><div class="tablewrap"><table><thead><tr><th>Finca</th><th>Cultivo</th><th>ha</th><th>kg/ha</th><th>${conPac ? 'Sin PAC €/ha' : 'Margen €/ha'}</th>${conPac ? '<th>Con PAC €/ha</th>' : ''}</tr></thead><tbody>${fs.map(f => {
       const x = statsFinca(f.id, c);
-      return `<tr><td>${esc(f.nombre)}</td><td style="text-align:left">${chip(cultivoDe(f.id, c))}</td><td>${fmtN(f.superficie)}</td><td>${x.kgHa ? fmtN(x.kgHa, 0) : '—'}</td><td class="${signo(x.margen)}">${x.margenHa != null ? fmtN(x.margenHa, 0) : '—'}</td></tr>`;
+      return `<tr><td>${esc(f.nombre)}</td><td style="text-align:left">${chip(cultivoDe(f.id, c))}</td><td>${fmtN(f.superficie)}</td><td>${x.kgHa ? fmtN(x.kgHa, 0) : '—'}</td><td class="${signo(x.margen)}">${x.margenHa != null ? fmtN(x.margenHa, 0) : '—'}</td>${conPac ? `<td class="${signo(x.margenPac)}">${x.margenPacHa != null ? fmtN(x.margenPacHa, 0) : '—'}</td>` : ''}</tr>`;
     }).join('')}</tbody></table></div>`;
     // Comparativa entre campañas
     const camps = listaCampanas();
@@ -895,9 +949,9 @@
     $('#title').textContent = ui.fincaId ? 'Parcela' : ui.grupo ? 'Finca agrupada' : TITULOS[ui.tab];
     document.querySelectorAll('.tabs button').forEach(b => b.setAttribute('aria-current', b.dataset.tab === ui.tab ? 'page' : 'false'));
     const main = $('#main');
-    main.innerHTML = ui.fincaId ? vDetalle(ui.fincaId) : ui.grupo ? vGrupo(ui.grupo) : ({ fincas: vFincas, cuaderno: vCuaderno, cuentas: vCuentas, cosechas: vCosechas, almacen: vAlmacen, explotacion: vExplotacion, resumen: vResumen }[ui.tab])();
-    const fab = { fincas: ['nuevaFinca', 'Finca'], cuaderno: ['nuevaLabor', 'Labor'], cuentas: ['nuevoMov', 'Apunte'], cosechas: ['nuevaCosecha', 'Cosecha'], almacen: ui.alm.vista === 'factura' ? ['nuevoDoc" data-k="factura', 'Factura'] : ['nuevoDoc" data-k="albaran', 'Albarán'], explotacion: ui.exp.vista === 'maquinaria' ? ['nuevaMaquina', 'Máquina'] : ['nuevoAgricultor', 'Agricultor'] }[ui.tab];
-    const mostrarFab = fab && !ui.fincaId && !ui.grupo && (db.fincas.length || ui.tab === 'almacen' || ui.tab === 'explotacion') && !(ui.tab === 'fincas' && ui.vistaFincas === 'mapa');
+    main.innerHTML = ui.fincaId ? vDetalle(ui.fincaId) : ui.grupo ? vGrupo(ui.grupo) : ({ fincas: vFincas, cuaderno: vCuaderno, cuentas: vCuentas, cosechas: vCosechas, almacen: vAlmacen, explotacion: vExplotacion, ayudas: vAyudas, resumen: vResumen }[ui.tab])();
+    const fab = { fincas: ['nuevaFinca', 'Finca'], cuaderno: ['nuevaLabor', 'Labor'], cuentas: ['nuevoMov', 'Apunte'], cosechas: ['nuevaCosecha', 'Cosecha'], almacen: ui.alm.vista === 'factura' ? ['nuevoDoc" data-k="factura', 'Factura'] : ['nuevoDoc" data-k="albaran', 'Albarán'], explotacion: ui.exp.vista === 'maquinaria' ? ['nuevaMaquina', 'Máquina'] : ['nuevoAgricultor', 'Agricultor'], ayudas: ['nuevoFijo', 'Apunte'] }[ui.tab];
+    const mostrarFab = fab && !ui.fincaId && !ui.grupo && (db.fincas.length || ui.tab === 'almacen' || ui.tab === 'explotacion' || ui.tab === 'ayudas') && !(ui.tab === 'fincas' && ui.vistaFincas === 'mapa');
     $('#fabSlot').innerHTML = mostrarFab ? `<button class="fab" data-act="${fab[0]}">${ico.plus}${fab[1]}</button>` : '';
     montarMapa();
   }
@@ -999,8 +1053,10 @@
       if (cs[i].half && cs[i + 1] && cs[i + 1].half) { cuerpo += `<div class="grid2" data-pair="${cs[i].k}">${campoHTML(cs[i])}${campoHTML(cs[i + 1])}</div>`; i++; }
       else cuerpo += campoHTML(cs[i]);
     }
-    abrirCapa(`<div class="sheet" role="dialog" aria-modal="true">${cabecera(spec.titulo)}<form class="body" id="frm" novalidate>${cuerpo}${spec.extra || ''}</form>
-      <footer>${spec.borrar ? '<button class="btn danger" type="button" data-del>Borrar</button>' : ''}<button class="btn primary" type="submit" form="frm">${spec.textoGuardar || 'Guardar'}</button></footer></div>`, (el, d) => {
+    // un formulario abierto encima de otro (p. ej. el seguro desde la ficha de la máquina) lleva otro id, si no el botón Guardar enviaría el de abajo
+    const frmId = document.getElementById('frm') ? 'frm' + (capas.length + 1) : 'frm';
+    abrirCapa(`<div class="sheet" role="dialog" aria-modal="true">${cabecera(spec.titulo)}<form class="body" id="${frmId}" novalidate>${cuerpo}${spec.extra || ''}</form>
+      <footer>${spec.borrar ? '<button class="btn danger" type="button" data-del>Borrar</button>' : ''}<button class="btn primary" type="submit" form="${frmId}">${spec.textoGuardar || 'Guardar'}</button></footer></div>`, (el, d) => {
       const form = el.querySelector('form');
       const leer = () => {
         for (const f of cs) {
@@ -1530,6 +1586,7 @@
   function formMov(id, pre = {}) {
     const m = id ? db.movimientos.find(x => x.id === id) : null;
     if (m && m.laborId && db.labores.some(l => l.id === m.laborId)) { formLabor(m.laborId); return; }
+    if (m && m.fijoId && db.fijos.some(x => x.id === m.fijoId)) { formFijo(m.fijoId); return; }
     const miembros = m ? miembrosLote(db.movimientos, m) : [];
     const tipo = pre.tipo || 'gasto';
     const venta = v => v.categoria === 'Venta de grano' || v.categoria === 'Venta de paja';
@@ -2549,12 +2606,12 @@
     const r = await ocrWorker.recognize(cv);
     return r.data.text || '';
   }
-  async function textoDePDF(blob) {
+  async function textoDePDF(blob, maxPag = 4) {
     await cargarScript('vendor/pdfjs/pdf.min.js');
     const pdfjs = window.pdfjsLib; pdfjs.GlobalWorkerOptions.workerSrc = 'vendor/pdfjs/pdf.worker.min.js';
     const pdf = await pdfjs.getDocument({ data: await blob.arrayBuffer() }).promise;
     let txt = '';
-    for (let i = 1; i <= Math.min(pdf.numPages, 4); i++) {
+    for (let i = 1; i <= Math.min(pdf.numPages, maxPag); i++) {
       const pg = await pdf.getPage(i); const tc = await pg.getTextContent();
       const its = tc.items.filter(it => it.str && it.str.trim()).map(it => ({ s: it.str, x: it.transform[4], y: it.transform[5] }));
       if (its.length < 8) { // escaneado: es una imagen dentro del PDF
@@ -4152,6 +4209,7 @@
     db.ajustes.forEach(a => { if (es(a.titular)) a.titular = nuevo; });
     db.labores.forEach(l => consumosLabor(l).forEach(c => { if (es(c.titular)) c.titular = nuevo; }));
     db.maquinas.forEach(m => { if (es(m.titular)) m.titular = nuevo; });
+    db.fijos.forEach(x => { if (es(x.titular)) { x.titular = nuevo; syncMovFijo(x); } });
     db.labores.forEach(l => { if (es(l.aplicador)) l.aplicador = nuevo; });
     if (es(db.ultAplicador)) db.ultAplicador = nuevo;
     if (ui.alm.titular === viejo) ui.alm.titular = nuevo;
@@ -4264,7 +4322,7 @@
         { k: 'itv', label: 'Próxima ITV', type: 'date', half: 1, show: v => CON_ITV.includes(v.tipo) },
         { k: 'iteaf', label: 'Próxima inspección ITEAF', type: 'date', half: 1, show: v => CON_ITEAF.includes(v.tipo), hint: 'Inspección de equipos de aplicación de fitosanitarios.' },
         { k: 'seguroCompania', label: 'Seguro (compañía)', half: 1 },
-        { k: 'seguroVence', label: 'Seguro vence el', type: 'date', half: 1 },
+        { k: 'seguroVence', label: 'Seguro vence el', type: 'date', half: 1, hint: 'El pago del seguro se apunta abajo y se reparte entre las hectáreas.' },
         { k: 'fechaCompra', label: 'Fecha de compra', type: 'date', half: 1 },
         { k: 'precioCompra', label: 'Precio de compra (€)', type: 'num', miles: 1, half: 1 },
         { k: 'horasVida', label: 'Horas de amortización', type: 'num', miles: 1, half: 1, placeholder: 'Ej.: 12.000', hint: 'Horas de trabajo en las que la pagas.' },
@@ -4272,7 +4330,7 @@
         { k: 'baja', label: 'Estado', type: 'select', opts: () => [['no', 'En uso'], ['si', 'Vendida o de baja']] },
         { k: 'notas', label: 'Notas', type: 'textarea', placeholder: 'Taller, recambios, averías conocidas…' }
       ],
-      extra: '<div class="card pad small" id="maqCoste" hidden></div>' + (m ? resumenTrabajoMaq(m) : ''),
+      extra: '<div class="card pad small" id="maqCoste" hidden></div>' + (m ? segurosMaqHTML(m) + resumenTrabajoMaq(m) : ''),
       alCambiar(v, form) {
         const box = form.querySelector('#maqCoste'); if (!box) return;
         const c = costeHoraMaq({ precioCompra: parseNum(v.precioCompra, true), horasVida: parseNum(v.horasVida, true), valorResidual: parseNum(v.valorResidual, true) });
@@ -4286,6 +4344,184 @@
       textoBorrar: 'Se borrará la máquina. Si la has vendido, mejor márcala «Vendida o de baja» para conservar su historial.',
       borrar: m && (() => { db.maquinas = db.maquinas.filter(x => x !== m); })
     });
+  }
+
+  // Seguros pagados de una máquina (en su ficha)
+  function segurosMaqHTML(m) {
+    const xs = db.fijos.filter(x => x.maquinaId === m.id).sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
+    return `<div class="card pad small fj-maq"><div class="sp"><b>Seguro pagado</b><button type="button" class="btn sm" data-act="nuevoFijo" data-clase="seguro" data-maq="${m.id}">${ico.plus} Apuntar pago</button></div>
+      ${xs.length ? xs.map(x => `<button type="button" class="row" data-act="editFijo" data-id="${x.id}"><div class="main"><div class="t">${eur(x.importe, 2)} · campaña ${campanaFijo(x)}</div><div class="s">${esc([fmtFecha(x.fecha), x.aseguradora, x.reparto === 'todos' ? 'entre las tres explotaciones' : 'entre las hectáreas de ' + x.titular].filter(Boolean).join(' · '))}</div></div></button>`).join('') : '<div class="muted">Aún no has apuntado lo que pagas de seguro.</div>'}</div>`;
+  }
+  // Parcelas de la póliza de un seguro agrario: busca polígono-parcela(-recinto) de cada parcela en el texto del PDF o de la foto
+  async function parcelasDePoliza(file, estado) {
+    let txt;
+    if (/pdf/.test(file.type) || /\.pdf$/i.test(file.name || '')) { estado('Leyendo la póliza…'); ocrProgreso = x => estado(`Reconociendo las letras… ${Math.round(x * 100)} %`); txt = await textoDePDF(file, 30); }
+    else { estado('Reconociendo las letras de la foto… (la primera vez tarda más)'); ocrProgreso = x => estado(`Reconociendo las letras… ${Math.round(x * 100)} %`); txt = await textoDeImagen(file); }
+    ocrProgreso = null;
+    const t = ' ' + txt.replace(/\s+/g, ' ') + ' ';
+    const S = '[\\s/\\-.:|]+';
+    const fuerte = [], debil = [];
+    for (const f of db.fincas) {
+      const rs = refsFinca(f); if (!rs.length) continue;
+      const conRec = rs.some(r => r.re && new RegExp(`(^|\\D)0*${r.po}${S}0*${r.pa}${S}0*${r.re}(?=\\D)`).test(t));
+      if (conRec) { fuerte.push(f.id); continue; }
+      if (rs.some(r => new RegExp(`(^|\\D)0*${r.po}${S}0*${r.pa}(?=\\D)`).test(t))) debil.push(f.id);
+    }
+    return { ids: fuerte.length ? fuerte : debil, txt };
+  }
+
+  function vAyudas() {
+    const c = db.campanaActiva; const an = anioPAC(c);
+    const fj = db.fijos.filter(x => campanaFijo(x) === c);
+    const tot = cl => sum(fj.filter(x => x.clase === cl), importeFijo);
+    let h = `<div class="stats">${stat('PAC ' + an, eur(tot('pac')), 'pos')}${stat('Seg. agrarios', eur(tot('agrario')), 'neg')}${stat('Seguros', eur(tot('seguro')), 'neg')}</div>
+      <p class="small muted" style="margin:0">Campaña ${c}: aquí va la <b>PAC de ${an}</b> (la de lo sembrado y cosechado en ${an}), aunque se cobre después. Los seguros van a la campaña de la fecha en que se pagan (de septiembre a agosto). Todo se reparte por hectárea en las fincas y cuenta en Cuentas.</p>`;
+    const viejos = db.movimientos.filter(m => !m.fijoId && (m.categoria === 'Seguro' || m.categoria === 'Subvención PAC'));
+    if (viejos.length) h += `<div class="banner"><p><b>Tienes ${viejos.length} apunte${viejos.length === 1 ? '' : 's'} de PAC o seguros hecho${viejos.length === 1 ? '' : 's'} en Cuentas</b> (${eur(sum(viejos, m => m.importe))}). Pásalos aquí para que se repartan entre las fincas; no se duplican. Después revisa el agricultor de cada uno.</p><button class="btn" data-act="pasarFijos">Pasar aquí</button></div>`;
+    const vencen = db.fijos.filter(x => x.vence && !x.maquinaId && ['vencido', 'pronto'].includes(estadoFecha(x.vence, 30)) && !db.fijos.some(y => y !== x && y.clase === x.clase && y.titular === x.titular && (y.concepto || '') === (x.concepto || '') && (y.vence || '') > x.vence));
+    if (vencen.length) h += `<div class="banner"><p>${vencen.map(x => `${esc(tituloFijo(x))} de <b>${esc(x.titular)}</b> ${estadoFecha(x.vence, 30) === 'vencido' ? 'venció' : 'vence'} el ${fmtFecha(x.vence)}.`).join(' ')}</p></div>`;
+    const estado = ui.fjEstado || (ui.fjEstado = new Map()); const cerr = ui.alm.gruposCerrados || (ui.alm.gruposCerrados = new Set());
+    const tits = titularesTodos();
+    const fila = x => {
+      const fs = fincasFijo(x, c); const ha = sum(fs, f => +f.superficie || 0); const imp = importeFijo(x);
+      let t, s;
+      if (x.clase === 'pac') { const cs = (x.cobros || []).filter(k => +k.importe); t = x.concepto || 'Ayuda';
+        s = [cs.length === 1 ? `cobrado el ${fmtFecha(cs[0].fecha)}` : `${cs.length} cobros (${cs.map(k => fmtFecha(k.fecha)).join(', ')})`, x.repartoPac === 'leguminosa' ? `solo leguminosa: ${fmtN(ha)} ha` : `${fmtN(ha)} ha`]; }
+      else { const m = maquina(x.maquinaId); t = x.concepto || (x.clase === 'agrario' ? 'Seguro agrario' : 'Seguro');
+        s = [x.aseguradora, x.poliza ? 'póliza ' + x.poliza : '', 'pagado el ' + fmtFecha(x.fecha), m ? 'máquina: ' + m.nombre : '', x.clase === 'agrario' ? `${fs.length} parcela${fs.length === 1 ? '' : 's'} · ${fmtN(ha)} ha` : x.reparto === 'todos' ? `entre las tres explotaciones (${fmtN(ha)} ha)` : `entre su explotación (${fmtN(ha)} ha)`]; }
+      return `<button class="row" data-act="editFijo" data-id="${x.id}"><div class="main"><div class="t">${esc(t)}</div><div class="s">${esc(s.filter(Boolean).join(' · '))}</div>${x.vence ? pillFecha('Seguro', x.vence, 30) : ''}${!ha ? '<span class="pill warn">Sin hectáreas donde repartirlo</span>' : ''}</div>
+        <div class="end"><div class="big ${x.clase === 'pac' ? 'pos' : ''}">${x.clase === 'pac' ? '+' : ''}${eur(imp, 2)}</div>${ha ? `<div class="small muted">${eur(imp / ha, 2)}/ha</div>` : ''}</div></button>`;
+    };
+    for (const [cl, nombre] of CLASES_FIJO) {
+      const xs = fj.filter(x => x.clase === cl);
+      const nombres = [...new Set([...tits, ...xs.map(x => x.titular)])].filter(t => t && t !== COMUN).sort((a, b) => a.localeCompare(b, 'es'));
+      if (xs.some(x => x.titular === COMUN)) nombres.push(COMUN);
+      const kc = 'fj-' + cl;
+      h += `<details class="grupo-doc carpeta-inv" data-gdoc="${kc}"${cerr.has(kc) ? '' : ' open'}><summary>${ico.carpeta}<b>${nombre}</b> <span class="small muted">${xs.length ? eur(sum(xs, importeFijo)) : 'nada apuntado'}</span></summary>`;
+      for (const t of nombres) {
+        const ys = xs.filter(x => x.titular === t); const k = `fj-${cl}-${t}`; const abierto = estado.has(k) ? estado.get(k) : ys.length > 0;
+        const haT = sum(fincasDeTit(t), f => +f.superficie || 0); const imp = sum(ys, importeFijo);
+        h += `<details class="grupo-doc fj-tit" data-gdoc="${esc(k)}"${abierto ? ' open' : ''}><summary>${ico.carpeta}<b>${esc(t)}</b> <span class="small muted">${ys.length ? `${eur(imp)}${cl === 'pac' && haT ? ` · ${eur(imp / haT, 2)}/ha de su explotación` : ''}` : 'vacía'}</span></summary>
+          ${ys.length ? `<div class="list">${ys.map(fila).join('')}</div>` : ''}<div class="btns" style="justify-content:flex-start"><button class="btn sm" data-act="nuevoFijo" data-clase="${cl}" data-t="${esc(t)}">${ico.plus} Añadir</button></div></details>`;
+      }
+      h += `<div class="btns" style="justify-content:flex-start"><button class="btn sm" data-act="nuevoFijo" data-clase="${cl}" data-t="">${ico.plus} Otro agricultor</button>${nombres.includes(COMUN) ? '' : `<button class="btn sm" data-act="nuevoFijo" data-clase="${cl}" data-t="${COMUN}">${ico.plus} Carpeta común</button>`}</div></details>`;
+    }
+    return h;
+  }
+
+  function formFijo(id, pre = {}) {
+    const x = id ? db.fijos.find(y => y.id === id) : null;
+    const ini = x ? Object.assign({}, x, { conceptoPac: x.clase === 'pac' ? x.concepto : '', fincas: (x.fincas || []).slice() })
+      : Object.assign({ clase: 'pac', titular: '', anio: anioPAC(db.campanaActiva), conceptoPac: '', repartoPac: 'todas', fecha: hoyISO(), reparto: 'titular', fincas: [], maquinaId: '' }, pre);
+    if (!x && ini.clase === 'agrario' && !ini.fincas.length && ini.titular) ini.fincas = sembradasTit(ini.titular, campanaDe(ini.fecha));
+    const cobros0 = x && x.clase === 'pac' && (x.cobros || []).length ? x.cobros : [{ fecha: hoyISO(), importe: null }];
+    const filaCobro = k => `<div class="cobro"><input type="date" class="cb-f" name="cobroFecha" value="${esc(k.fecha || '')}" aria-label="Fecha del cobro"><input type="text" class="cb-i" name="cobroImporte" inputmode="decimal" autocomplete="off" placeholder="Importe €" value="${esc(numStr(k.importe))}" aria-label="Importe del cobro"><button type="button" class="iconbtn" data-delcobro aria-label="Quitar cobro">${ico.x}</button></div>`;
+    let frm = null, leerV = () => ({});
+    const leerCobros = () => frm ? [...frm.querySelectorAll('.cobro')].map(r => ({ fecha: r.querySelector('.cb-f').value, importe: parseNum(r.querySelector('.cb-i').value, true) })) : [];
+    formulario({
+      titulo: x ? 'Editar · ' + esc(CLASES_FIJO.find(c => c[0] === x.clase)[1]) : 'Nuevo apunte de PAC o seguros',
+      valores: ini,
+      campos: [
+        { k: 'clase', label: 'Qué es', type: 'select', req: 1, opts: () => [['pac', 'PAC (ayuda)'], ['agrario', 'Seguro agrario (de la cosecha)'], ['seguro', 'Otro seguro (tractor, apero, nave, responsabilidad civil…)']] },
+        { k: 'titular', label: 'Agricultor', req: 1, lista: () => [...titularesTodos(), COMUN], placeholder: 'Ej.: Ivan', hint: 'También puedes poner otro nombre o «Común» (de los tres).' },
+        { k: 'anio', label: 'PAC del año', type: 'num', req: 1, half: 1, show: v => v.clase === 'pac', placeholder: 'Ej.: 2026' },
+        { k: 'conceptoPac', label: 'Concepto', req: 1, half: 1, show: v => v.clase === 'pac', lista: () => CONCEPTOS_PAC, placeholder: 'Pago básico…' },
+        { k: 'repartoPac', label: 'Se reparte entre', type: 'select', show: v => v.clase === 'pac', opts: () => [['todas', 'Todas las hectáreas de su explotación'], ['leguminosa', 'Solo sus parcelas de leguminosa']] },
+        { k: 'concepto', label: 'Concepto', show: v => v.clase !== 'pac', placeholder: 'Ej.: Seguro de cereal, Seguro de la nave…' },
+        { k: 'fecha', label: 'Fecha del pago', type: 'date', req: 1, half: 1, show: v => v.clase !== 'pac' },
+        { k: 'importe', label: 'Importe (€)', type: 'num', miles: 1, req: 1, half: 1, show: v => v.clase !== 'pac' },
+        { k: 'aseguradora', label: 'Aseguradora', half: 1, show: v => v.clase !== 'pac' },
+        { k: 'poliza', label: 'Nº de póliza', half: 1, show: v => v.clase !== 'pac' },
+        { k: 'vence', label: 'Vence el', type: 'date', show: v => v.clase !== 'pac', hint: 'Te avisa 30 días antes.' },
+        { k: 'reparto', label: 'Se reparte entre', type: 'select', show: v => v.clase === 'seguro', opts: () => [['titular', 'Las hectáreas de su explotación'], ['todos', 'Las hectáreas de las tres explotaciones']] },
+        { k: 'maquinaId', label: 'Máquina', type: 'select', show: v => v.clase === 'seguro', opts: () => [['', 'Ninguna (nave, responsabilidad civil…)'], ...db.maquinas.filter(m => !m.baja || m.id === ini.maquinaId).map(m => [m.id, `${m.nombre} (${m.titular})`])] },
+        { k: 'fincas', label: 'Parcelas aseguradas', type: 'fincas', show: v => v.clase === 'agrario', hint: 'El seguro se reparte por hectárea entre estas parcelas.' },
+        { k: 'notas', label: 'Notas', type: 'textarea' }
+      ],
+      extra: `<div class="field" id="fjCobros"><label>Cobros <span class="muted small">(anticipo, saldo…)</span></label><div class="cobros">${cobros0.map(filaCobro).join('')}</div>
+          <button type="button" class="btn sm" data-addcobro style="align-self:flex-start">${ico.plus} Otro cobro</button></div>
+        <div class="card pad small fj-pol" id="fjPol"><div class="btns" style="justify-content:flex-start;margin:0"><button type="button" class="btn sm" data-sembradas>Marcar sus parcelas sembradas</button><label class="btn sm">Leer la póliza (PDF o foto)<input type="file" accept="application/pdf,image/*" hidden data-poliza></label></div><div class="muted" data-polest></div></div>
+        <div class="card pad small" id="fjInfo"></div>`,
+      alCambiar(v, form, origen) {
+        if (!frm) {
+          frm = form;
+          const cb = form.querySelector('#fjCobros'); form.querySelector('.field[data-k="repartoPac"]').after(cb);
+          const pol = form.querySelector('#fjPol'); form.querySelector('.field[data-k="fincas"]').before(pol);
+          const pk = () => form.querySelector('.field[data-k="fincas"] .picker');
+          const marcar = ids => { const s = new Set(ids); pk().querySelectorAll('.pk-f input').forEach(i => { i.checked = s.has(i.value); }); pk()._act(); };
+          frm._marcar = marcar;
+          form.addEventListener('click', e => {
+            if (e.target.closest('[data-addcobro]')) { cb.querySelector('.cobros').insertAdjacentHTML('beforeend', filaCobro({ fecha: hoyISO(), importe: null })); }
+            const del = e.target.closest('[data-delcobro]'); if (del) { if (cb.querySelectorAll('.cobro').length > 1) del.parentElement.remove(); else del.parentElement.querySelector('.cb-i').value = ''; this.alCambiar(leerV(), form); }
+            if (e.target.closest('[data-sembradas]')) { const w = leerV(); if (!w.titular) { toast('Escribe primero el agricultor'); return; } marcar(sembradasTit(w.titular, campanaDe(w.fecha || hoyISO()))); this.alCambiar(leerV(), form); }
+          });
+          form.querySelector('[data-poliza]').addEventListener('change', async e => {
+            const file = e.target.files[0]; if (!file) return; const est = form.querySelector('[data-polest]'); const set = t => { est.textContent = t; };
+            try { const r = await parcelasDePoliza(file, set);
+              if (!r.ids.length) { set('No he encontrado en la póliza ninguna de vuestras parcelas (por polígono y parcela). Márcalas a mano.'); return; }
+              marcar(r.ids); set(`He marcado ${r.ids.length} parcela${r.ids.length === 1 ? '' : 's'} que salen en la póliza (${fmtN(sum(r.ids.map(finca), f => +f.superficie || 0))} ha). Revísalas.`); this.alCambiar(leerV(), form);
+            } catch (err) { ocrProgreso = null; set('No he podido leer el documento. Marca las parcelas a mano.'); }
+            e.target.value = '';
+          });
+        }
+        const pac = v.clase === 'pac';
+        frm.querySelector('#fjCobros').hidden = !pac; frm.querySelector('#fjPol').hidden = v.clase !== 'agrario';
+        if (origen === 'conceptoPac' && /legum|proteic/.test(norm(v.conceptoPac || ''))) { frm.elements.repartoPac.value = 'leguminosa'; v.repartoPac = 'leguminosa'; }
+        if (!x && v.clase === 'agrario' && (origen === 'titular' || origen === 'clase') && v.titular && !(v.fincas || []).length) { frm._marcar(sembradasTit(v.titular.trim(), campanaDe(v.fecha || hoyISO()))); v.fincas = leerV().fincas; }
+        const anio = Math.round(parseNum(v.anio) || 0);
+        const camp = pac ? (anio > 2000 ? campanaPAC(anio) : '') : campanaDe(v.fecha || hoyISO());
+        const imp = pac ? sum(leerCobros(), k => k.importe > 0 ? k.importe : 0) : parseNum(v.importe, true) || 0;
+        const obj = { clase: v.clase, titular: (v.titular || '').trim(), repartoPac: v.repartoPac, reparto: v.reparto, fincas: v.fincas || [] };
+        const fs = camp ? fincasFijo(obj, camp) : []; const ha = sum(fs, f => +f.superficie || 0);
+        frm.querySelector('#fjInfo').innerHTML = camp ? `Va a la campaña <b>${camp}</b>${pac && anio ? ` (PAC de ${anio}, aunque se cobre después)` : ''}.${obj.titular || v.clase !== 'pac' ? ` Se reparte entre <b>${fs.length} parcela${fs.length === 1 ? '' : 's'} · ${fmtN(ha)} ha</b>${imp && ha ? `: <b>${eur(imp / ha, 2)}/ha</b>` : ''}.` : ''}${imp && !ha && obj.titular ? ' <span class="neg">No hay hectáreas donde repartirlo.</span>' : ''}${pac && imp ? ` Total cobrado: <b>${eur(imp, 2)}</b>.` : ''}` : 'Escribe el año de la PAC.';
+      },
+      alMontar(refrescar) { leerV = () => { const f = frm; if (!f) return {}; const o = {}; ['clase', 'titular', 'anio', 'conceptoPac', 'repartoPac', 'fecha', 'importe', 'reparto'].forEach(k => { if (f.elements[k]) o[k] = f.elements[k].value; }); o.fincas = [...f.querySelectorAll('.field[data-k="fincas"] .pk-f input:checked')].map(i => i.value); return o; }; },
+      antesDeGuardar(out) { out.cobros = leerCobros(); return true; },
+      guardar(v) {
+        const o = { clase: v.clase, titular: v.titular.trim(), notas: v.notas };
+        if (v.clase === 'pac') {
+          o.anio = Math.round(v.anio); if (!(o.anio > 2000 && o.anio < 2100)) return 'Pon el año de la PAC, por ejemplo 2026';
+          if (v.cobros.some(k => Number.isNaN(k.importe))) return 'Algún importe de los cobros no es un número';
+          o.cobros = v.cobros.filter(k => k.importe > 0).map(k => ({ fecha: k.fecha || hoyISO(), importe: k.importe }));
+          if (!o.cobros.length) return 'Apunta al menos un cobro con su importe';
+          o.concepto = v.conceptoPac; o.repartoPac = v.repartoPac || 'todas';
+        } else {
+          if (!(v.importe > 0)) return 'El importe tiene que ser mayor que cero';
+          Object.assign(o, { fecha: v.fecha, importe: v.importe, concepto: v.concepto || (v.clase === 'agrario' ? 'Seguro agrario' : 'Seguro'), aseguradora: v.aseguradora, poliza: v.poliza, vence: v.vence });
+          if (v.clase === 'agrario') { if (!v.fincas.length) return 'Marca las parcelas aseguradas'; o.fincas = v.fincas; }
+          else { o.reparto = v.reparto || 'titular'; o.maquinaId = v.maquinaId || ''; }
+        }
+        let y;
+        if (x) { const i = db.fijos.indexOf(x); y = Object.assign({ id: x.id }, o); db.fijos[i] = y; db.movimientos = db.movimientos.filter(m => m.fijoId !== x.id); }
+        else { y = Object.assign({ id: uid() }, o); db.fijos.push(y); }
+        syncMovFijo(y);
+        const m = maquina(y.maquinaId);
+        if (m && y.vence && (!m.seguroVence || y.vence > m.seguroVence)) { m.seguroVence = y.vence; const i = document.querySelector('#f_seguroVence'); if (i) i.value = y.vence; }
+        const caja = document.querySelector('.fj-maq'); if (m && caja) caja.outerHTML = segurosMaqHTML(m);
+        if (m && y.aseguradora && !m.seguroCompania) { m.seguroCompania = y.aseguradora; const i = document.querySelector('#f_seguroCompania'); if (i && !i.value) i.value = y.aseguradora; }
+      },
+      borrar: x && (() => { db.fijos = db.fijos.filter(y => y !== x); syncMovFijo(x); })
+    });
+  }
+  // Apuntes de PAC y seguros hechos antes en Cuentas → a la pestaña PAC y seguros
+  function pasarFijos() {
+    const viejos = db.movimientos.filter(m => !m.fijoId && (m.categoria === 'Seguro' || m.categoria === 'Subvención PAC'));
+    const grupos = new Map(); viejos.forEach(m => { const k = m.lote || m.id; if (!grupos.has(k)) grupos.set(k, []); grupos.get(k).push(m); });
+    let n = 0;
+    for (const ms of grupos.values()) {
+      const m = ms[0]; const imp = Math.round(sum(ms, y => +y.importe || 0) * 100) / 100;
+      const fids = ms.map(y => y.fincaId).filter(id2 => finca(id2)); const tits = [...new Set(fids.map(titularDe).filter(Boolean))];
+      const titular = tits.length === 1 ? tits[0] : COMUN; const t = norm(m.concepto || '');
+      let x;
+      if (m.categoria === 'Subvención PAC') {
+        const concepto = /redistrib/.test(t) ? 'Pago redistributivo' : /directa/.test(t) ? 'Complemento de siembra directa' : /eco/.test(t) ? 'Ecorrégimen' : /legum|proteic/.test(t) ? 'Ayuda a las leguminosas' : /basic/.test(t) ? 'Pago básico' : (m.concepto || 'PAC');
+        x = { clase: 'pac', titular, anio: anioPAC(m.campana || campanaDe(m.fecha)), concepto, repartoPac: concepto === 'Ayuda a las leguminosas' ? 'leguminosa' : 'todas', cobros: [{ fecha: m.fecha, importe: imp }] };
+      } else if (/agrari|cosecha|agroseguro|pedrisco|granizo|cereal|sequia/.test(t)) x = { clase: 'agrario', titular, fecha: m.fecha, importe: imp, concepto: m.concepto || 'Seguro agrario', fincas: fids.length ? fids : sembradasTit(titular, campanaDe(m.fecha)) };
+      else x = { clase: 'seguro', titular, fecha: m.fecha, importe: imp, concepto: m.concepto || 'Seguro', reparto: titular === COMUN ? 'todos' : 'titular', maquinaId: '' };
+      x = Object.assign({ id: uid() }, x, { notas: m.notas || '' });
+      db.movimientos = db.movimientos.filter(y => !ms.includes(y)); db.fijos.push(x); syncMovFijo(x); n++;
+    }
+    guardar(); render(); toast(`${n} apunte${n === 1 ? '' : 's'} pasado${n === 1 ? '' : 's'} a PAC y seguros. Revisa el agricultor de cada uno.`);
   }
 
   // ---------- Eventos ----------
@@ -4325,6 +4561,10 @@
     nuevoAgricultor: () => formAgricultor(null),
     editAgricultor: b => formAgricultor(b.dataset.n),
     nuevaMaquina: () => formMaquina(null),
+    nuevoFijo: b => { const m = maquina(b.dataset.maq); const cl = b.dataset.clase || 'pac';
+      formFijo(null, Object.assign({ clase: cl, titular: b.dataset.t != null ? b.dataset.t : '' }, m ? { titular: m.titular, concepto: 'Seguro ' + m.nombre, aseguradora: m.seguroCompania || '', maquinaId: m.id, reparto: 'titular' } : {})); },
+    editFijo: b => formFijo(b.dataset.id),
+    pasarFijos: () => pasarFijos(),
     editMaquina: b => formMaquina(b.dataset.id),
     nuevoEquipo: () => formEquipo(null),
     semillaPropia: () => formSemillaPropia(null),
@@ -4384,7 +4624,7 @@
     if (e.target.dataset.zvp != null) { db.zvPueblos = db.zvPueblos || {}; if (e.target.value) db.zvPueblos[e.target.dataset.zvp] = e.target.value; else delete db.zvPueblos[e.target.dataset.zvp]; guardar(); render(); toast('Guardado'); }
   });
   // grupos de albaranes abiertos o cerrados: se recuerda mientras usas la app
-  document.addEventListener('toggle', e => { const g = e.target; if (!g.matches || !g.matches('details.grupo-doc')) return; const set = ui.alm.gruposCerrados || (ui.alm.gruposCerrados = new Set()); if (g.open) set.delete(g.dataset.gdoc); else set.add(g.dataset.gdoc); }, true);
+  document.addEventListener('toggle', e => { const g = e.target; if (!g.matches || !g.matches('details.grupo-doc')) return; if (g.classList.contains('fj-tit')) { (ui.fjEstado || (ui.fjEstado = new Map())).set(g.dataset.gdoc, g.open); return; } const set = ui.alm.gruposCerrados || (ui.alm.gruposCerrados = new Set()); if (g.open) set.delete(g.dataset.gdoc); else set.add(g.dataset.gdoc); }, true);
   $('#cfgBtn').addEventListener('click', hojaAjustes);
   $('#vozBtn').addEventListener('click', hojaVoz);
   $('#campBtn').addEventListener('click', hojaCampanas);
