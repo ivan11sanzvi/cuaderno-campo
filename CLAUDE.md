@@ -21,6 +21,7 @@ Habla con el usuario en español, con lenguaje sencillo y sin tecnicismos: es ag
 - Recinto en un punto: `/servicioconsultassigpac/query/recinfobypoint/4258/{lon}/{lat}.json`. Devuelve la superficie, `uso_sigpac` y el contorno en WKT.
 - Linderos: WMS `https://sigpac-hubcloud.es/wms`, capa `recinto`.
 - Ortofoto: `https://tms-pnoa-ma.idee.es/1.0.0/pnoa-ma/{z}/{x}/{y}.jpeg` (TMS: `tms: true` en Leaflet).
+- Mapa de fincas: tocar una parcela la marca (`ui.selMapa`, `marcarEnMapa`; capa blanca medio transparente con el borde de su cultivo, `estiloFinca`) y otra vez la desmarca. Arriba a la izquierda (control `.mapsel`, encima del zoom) salen las ha sumadas y la X para quitarlas todas (`limpiarSelMapa`); debajo del mapa, la lista (`#selPanel`) para abrir cada parcela o apuntar una labor en todas. Tocar fuera de tus parcelas consulta el recinto SIGPAC.
 - Todos admiten CORS. La capa de SIGPAC es la vigente, así que referencias de años anteriores pueden haber cambiado (recintos unidos, concentraciones parcelarias).
 
 ## Parcelas y fincas agrupadas
