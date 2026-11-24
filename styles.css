@@ -418,3 +418,22 @@ h3.sec.mes .small { font-weight: 600; }
 .pg-est { display: inline-flex; align-items: center; gap: 6px; }
 .pg-est input { width: 86px; padding: 6px 8px; min-height: 0; text-align: right; }
 tr[data-act] { cursor: pointer; }
+/* Avisos */
+.campana-btn { position: relative; }
+.campana-btn .badge { position: absolute; top: 4px; right: 2px; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 9px; background: #d9534f; color: #fff; font: 700 11px/18px var(--font); text-align: center; }
+.campana-btn .badge[hidden] { display: none; }
+.avisos-card { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; color: inherit; font: inherit; cursor: pointer; }
+.avisos-card .main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.avisos-card .main .small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.avisos-card > svg { width: 20px; height: 20px; transform: rotate(-90deg); color: var(--muted); flex: none; }
+.avisos-card .av-ico svg { width: 26px; height: 26px; color: var(--straw); }
+.avisos .row { cursor: default; }
+.avisos .av-vencido { border-left: 4px solid #d9534f; }
+.avisos .av-pronto { border-left: 4px solid var(--straw); }
+.avisos .av-info.av-vencido, .avisos .av-info.av-pronto { border-left-color: #5b8def; }
+.av-acc { display: flex; align-items: center; gap: 4px; }
+.av-acc input[type=date] { width: 150px; padding: 4px 6px; min-height: 0; }
+.av-acc .iconbtn { width: 36px; height: 36px; }
+.av-acc .iconbtn svg { width: 18px; height: 18px; }
+.avisos .list, .avisos .row, .avisos h3 { flex-shrink: 0; }
+.av-acc input[type=date] { width: 132px; font-size: .85rem; }
