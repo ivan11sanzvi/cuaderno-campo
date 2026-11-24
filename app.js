@@ -2,7 +2,7 @@
 (function () {
   // ---------- Constantes ----------
   const KEY = 'cuadernoCampo.v1';
-  const VERSION = '2.10.1';
+  const VERSION = '2.10.2';
   const TIPOS_LABOR = ['Labrado', 'Siembra', 'Abonado', 'Tratamiento', 'Rodillo', 'Cosecha', 'Empacado', 'Otro'];
   const CON_DOSIS = ['Siembra', 'Abonado', 'Tratamiento'];
   const UNIDADES = ['kg/ha', 'L/ha', 'g/ha', 'cc/ha', 'kg', 'L'];
@@ -4833,17 +4833,18 @@
     // carné de aplicador
     titularesTodos().forEach(n => { const f = fichaTitular(n); if (f && f.ropoCaduca) add(f.ropoCaduca, `Carné de aplicador de ${n}: ${f.ropoCaduca < hoy ? 'caducado' : 'caduca'}`, 'Agricultores', { act: 'editAgricultor', n }); });
     // plazo de la solicitud de la PAC (fecha que se pone cada año; si no, el 30 de abril aproximado)
-    const y = +hoy.slice(0, 4); const anioSol = hoy.slice(5) <= '05-31' ? y : y + 1;
+    // la PAC de la campaña en curso (la de 2026/27 es la PAC 2027): solicitud en primavera, anticipo en octubre y saldo en diciembre
+    const anioSol = anioPAC(campanaDe(hoy));
     const finPac = ((db.agenda || {}).pacFin || {})[anioSol];
     add(finPac || `${anioSol}-04-30`, `Fin del plazo de la solicitud de la PAC ${anioSol}${finPac ? '' : ' (fecha aproximada: pon la de este año)'}`, 'PAC', { pacFin: anioSol });
-    // cobros de la PAC esperados: anticipo desde el 16 de octubre y saldo desde el 1 de diciembre
-    const yP = hoy.slice(5) >= '10-16' ? y : y - 1;
-    const titsF = [...new Set(db.fincas.map(f => titularDe(f.id)).filter(Boolean))];
-    titsF.forEach(t => {
-      const cobros = db.fijos.filter(x => x.clase === 'pac' && +x.anio === yP && x.titular === t).flatMap(x => x.cobros || []);
-      if (hoy >= `${yP}-10-16` && hoy <= `${yP + 1}-06-30` && !cobros.some(k => k.fecha && k.fecha <= `${yP}-11-30`) && !cobros.length) add(`${yP}-10-16`, `Anticipo de la PAC ${yP} de ${t}: si ya lo has cobrado, apúntalo`, 'PAC', { act: 'tabAyudas' });
-      else if (hoy >= `${yP}-12-01` && hoy <= `${yP + 1}-06-30` && !cobros.some(k => k.fecha && k.fecha >= `${yP}-12-01`)) add(`${yP}-12-01`, `Saldo de la PAC ${yP} de ${t}: si ya lo has cobrado, apúntalo`, 'PAC', { act: 'tabAyudas' });
-    });
+    // cobros de esa misma PAC: anticipo desde el 16 de octubre y saldo desde el 1 de diciembre del año de la PAC (un aviso con los que falten)
+    const yP = anioSol;
+    const titsF = [...new Set(db.fincas.map(f => titularDe(f.id)).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es'));
+    const cobrosDe = t => db.fijos.filter(x => x.clase === 'pac' && +x.anio === yP && x.titular === t).flatMap(x => x.cobros || []);
+    const sinAnt = titsF.filter(t => !cobrosDe(t).length), sinSaldo = titsF.filter(t => !cobrosDe(t).some(k => k.fecha && k.fecha >= `${yP}-12-01`));
+    const fA = `${yP}-10-16`, fS = `${yP}-12-01`;
+    if (sinAnt.length) add(fA, hoy >= fA ? `Anticipo de la PAC ${yP} de ${sinAnt.join(', ')}: si ya lo has cobrado, apúntalo` : `Cobro del anticipo de la PAC ${yP} (campaña ${campanaPAC(yP)}): ${sinAnt.join(', ')}`, 'PAC', { act: 'tabAyudas' });
+    if (sinSaldo.length && hoy >= masDias(fS, -30)) add(fS, hoy >= fS ? `Saldo de la PAC ${yP} de ${sinSaldo.join(', ')}: si ya lo has cobrado, apúntalo` : `Cobro del saldo de la PAC ${yP} (campaña ${campanaPAC(yP)}): ${sinSaldo.join(', ')}`, 'PAC', { act: 'tabAyudas' });
     // plazos de seguridad y tratamientos que se pueden repetir (campaña activa)
     if (FITOS) {
       const c = db.campanaActiva; const repetir = new Map();
