@@ -2,7 +2,7 @@
 (function () {
   // ---------- Constantes ----------
   const KEY = 'cuadernoCampo.v1';
-  const VERSION = '2.10.2';
+  const VERSION = '2.11.0';
   const TIPOS_LABOR = ['Labrado', 'Siembra', 'Abonado', 'Tratamiento', 'Rodillo', 'Cosecha', 'Empacado', 'Otro'];
   const CON_DOSIS = ['Siembra', 'Abonado', 'Tratamiento'];
   const UNIDADES = ['kg/ha', 'L/ha', 'g/ha', 'cc/ha', 'kg', 'L'];
@@ -321,6 +321,15 @@
     const n = p => db.documentos.reduce((a, d) => a + (d.lineas || []).filter(x => x.productoId === p.id).length, 0);
     return ps.sort((a, b) => n(b) - n(a))[0];
   }
+  // La cosecha también gasta máquina: si hay un equipo de trabajo de la labor «Cosecha» con esa cosechadora, cada cosecha
+  // cuenta como una labor de ese equipo (amortización y gasóleo), salvo que ya haya una labor «Cosecha» con equipo ese día.
+  const equipoCosecha = x => { if (!x.maquinaId) return null; const es = db.equipos.filter(e => norm(e.labor || '') === 'cosecha'); return es.find(e => e.tractorId === x.maquinaId || e.aperoId === x.maquinaId) || null; };
+  function laborDeCosecha(x) {
+    const e = equipoCosecha(x); if (!e) return null;
+    if (db.labores.some(l => l.tipo === 'Cosecha' && l.fincaId === x.fincaId && l.fecha === x.fecha && l.equipoId)) return null;
+    return { id: 'cos:' + x.id, tipo: 'Cosecha', fincaId: x.fincaId, fecha: x.fecha, campana: x.campana, equipoId: e.id, tractorId: x.maquinaId, deCosecha: true };
+  }
+  const laboresMaq = () => db.cosechas.length ? [...db.labores, ...db.cosechas.map(laborDeCosecha).filter(Boolean)] : db.labores;
   const litrosLabor = l => { const e = equipo(l.equipoId); return e && +e.gasoleo > 0 ? Math.round(+e.gasoleo * haLabor(l) * 100) / 100 : 0; };
   let cacheGas = { k: '', r: null };
   // IVA de cada línea de albarán o factura: el que se ponga en la línea; si no, el de la factura; si no, el habitual del tipo
@@ -358,12 +367,12 @@
   }
   function repartoGasoleo() {
     const g = gasoleoAlm(); if (!g) return null;
-    const k = `${db.ultimoCambio}|${db.labores.length}|${db.documentos.length}|${db.ajustes.length}|${db.equipos.length}|${g.id}`;
+    const k = `${db.ultimoCambio}|${db.labores.length}|${db.cosechas.length}|${db.documentos.length}|${db.ajustes.length}|${db.equipos.length}|${g.id}`;
     if (cacheGas.k === k) return cacheGas.r;
     const ev = [];
     comprasProducto(g.id).filter(x => !x.soloFactura).forEach(x => ev.push({ f: x.fecha, o: 0, q: x.q, t: x.t, pu: x.i > 0 ? x.i / x.q : null }));
     db.ajustes.filter(a => a.productoId === g.id).forEach(a => { const q = +a.cantidad || 0; if (q > 0) ev.push({ f: a.fecha || '', o: 0, q, t: a.titular || '', pu: null }); else if (q < 0) ev.push({ f: a.fecha || '', o: 1, q: -q, t: a.titular || '' }); });
-    db.labores.forEach(l => { const q = litrosLabor(l); if (q) ev.push({ f: l.fecha || '', o: 2, q, l }); });
+    laboresMaq().forEach(l => { const q = litrosLabor(l); if (q) ev.push({ f: l.fecha || '', o: 2, q, l }); });
     ev.sort((a, b) => a.f.localeCompare(b.f) || a.o - b.o);
     const conPrecio = ev.filter(e => e.o === 0 && e.pu != null);
     const medio = conPrecio.length ? sum(conPrecio, e => e.pu * e.q) / sum(conPrecio, e => e.q) : null;
@@ -399,7 +408,7 @@
   function ventasGrano(cultivo, camp) {
     const y = +String(camp).slice(0, 4) + 1; const desde = `${y}-06-01`, hasta = `${y + 1}-05-31`; const cu = norm(cultivo);
     const vs = db.movimientos.filter(m => m.tipo === 'ingreso' && m.categoria === 'Venta de grano' && +m.kilos > 0 && +m.importe > 0
-      && (m.campana === camp || (m.fecha >= desde && m.fecha <= hasta))
+      && (m.fecha ? m.fecha >= desde && m.fecha <= hasta : m.campana === camp)
       && (m.cultivo ? norm(m.cultivo) === cu : (norm(m.fincaId ? cultivoDe(m.fincaId, camp) || cultivoDe(m.fincaId, m.campana) || '' : '') === cu || norm(m.concepto || '').includes(cu))));
     const kg = sum(vs, m => +m.kilos);
     return vs.length ? { precio: sum(vs, m => +m.importe) / kg, kg, n: vs.length } : null;
@@ -438,11 +447,11 @@
     const f = finca(fid); const ha = (f && f.superficie) || 0;
     const kg = sum(db.cosechas.filter(x => x.fincaId === fid && x.campana === c), x => x.kg);
     const movs = db.movimientos.filter(m => m.fincaId === fid && m.campana === c);
-    const ls = db.labores.filter(l => l.fincaId === fid && l.campana === c && l.equipoId);
+    const ls = laboresMaq().filter(l => l.fincaId === fid && l.campana === c && l.equipoId);
     const amort = sum(ls, l => costeMaqLabor(l) || 0), gas = sum(ls, l => costeGasLabor(l) || 0), litros = sum(ls, litrosLabor);
     const maq = amort + gas;
     const prod = sum(db.labores.filter(l => l.fincaId === fid && l.campana === c), costeProdLabor);
-    const fj = fijosFinca(fid, c); const seg = fj.seg, pac = fj.pac;
+    const fj = fijosFinca(fid, c); const seg = fj.seg, pac = fj.pac + sum(movs.filter(m => m.tipo === 'ingreso' && m.categoria === 'Subvención PAC'), m => m.importe) + (repartoGenerales(c).pac.get(fid) || 0);
     const tall = repartoTaller(c).fincas.get(fid) || 0, gen = repartoGenerales(c).fincas.get(fid) || 0;
     const gastos = sum(movs.filter(m => m.tipo === 'gasto'), m => m.importe) + maq + prod + seg + tall + gen;
     // Ingresos: el grano cosechado a precio medio de venta de ese cultivo (vendido o no); si la parcela no tiene cosecha apuntada,
@@ -450,7 +459,8 @@
     const movI = movs.filter(m => m.tipo === 'ingreso'); const cu = cultivoDe(fid, c);
     const pg = kg > 0 && cu ? precioGrano(cu, c) : null;
     const grano = kg > 0 ? (pg ? kg * pg.precio : 0) : sum(movI.filter(m => m.categoria === 'Venta de grano'), m => m.importe);
-    const otrosI = sum(movI.filter(m => m.categoria !== 'Venta de grano'), m => m.importe);
+    const RG = repartoGenerales(c);
+    const otrosI = sum(movI.filter(m => m.categoria !== 'Venta de grano' && m.categoria !== 'Subvención PAC'), m => m.importe) + (RG.ing.get(fid) || 0);
     const ingresos = grano + otrosI;
     // margen: lo que da la finca con vuestro trabajo (sin PAC); margenPac: sumando la PAC repartida
     return { ha, kg, maq, amort, gas, litros, prod, seg, tall, gen, pac, grano, otrosI, pg, sinPrecio: kg > 0 && !pg, kgHa: ha && kg ? kg / ha : null, gastos, ingresos, margen: ingresos - gastos, margenHa: ha && (gastos || ingresos) ? (ingresos - gastos) / ha : null,
@@ -479,7 +489,7 @@
     const genI = sum(generales.filter(m => m.tipo === 'ingreso'), m => m.importe);
     const movs = db.movimientos.filter(m => m.campana === c);
     const ingresos = sum(movs.filter(m => m.tipo === 'ingreso'), m => m.importe);
-    const lsC = db.labores.filter(l => l.campana === c && l.equipoId && finca(l.fincaId));
+    const lsC = laboresMaq().filter(l => l.campana === c && l.equipoId && finca(l.fincaId));
     const maq = sum(lsC, l => costeMaqLabor(l) || 0), gas = sum(lsC, l => costeGasLabor(l) || 0);
     // el gasóleo ya está en los gastos con su factura: en las fincas solo se reparte, no se suma otra vez
     const gastos = sum(movs.filter(m => m.tipo === 'gasto'), m => m.importe) + maq;
@@ -545,7 +555,7 @@
   function trabajosMaq(id, c) {
     const out = [];
     db.labores.forEach(l => { if (l.campana === c && (l.tractorId === id || l.aperoId === id) && finca(l.fincaId)) { const e = equipo(l.equipoId); out.push({ fid: l.fincaId, ha: haLabor(l), rend: e && +e.rendimiento > 0 ? +e.rendimiento : null }); } });
-    db.cosechas.forEach(x => { if (x.campana === c && x.maquinaId === id && finca(x.fincaId)) out.push({ fid: x.fincaId, ha: +finca(x.fincaId).superficie || 0, rend: null }); });
+    db.cosechas.forEach(x => { if (x.campana === c && x.maquinaId === id && finca(x.fincaId) && !db.labores.some(l => l.tipo === 'Cosecha' && l.fincaId === x.fincaId && l.fecha === x.fecha && (l.tractorId === id || l.aperoId === id))) { const e = equipoCosecha(x); out.push({ fid: x.fincaId, ha: +finca(x.fincaId).superficie || 0, rend: e && +e.rendimiento > 0 ? +e.rendimiento : null }); } });
     const rs = out.filter(w => w.rend); const rm = rs.length ? sum(rs, w => w.ha) / sum(rs, w => w.ha / w.rend) : null;
     out.forEach(w => { w.h = w.ha / (w.rend || rm || 1); });
     return out;
@@ -579,11 +589,12 @@
   function repartoGenerales(c) {
     const k = `${db.ultimoCambio}|${db.movimientos.length}|${db.fincas.length}`; if (cacheGen.k !== k) cacheGen = { k, m: new Map() };
     if (cacheGen.m.has(c)) return cacheGen.m.get(c);
-    const r = { fincas: new Map(), sin: 0, total: 0 };
-    db.movimientos.filter(m => m.campana === c && esGeneral(m)).forEach(m => {
-      const v = +m.importe || 0; r.total += v; const fs = fincasDeTit(m.titular || COMUN); const ha = sum(fs, f => +f.superficie || 0);
-      if (!ha) { r.sin += v; return; } fs.forEach(f => r.fincas.set(f.id, (r.fincas.get(f.id) || 0) + v * (+f.superficie || 0) / ha));
-    });
+    const r = { fincas: new Map(), ing: new Map(), pac: new Map(), sin: 0, total: 0 };
+    const repartir_ = (m, mapa) => { const v = +m.importe || 0; const fs = fincasDeTit(m.titular || COMUN); const ha = sum(fs, f => +f.superficie || 0);
+      if (!ha) { if (mapa === r.fincas) r.sin += v; return; } fs.forEach(f => mapa.set(f.id, (mapa.get(f.id) || 0) + v * (+f.superficie || 0) / ha)); };
+    db.movimientos.filter(m => m.campana === c && esGeneral(m)).forEach(m => { r.total += +m.importe || 0; repartir_(m, r.fincas); });
+    // ingresos sin finca (PAC apuntada a mano, paja, otros): también por ha; el grano no, que va por los kilos cosechados
+    db.movimientos.filter(m => m.campana === c && m.tipo === 'ingreso' && !finca(m.fincaId) && !m.fijoId && m.categoria !== 'Venta de grano').forEach(m => repartir_(m, m.categoria === 'Subvención PAC' ? r.pac : r.ing));
     cacheGen.m.set(c, r); return r;
   }
   const fijosFinca = (fid, c) => repartoFijos(c).fincas.get(fid) || { seg: 0, pac: 0 };
@@ -890,8 +901,8 @@
     // por cultivo
     const cult = {};
     filas.forEach(({ cu, st }) => { if (!cu && !st.gastos && !st.ingresos && !st.pac) return; const k = cu || 'Sin cultivo';
-      const o = cult[k] || (cult[k] = { cultivo: k, ha: 0, haCos: 0, kg: 0, ingresos: 0, gastos: 0, pac: 0 });
-      o.ha += st.ha; o.kg += st.kg; if (st.kg > 0) o.haCos += st.ha; o.ingresos += st.ingresos; o.gastos += st.gastos; o.pac += st.pac; });
+      const o = cult[k] || (cult[k] = { cultivo: k, ha: 0, haCos: 0, kg: 0, ingresos: 0, gastos: 0, gastosCos: 0, pac: 0 });
+      o.ha += st.ha; o.kg += st.kg; if (st.kg > 0) { o.haCos += st.ha; o.gastosCos += st.gastos; } o.ingresos += st.ingresos; o.gastos += st.gastos; o.pac += st.pac; });
     r.cultivos = Object.values(cult).sort((a, b) => b.ha - a.ha).map(o => Object.assign(o, { pg: o.kg > 0 && o.cultivo !== 'Sin cultivo' ? precioGrano(o.cultivo, c) : null }));
     return r;
   }
@@ -910,7 +921,7 @@
     const F = facturado(c, tit), A = facturado(ant, tit);
     let h = `<div class="stats">${stat('Ingresos', eur(F.ing), 'pos')}${stat('Gastos', eur(F.gas), 'neg')}${stat('Saldo', eur(F.saldo), signo(F.saldo))}</div>`;
     if (A.ing || A.gas) h += `<p class="small muted cmp">Frente a la campaña ${ant} completa: ingresos ${txtPct(F.ing, A.ing) || '—'} · gastos ${txtPct(F.gas, A.gas, false) || '—'} · saldo ${eur(A.saldo)} en ${ant}.</p>`;
-    h += `<p class="small muted" style="margin:0">Lo facturado y cobrado en ${c}, por la fecha de cada factura o cobro (las facturas del almacén entran solas, con IVA). La amortización de la maquinaria no está aquí: no es dinero que salga; va en Rentabilidad.${tit ? ' Lo común de los tres solo sale en «Todos».' : ''}</p>`;
+    h += `<p class="small muted" style="margin:0">Lo facturado y cobrado en ${c}, por la fecha de cada factura o cobro (las facturas del almacén entran solas, con IVA); la PAC va a la campaña de su año aunque se cobre después. La amortización de la maquinaria no está aquí: no es dinero que salga; va en Rentabilidad.${tit ? ' Lo común de los tres solo sale en «Todos».' : ''}</p>`;
     // Pendiente de factura
     const pen = pendientesFactura(tit);
     if (pen.length) h += `<div class="card pad pend"><div class="sp"><b>Pendiente de factura</b><b class="neg">${eur(sum(pen, x => x.imp))}</b></div><div class="small muted">${pen.length} albarán${pen.length === 1 ? '' : 'es'} sin factura todavía (con IVA). Cuando llegue la factura, márcalos en ella.</div>
@@ -956,12 +967,16 @@
     h += `<div class="card pad"><div class="kv small"><dt><b>Producción</b></dt><dd><b>${eur(R.ingresos)}</b></dd><dt class="sub">· grano</dt><dd>${eur(R.grano)}</dd>${R.otrosI ? `<dt class="sub">· paja y otros</dt><dd>${eur(R.otrosI)}</dd>` : ''}
       <dt><b>Costes</b></dt><dd><b>${eur(R.gastos)}</b></dd>${R.prod ? `<dt class="sub">· productos (semilla, abono, fitos)</dt><dd>${eur(R.prod)}</dd>` : ''}${R.amort ? `<dt class="sub">· maquinaria (amortización)</dt><dd>${eur(R.amort)}</dd>` : ''}${R.gas ? `<dt class="sub">· gasóleo</dt><dd>${eur(R.gas)}</dd>` : ''}${R.tall ? `<dt class="sub">· taller y reparaciones</dt><dd>${eur(R.tall)}</dd>` : ''}${R.seg ? `<dt class="sub">· seguros</dt><dd>${eur(R.seg)}</dd>` : ''}${R.gen ? `<dt class="sub">· gastos generales</dt><dd>${eur(R.gen)}</dd>` : ''}${Math.abs(R.directo) > 0.5 ? `<dt class="sub">· apuntado en las fincas</dt><dd>${eur(R.directo)}</dd>` : ''}</div>`;
     if (R.gen) h += `<p class="small muted" style="margin:6px 0 0">Los gastos generales (gestoría, cuotas…) se reparten entre todas las hectáreas de la explotación de cada uno; los comunes, entre las de los tres.</p>`;
+    const compras = db.movimientos.filter(m => m.campana === c && esGeneral(m) && ['Semilla', 'Abono', 'Fitosanitarios', 'Gasóleo'].includes(m.categoria) && (!tit || titularMov(m) === tit));
+    if (compras.length) h += `<p class="small neg" style="margin:6px 0 0">⚠ Hay ${compras.length} gasto${compras.length === 1 ? '' : 's'} general${compras.length === 1 ? '' : 'es'} de semilla, abono, fitosanitarios o gasóleo (${eur(sum(compras, m => m.importe))}). Si esa compra también está en un albarán del almacén, aquí cuenta dos veces (como gasto general y al gastarse en las fincas): bórralo de Cuentas.</p>`;
+    const y1 = +String(c).slice(0, 4) + 1; const sinKg = db.movimientos.filter(m => m.tipo === 'ingreso' && m.categoria === 'Venta de grano' && !(+m.kilos > 0) && (m.fecha ? m.fecha >= `${y1}-06-01` && m.fecha <= `${y1 + 1}-05-31` : m.campana === c));
+    if (sinKg.length) h += `<p class="small neg" style="margin:6px 0 0">⚠ ${sinKg.length} venta${sinKg.length === 1 ? '' : 's'} de grano sin kilos (${eur(sum(sinKg, m => m.importe))}): no cuentan para el precio del grano. Ábrelas y pon los kilos vendidos.</p>`;
     h += '</div>';
     // por cultivo
     const hayPac = R.cultivos.some(o => o.pac);
     if (R.cultivos.length) h += `<h2 class="sec">Por cultivo</h2><div class="tablewrap"><table><thead><tr><th>Cultivo</th><th>ha</th><th>kg/ha</th><th>Ingresos</th><th>Costes</th><th>${hayPac ? 'Sin PAC €/ha' : 'Margen €/ha'}</th>${hayPac ? '<th>Con PAC €/ha</th>' : ''}<th>Cuesta producir</th></tr></thead><tbody>${R.cultivos.map(o =>
-      `<tr><td>${chip(o.cultivo)}</td><td>${fmtN(o.ha)}</td><td>${o.haCos ? fmtN(o.kg / o.haCos, 0) : '—'}</td><td>${eur(o.ingresos)}</td><td>${eur(o.gastos)}</td><td class="${signo(o.ingresos - o.gastos)}">${o.ha ? fmtN((o.ingresos - o.gastos) / o.ha, 0) : '—'}</td>${hayPac ? `<td class="${signo(o.ingresos + o.pac - o.gastos)}">${o.ha ? fmtN((o.ingresos + o.pac - o.gastos) / o.ha, 0) : '—'}</td>` : ''}<td>${o.kg > 0 ? fmtN(o.gastos / o.kg * 1000, 0) + ' €/t' : '—'}</td></tr>`).join('')}</tbody></table></div>
-      <p class="note">«Cuesta producir» es el coste por tonelada cosechada: por encima de ese precio de venta ganáis dinero sin contar la PAC.</p>`;
+      `<tr><td>${chip(o.cultivo)}</td><td>${fmtN(o.ha)}</td><td>${o.haCos ? fmtN(o.kg / o.haCos, 0) : '—'}</td><td>${eur(o.ingresos)}</td><td>${eur(o.gastos)}</td><td class="${signo(o.ingresos - o.gastos)}">${o.ha ? fmtN((o.ingresos - o.gastos) / o.ha, 0) : '—'}</td>${hayPac ? `<td class="${signo(o.ingresos + o.pac - o.gastos)}">${o.ha ? fmtN((o.ingresos + o.pac - o.gastos) / o.ha, 0) : '—'}</td>` : ''}<td>${o.kg > 0 ? fmtN(o.gastosCos / o.kg * 1000, 0) + ' €/t' : '—'}</td></tr>`).join('')}</tbody></table></div>
+      <p class="note">«Cuesta producir» es el coste por tonelada cosechada (solo con las parcelas ya cosechadas): por encima de ese precio de venta ganáis dinero sin contar la PAC.</p>`;
     // por finca
     const fs = R.filas.slice().sort((a, b) => a.f.nombre.localeCompare(b.f.nombre, 'es', { numeric: true }));
     h += `<h2 class="sec">Por parcela</h2><div class="tablewrap"><table><thead><tr><th>Parcela</th><th>Cultivo</th><th>ha</th><th>kg/ha</th><th>${hayPac ? 'Sin PAC €/ha' : 'Margen €/ha'}</th>${hayPac ? '<th>Con PAC €/ha</th>' : ''}</tr></thead><tbody>${fs.map(({ f, cu, st }) =>
@@ -997,7 +1012,8 @@
   function vResumenCampana() {
     const c = db.campanaActiva; const st = statsCampana(c);
     if (!db.fincas.length) return vacio('Sin datos todavía', 'El resumen compara rendimientos y rentabilidad por cultivo, por finca y entre campañas.', '<button class="btn primary" data-act="nuevaFinca">Añadir finca</button><button class="btn" data-act="ejemplo">Ver con datos de ejemplo</button>');
-    let h = `<div class="stats">${stat('Sembrado', fmtN(st.haSemb) + ' ha')}${stat('Producción', fmtKg(st.kg))}${stat('Resultado', eur(st.resultado), signo(st.resultado))}</div>`;
+    const RR = rentabilidad(c, '');
+    let h = `<div class="stats">${stat('Sembrado', fmtN(st.haSemb) + ' ha')}${stat('Producción', fmtKg(st.kg))}${stat(RR.pac ? 'Resultado con PAC' : 'Resultado', eur(RR.margenPac), signo(RR.margenPac))}</div>`;
     if (st.lista.length) {
       const maxHa = Math.max(...st.lista.map(o => o.ha));
       h += `<h2 class="sec">Superficie por cultivo · ${c}</h2><div class="card pad">${barras(st.lista.map(o => ({ label: o.cultivo, valor: fmtN(o.ha) + ' ha', n: o.ha, h: hue(o.cultivo) })), maxHa)}</div>`;
@@ -1005,7 +1021,7 @@
       h += `<h2 class="sec">Por cultivo</h2><div class="tablewrap"><table><thead><tr><th>Cultivo</th><th>ha</th><th>kg/ha</th><th>Ingresos</th><th>Gastos</th><th>${hayPac ? 'Sin PAC €/ha' : 'Margen €/ha'}</th>${hayPac ? '<th>Con PAC €/ha</th>' : ''}</tr></thead><tbody>${st.lista.map(o =>
         `<tr><td>${chip(o.cultivo)}</td><td>${fmtN(o.ha)}</td><td>${o.kgHa ? fmtN(o.kgHa, 0) : '—'}</td><td>${eur(o.ingresos)}</td><td>${eur(o.gastos)}</td><td class="${signo(o.ingresos - o.gastos)}">${o.margenHa != null ? fmtN(o.margenHa, 0) : '—'}</td>${hayPac ? `<td class="${signo(o.ingresos + o.pac - o.gastos)}">${o.margenPacHa != null ? fmtN(o.margenPacHa, 0) : '—'}</td>` : ''}</tr>`).join('')}</tbody></table></div>`;
     }
-    if (st.genG || st.genI) h += `<p class="note">Gastos generales sin finca: <b>${eur(st.genG)}</b>${st.genI ? ` · ingresos generales (PAC, etc.): <b>${eur(st.genI)}</b>` : ''}. No se reparten por cultivo, pero sí cuentan en el resultado total.</p>`;
+    h += `<p class="note">El resultado es el de Cuentas → Rentabilidad: lo cosechado valorado menos lo gastado en las fincas (productos, maquinaria, taller, seguros y gastos generales repartidos).</p>`;
     const fs = db.fincas.slice().sort(byNombre); const conPac = fs.some(f => fijosFinca(f.id, c).pac);
     h += `<h2 class="sec">Por finca · ${c}</h2><div class="tablewrap"><table><thead><tr><th>Finca</th><th>Cultivo</th><th>ha</th><th>kg/ha</th><th>${conPac ? 'Sin PAC €/ha' : 'Margen €/ha'}</th>${conPac ? '<th>Con PAC €/ha</th>' : ''}</tr></thead><tbody>${fs.map(f => {
       const x = statsFinca(f.id, c);
@@ -1846,7 +1862,7 @@
         { k: 'cultivo', label: 'Cultivo vendido', type: 'select', show: v => v.categoria === 'Venta de grano', opts: () => [['', 'Sin decir (se saca de la finca o del concepto)'], ...db.cultivos.filter(x => x !== 'Barbecho').map(x => [x, x])], hint: 'El precio medio de las ventas de cada cultivo se aplica a los kilos cosechados en cada parcela.' },
         { k: 'importe', label: 'Importe total (€)', type: 'num', miles: 1, req: 1 },
         { k: 'fincas', label: 'Fincas', type: 'fincas', hint: 'Sin marcar ninguna es un gasto general (gestoría, cuotas, teléfono…). Con varias, el importe se reparte según la superficie.' },
-        { k: 'titular', label: 'Gasto general de', type: 'select', show: v => v.tipo === 'gasto' && !(v.fincas || []).length, opts: () => [[COMUN, 'Común (de los tres)'], ...titularesTodos().map(t => [t, t])], hint: 'Los Gastos Generales se reparten entre todas las hectáreas de su explotación (los comunes, entre las de los tres).' },
+        { k: 'titular', label: 'De quién es', type: 'select', show: v => !(v.fincas || []).length, opts: () => [[COMUN, 'Común (de los tres)'], ...titularesTodos().map(t => [t, t])], hint: 'Sin finca, los gastos (Gastos Generales) y los ingresos se reparten entre todas las hectáreas de su explotación (los comunes, entre las de los tres). Las ventas de grano van por los kilos cosechados.' },
         campoCampana,
         { k: 'notas', label: 'Notas', type: 'textarea' }
       ],
@@ -2674,7 +2690,7 @@
     db.labores.forEach(l => consumosLabor(l).filter(c => c.productoId === pid && (tit == null || c.titular === tit)).forEach(c => out.push({ fecha: l.fecha, cant: -(+c.cantidad || 0), txt: `${l.tipo} · ${(finca(l.fincaId) || {}).nombre || ''}${c.titular === COMUN ? ' · para ' + (c.para || titularDe(l.fincaId) || '¿?') : ''}`, titular: c.titular, labor: l.id })));
     db.ajustes.filter(a => a.productoId === pid && (tit == null || a.titular === tit)).forEach(a => out.push({ fecha: a.fecha, cant: +a.cantidad || 0, txt: `Ajuste${a.motivo ? ' · ' + a.motivo : ''}`, titular: a.titular, ajuste: a.id }));
     const g = gasoleoAlm();
-    if (g && g.id === pid) { const R = repartoGasoleo(); db.labores.forEach(l => { const x = R.porLabor.get(l.id); if (!x) return; x.partes.forEach(pt => { if (tit == null || pt.t === tit) out.push({ fecha: l.fecha, cant: -Math.round(pt.q * 1000) / 1000, txt: `Gasóleo · ${l.tipo} · ${(finca(l.fincaId) || {}).nombre || ''}${pt.t ? '' : ''}`, titular: pt.t, labor: l.id }); }); }); }
+    if (g && g.id === pid) { const R = repartoGasoleo(); laboresMaq().forEach(l => { const x = R.porLabor.get(l.id); if (!x) return; x.partes.forEach(pt => { if (tit == null || pt.t === tit) out.push({ fecha: l.fecha, cant: -Math.round(pt.q * 1000) / 1000, txt: `Gasóleo · ${l.tipo} · ${(finca(l.fincaId) || {}).nombre || ''}${pt.t ? '' : ''}`, titular: pt.t, labor: l.deCosecha ? undefined : l.id }); }); }); }
     return out.sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
   }
   const existencias = (pid, tit) => (Math.round(sum(movimientosProducto(pid, tit), m => m.cant) * 1000) / 1000) || 0;
@@ -4384,11 +4400,12 @@
   // Labores hechas con cada equipo en la campaña: hectáreas, horas y coste
   function usoEquipos(campana) {
     const out = new Map(); db.equipos.forEach(e => out.set(e.id, { e, ha: 0, n: 0 }));
-    db.labores.forEach(l => {
+    const ls = laboresMaq();
+    ls.forEach(l => {
       const o = out.get(l.equipoId); if (!o || (campana && l.campana !== campana)) return;
       o.ha += l.superficie > 0 ? +l.superficie : +((finca(l.fincaId) || {}).superficie) || 0; o.n++;
     });
-    db.labores.forEach(l => { const o = out.get(l.equipoId); if (!o || (campana && l.campana !== campana)) return; o.litros = (o.litros || 0) + litrosLabor(l); o.gas = (o.gas || 0) + (costeGasLabor(l) || 0); });
+    ls.forEach(l => { const o = out.get(l.equipoId); if (!o || (campana && l.campana !== campana)) return; o.litros = (o.litros || 0) + litrosLabor(l); o.gas = (o.gas || 0) + (costeGasLabor(l) || 0); });
     const pr = precioGasoleo(100);
     out.forEach(o => { const c = costeEquipo(o.e); o.horas = +o.e.rendimiento > 0 ? o.ha / +o.e.rendimiento : null; o.gasHa = +o.e.gasoleo > 0 && pr != null ? +o.e.gasoleo * pr : 0; o.porHa = c.porHa != null ? c.porHa + o.gasHa : null; o.coste = c.porHa != null ? o.ha * c.porHa + (o.gas || 0) : null; o.faltan = c.faltan; });
     return [...out.values()];
@@ -5047,7 +5064,14 @@
     try { if (sessionStorage.getItem(KEY + '.actualizada')) { sessionStorage.removeItem(KEY + '.actualizada'); setTimeout(() => toast(`App actualizada a la versión ${VERSION}`), 400); } } catch (e) { /* ignorar */ }
   }
   try { const v = localStorage.getItem(KEY + '.vista'); if (v === 'mapa' || v === 'lista') ui.vistaFincas = v; } catch (e) { /* ignorar */ }
-  // Facturas guardadas antes de que entrasen solas en Cuentas
-  { const sin = db.documentos.filter(d => d.tipo === 'factura' && (d.total || d.base) && !db.movimientos.some(m => m.docId === d.id)); if (sin.length) { sin.forEach(syncMovFactura); guardar(false); } }
+  // Cuentas al día: cada factura, PAC/seguro y gasto de taller tiene su apunte (por si vienen de una copia o de una versión anterior)
+  // y no quedan apuntes de cosas ya borradas
+  { const n0 = db.movimientos.length; let cambio = false;
+    db.movimientos = db.movimientos.filter(m => !((m.docId && !db.documentos.some(d => d.id === m.docId)) || (m.fijoId && !db.fijos.some(x => x.id === m.fijoId)) || (m.tallerId && !db.taller.some(x => x.id === m.tallerId))));
+    if (db.movimientos.length !== n0) cambio = true;
+    db.documentos.filter(d => d.tipo === 'factura' && (d.total || d.base) && !db.movimientos.some(m => m.docId === d.id)).forEach(d => { syncMovFactura(d); cambio = true; });
+    db.fijos.filter(x => importeFijo(x) && !db.movimientos.some(m => m.fijoId === x.id)).forEach(x => { syncMovFijo(x); cambio = true; });
+    db.taller.filter(x => +x.importe > 0 && !db.movimientos.some(m => m.tallerId === x.id)).forEach(x => { syncMovTaller(x); cambio = true; });
+    if (cambio) guardar(false); }
   render();
 })();
