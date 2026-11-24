@@ -2,7 +2,7 @@
 (function () {
   // ---------- Constantes ----------
   const KEY = 'cuadernoCampo.v1';
-  const VERSION = '2.8.1';
+  const VERSION = '2.8.2';
   const TIPOS_LABOR = ['Labrado', 'Siembra', 'Abonado', 'Tratamiento', 'Rodillo', 'Cosecha', 'Empacado', 'Otro'];
   const CON_DOSIS = ['Siembra', 'Abonado', 'Tratamiento'];
   const UNIDADES = ['kg/ha', 'L/ha', 'g/ha', 'cc/ha', 'kg', 'L'];
@@ -329,12 +329,39 @@
   const ivaPorTipo = p => !p ? 21 : esGasoleoP(p) ? 21 : ['Fitosanitario', 'Abono', 'Semilla'].includes(p.tipo) ? 10 : 21;
   const ivaLinea = (x, d) => x.iva != null && x.iva !== '' && !Number.isNaN(+x.iva) ? +x.iva : d && d.tipo === 'factura' && d.iva != null && d.iva !== '' ? +d.iva : ivaPorTipo(producto(x.productoId));
   const importeConIva = (x, d) => { const imp = +x.importe || (+x.precio ? +x.precio * (+x.cantidad || 0) : 0); return imp * (1 + ivaLinea(x, d) / 100); };
+  // Compras de un producto con su coste (IVA incluido). Manda la factura: si el albarán está en una factura que trae ese producto
+  // con precio, se usa el precio de la factura; si la factura solo tiene la base, se aplica su descuento o subida sobre los albaranes;
+  // si aún no hay factura, el precio del albarán. Al meter la factura se recalcula todo solo. Las facturas sin albaranes de ese
+  // producto cuentan como compra (solo para el precio, no son entradas del almacén).
+  let cacheCompras = { k: '', m: new Map() };
+  function comprasProducto(pid) {
+    const k = `${db.ultimoCambio}|${db.documentos.length}`; if (cacheCompras.k !== k) cacheCompras = { k, m: new Map() };
+    if (cacheCompras.m.has(pid)) return cacheCompras.m.get(pid);
+    const conImp = x => +x.importe > 0 || +x.precio > 0;
+    const facs = db.documentos.filter(d => d.tipo === 'factura'); const facDe = new Map(); facs.forEach(f => (f.albaranes || []).forEach(a => facDe.set(a, f)));
+    const puFac = f => { const ls = (f.lineas || []).filter(x => x.productoId === pid && +x.cantidad > 0 && conImp(x)); return ls.length ? sum(ls, x => importeConIva(x, f)) / sum(ls, x => +x.cantidad) : null; };
+    const factorFac = f => { if ((f.lineas || []).some(conImp)) return null; const s0 = sum(db.documentos.filter(a => (f.albaranes || []).includes(a.id)).flatMap(a => a.lineas || []), x => +x.importe || (+x.precio * (+x.cantidad || 0)) || 0);
+      const b = +f.base; if (!(s0 > 0 && b > 0)) return null; const r = b / s0; return r > 0.5 && r < 1.5 ? r : null; };
+    const out = [];
+    for (const a of db.documentos.filter(d => d.tipo === 'albaran')) for (const x of (a.lineas || [])) {
+      if (x.productoId !== pid || !(+x.cantidad > 0)) continue; const q = +x.cantidad; const f = facDe.get(a.id);
+      const pu = f ? puFac(f) : null; let i = null, de = 'albaran';
+      if (pu != null) { i = pu * q; de = 'factura'; }
+      else if (conImp(x)) { const fr = f ? factorFac(f) : null; i = importeConIva(x, a) * (fr || 1); if (fr) de = 'factura'; }
+      out.push({ q, i, t: a.titular || '', fecha: a.fecha || '', docId: a.id, de });
+    }
+    for (const f of facs) {
+      if (db.documentos.some(a => (f.albaranes || []).includes(a.id) && (a.lineas || []).some(x => x.productoId === pid))) continue;
+      for (const x of (f.lineas || [])) if (x.productoId === pid && +x.cantidad > 0) out.push({ q: +x.cantidad, i: conImp(x) ? importeConIva(x, f) : null, t: f.titular || '', fecha: f.fecha || '', docId: f.id, de: 'factura', soloFactura: true });
+    }
+    cacheCompras.m.set(pid, out); return out;
+  }
   function repartoGasoleo() {
     const g = gasoleoAlm(); if (!g) return null;
     const k = `${db.ultimoCambio}|${db.labores.length}|${db.documentos.length}|${db.ajustes.length}|${db.equipos.length}|${g.id}`;
     if (cacheGas.k === k) return cacheGas.r;
     const ev = [];
-    db.documentos.filter(d => d.tipo === 'albaran').forEach(d => (d.lineas || []).forEach(x => { const q = +x.cantidad || 0; if (x.productoId !== g.id || q <= 0) return; const imp = importeConIva(x, d); ev.push({ f: d.fecha || '', o: 0, q, t: d.titular || '', pu: imp > 0 ? imp / q : null }); }));
+    comprasProducto(g.id).filter(x => !x.soloFactura).forEach(x => ev.push({ f: x.fecha, o: 0, q: x.q, t: x.t, pu: x.i > 0 ? x.i / x.q : null }));
     db.ajustes.filter(a => a.productoId === g.id).forEach(a => { const q = +a.cantidad || 0; if (q > 0) ev.push({ f: a.fecha || '', o: 0, q, t: a.titular || '', pu: null }); else if (q < 0) ev.push({ f: a.fecha || '', o: 1, q: -q, t: a.titular || '' }); });
     db.labores.forEach(l => { const q = litrosLabor(l); if (q) ev.push({ f: l.fecha || '', o: 2, q, l }); });
     ev.sort((a, b) => a.f.localeCompare(b.f) || a.o - b.o);
@@ -389,7 +416,7 @@
   function precioMedioProducto(pid, tit) {
     const k = `${db.ultimoCambio}|${db.documentos.length}|${db.ajustes.length}|${db.movimientos.length}`; if (cachePrecio.k !== k) cachePrecio = { k, m: new Map() };
     const ck = pid + '|' + (tit || ''); if (cachePrecio.m.has(ck)) return cachePrecio.m.get(ck);
-    const lin = t => [...db.documentos.filter(d => t == null || d.titular === t).flatMap(d => (d.lineas || []).filter(x => x.productoId === pid && +x.cantidad > 0 && (+x.importe > 0 || +x.precio > 0)).map(x => ({ q: +x.cantidad, i: importeConIva(x, d) }))),
+    const lin = t => [...comprasProducto(pid).filter(x => (t == null || x.t === t) && x.i > 0).map(x => ({ q: x.q, i: x.i })),
       ...db.ajustes.filter(a => a.productoId === pid && a.propia && +a.cantidad > 0 && (t == null || a.titular === t)).map(a => ({ q: +a.cantidad, v: (valorSemillaPropia(a) || {}).valor })).filter(x => x.v != null).map(x => ({ q: x.q, i: x.q * x.v }))];
     let ls = lin(tit); if (!ls.length) ls = lin(null);
     const r = ls.length ? sum(ls, x => x.i) / sum(ls, x => x.q) : null;
@@ -1342,7 +1369,7 @@
     h += abo + nitroHTML(r);
     if (r.consumo.length) h += `<div class="small">Se gastan: ${r.consumo.map(x => `<b>${fmtCant(x.q, p.unidad, p)}</b>${x.t ? ' de ' + esc(x.t) : ''} (tiene ${fmtCant(x.ex, p.unidad, p)})`).join(' · ')}</div>`;
     if (r.consumo.length) { const cs = r.consumo.map(x => { const pr = precioMedioProducto(p.id, x.t); return pr != null ? { c: x.q * pr, pr } : null; }); const tot = sum(cs.filter(Boolean), x => x.c);
-      h += cs.some(Boolean) ? `<div class="small">Coste del producto: <b>${eur(tot, 2)}</b> <span class="muted">(a ${fmtN(cs.find(Boolean).pr, 4)} €/${esc(p.unidad)}, ${semillaProvisional(p.id) ? 'con el precio aproximado de vuestra semilla: se ajusta al apuntar las ventas' : 'precio medio de tus albaranes, IVA incluido'})${parseNum(v.coste) > 0 ? ' · como has puesto el coste a mano, cuenta ese' : ''}</span></div>` : '<div class="small muted">Sin precio en los albaranes de este producto: no puedo calcular su coste.</div>'; }
+      h += cs.some(Boolean) ? `<div class="small">Coste del producto: <b>${eur(tot, 2)}</b> <span class="muted">(a ${fmtN(cs.find(Boolean).pr, 4)} €/${esc(p.unidad)}, ${semillaProvisional(p.id) ? 'con el precio aproximado de vuestra semilla: se ajusta al apuntar las ventas' : 'precio medio de lo comprado: el de la factura y, si aún no ha llegado, el del albarán; IVA incluido'})${parseNum(v.coste) > 0 ? ' · como has puesto el coste a mano, cuenta ese' : ''}</span></div>` : '<div class="small muted">Sin precio en los albaranes de este producto: no puedo calcular su coste.</div>'; }
     if (r.graves.length) h += `<div class="aviso-norma"><b>⚠ Puedes estar incumpliendo la normativa</b><ul>${r.graves.map(g => `<li>${esc(g)}</li>`).join('')}</ul></div>`;
     if (r.notas.length) h += `<ul class="small muted notas">${r.notas.map(g => `<li>${esc(g)}</li>`).join('')}</ul>`;
     if (reg) h += `<a class="small" href="${urlFicha(reg.id)}" target="_blank" rel="noopener">Ver ficha oficial del Ministerio</a>`;
