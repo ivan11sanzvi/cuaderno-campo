@@ -406,3 +406,15 @@ details.carpeta-inv > summary svg, details.fj-tit > summary svg { width: 18px; h
 .selpanel .end { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
 .linea-iva { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
 .linea-iva select { padding: 4px 8px; min-height: 0; width: auto; }
+/* Cuentas: facturación y rentabilidad */
+.segs-tit button { font-size: .85rem; }
+.cmp { margin: -6px 0 0; }
+h3.sec.mes { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+h3.sec.mes .small { font-weight: 600; }
+.pend, .rent-res, .precios { display: flex; flex-direction: column; gap: 8px; }
+.pend .list { margin-top: 2px; }
+.rent-res .sp { gap: 10px; }
+.precios .sp { gap: 8px; flex-wrap: wrap; }
+.pg-est { display: inline-flex; align-items: center; gap: 6px; }
+.pg-est input { width: 86px; padding: 6px 8px; min-height: 0; text-align: right; }
+tr[data-act] { cursor: pointer; }
