@@ -2,7 +2,7 @@
 (function () {
   // ---------- Constantes ----------
   const KEY = 'cuadernoCampo.v1';
-  const VERSION = '2.8.0';
+  const VERSION = '2.8.1';
   const TIPOS_LABOR = ['Labrado', 'Siembra', 'Abonado', 'Tratamiento', 'Rodillo', 'Cosecha', 'Empacado', 'Otro'];
   const CON_DOSIS = ['Siembra', 'Abonado', 'Tratamiento'];
   const UNIDADES = ['kg/ha', 'L/ha', 'g/ha', 'cc/ha', 'kg', 'L'];
@@ -323,12 +323,18 @@
   }
   const litrosLabor = l => { const e = equipo(l.equipoId); return e && +e.gasoleo > 0 ? Math.round(+e.gasoleo * haLabor(l) * 100) / 100 : 0; };
   let cacheGas = { k: '', r: null };
+  // IVA de cada línea de albarán o factura: el que se ponga en la línea; si no, el de la factura; si no, el habitual del tipo
+  // (fitosanitarios, abonos y semillas 10 %, gasóleo y lo demás 21 %). Vosotros no lo recuperáis, así que es coste.
+  const esGasoleoP = p => !!p && (p.tipo === 'Combustible' || /gas[oó]le?o|gasoil/i.test(p.nombre || ''));
+  const ivaPorTipo = p => !p ? 21 : esGasoleoP(p) ? 21 : ['Fitosanitario', 'Abono', 'Semilla'].includes(p.tipo) ? 10 : 21;
+  const ivaLinea = (x, d) => x.iva != null && x.iva !== '' && !Number.isNaN(+x.iva) ? +x.iva : d && d.tipo === 'factura' && d.iva != null && d.iva !== '' ? +d.iva : ivaPorTipo(producto(x.productoId));
+  const importeConIva = (x, d) => { const imp = +x.importe || (+x.precio ? +x.precio * (+x.cantidad || 0) : 0); return imp * (1 + ivaLinea(x, d) / 100); };
   function repartoGasoleo() {
     const g = gasoleoAlm(); if (!g) return null;
     const k = `${db.ultimoCambio}|${db.labores.length}|${db.documentos.length}|${db.ajustes.length}|${db.equipos.length}|${g.id}`;
     if (cacheGas.k === k) return cacheGas.r;
     const ev = [];
-    db.documentos.filter(d => d.tipo === 'albaran').forEach(d => (d.lineas || []).forEach(x => { const q = +x.cantidad || 0; if (x.productoId !== g.id || q <= 0) return; const imp = +x.importe || (+x.precio ? +x.precio * q : 0); ev.push({ f: d.fecha || '', o: 0, q, t: d.titular || '', pu: imp > 0 ? imp / q : null }); }));
+    db.documentos.filter(d => d.tipo === 'albaran').forEach(d => (d.lineas || []).forEach(x => { const q = +x.cantidad || 0; if (x.productoId !== g.id || q <= 0) return; const imp = importeConIva(x, d); ev.push({ f: d.fecha || '', o: 0, q, t: d.titular || '', pu: imp > 0 ? imp / q : null }); }));
     db.ajustes.filter(a => a.productoId === g.id).forEach(a => { const q = +a.cantidad || 0; if (q > 0) ev.push({ f: a.fecha || '', o: 0, q, t: a.titular || '', pu: null }); else if (q < 0) ev.push({ f: a.fecha || '', o: 1, q: -q, t: a.titular || '' }); });
     db.labores.forEach(l => { const q = litrosLabor(l); if (q) ev.push({ f: l.fecha || '', o: 2, q, l }); });
     ev.sort((a, b) => a.f.localeCompare(b.f) || a.o - b.o);
@@ -383,7 +389,7 @@
   function precioMedioProducto(pid, tit) {
     const k = `${db.ultimoCambio}|${db.documentos.length}|${db.ajustes.length}|${db.movimientos.length}`; if (cachePrecio.k !== k) cachePrecio = { k, m: new Map() };
     const ck = pid + '|' + (tit || ''); if (cachePrecio.m.has(ck)) return cachePrecio.m.get(ck);
-    const lin = t => [...db.documentos.filter(d => t == null || d.titular === t).flatMap(d => (d.lineas || []).filter(x => x.productoId === pid && +x.cantidad > 0 && (+x.importe > 0 || +x.precio > 0)).map(x => ({ q: +x.cantidad, i: +x.importe || +x.precio * +x.cantidad }))),
+    const lin = t => [...db.documentos.filter(d => t == null || d.titular === t).flatMap(d => (d.lineas || []).filter(x => x.productoId === pid && +x.cantidad > 0 && (+x.importe > 0 || +x.precio > 0)).map(x => ({ q: +x.cantidad, i: importeConIva(x, d) }))),
       ...db.ajustes.filter(a => a.productoId === pid && a.propia && +a.cantidad > 0 && (t == null || a.titular === t)).map(a => ({ q: +a.cantidad, v: (valorSemillaPropia(a) || {}).valor })).filter(x => x.v != null).map(x => ({ q: x.q, i: x.q * x.v }))];
     let ls = lin(tit); if (!ls.length) ls = lin(null);
     const r = ls.length ? sum(ls, x => x.i) / sum(ls, x => x.q) : null;
@@ -1336,7 +1342,7 @@
     h += abo + nitroHTML(r);
     if (r.consumo.length) h += `<div class="small">Se gastan: ${r.consumo.map(x => `<b>${fmtCant(x.q, p.unidad, p)}</b>${x.t ? ' de ' + esc(x.t) : ''} (tiene ${fmtCant(x.ex, p.unidad, p)})`).join(' · ')}</div>`;
     if (r.consumo.length) { const cs = r.consumo.map(x => { const pr = precioMedioProducto(p.id, x.t); return pr != null ? { c: x.q * pr, pr } : null; }); const tot = sum(cs.filter(Boolean), x => x.c);
-      h += cs.some(Boolean) ? `<div class="small">Coste del producto: <b>${eur(tot, 2)}</b> <span class="muted">(a ${fmtN(cs.find(Boolean).pr, 4)} €/${esc(p.unidad)}, ${semillaProvisional(p.id) ? 'con el precio aproximado de vuestra semilla: se ajusta al apuntar las ventas' : 'precio medio de tus albaranes'})${parseNum(v.coste) > 0 ? ' · como has puesto el coste a mano, cuenta ese' : ''}</span></div>` : '<div class="small muted">Sin precio en los albaranes de este producto: no puedo calcular su coste.</div>'; }
+      h += cs.some(Boolean) ? `<div class="small">Coste del producto: <b>${eur(tot, 2)}</b> <span class="muted">(a ${fmtN(cs.find(Boolean).pr, 4)} €/${esc(p.unidad)}, ${semillaProvisional(p.id) ? 'con el precio aproximado de vuestra semilla: se ajusta al apuntar las ventas' : 'precio medio de tus albaranes, IVA incluido'})${parseNum(v.coste) > 0 ? ' · como has puesto el coste a mano, cuenta ese' : ''}</span></div>` : '<div class="small muted">Sin precio en los albaranes de este producto: no puedo calcular su coste.</div>'; }
     if (r.graves.length) h += `<div class="aviso-norma"><b>⚠ Puedes estar incumpliendo la normativa</b><ul>${r.graves.map(g => `<li>${esc(g)}</li>`).join('')}</ul></div>`;
     if (r.notas.length) h += `<ul class="small muted notas">${r.notas.map(g => `<li>${esc(g)}</li>`).join('')}</ul>`;
     if (reg) h += `<a class="small" href="${urlFicha(reg.id)}" target="_blank" rel="noopener">Ver ficha oficial del Ministerio</a>`;
@@ -2758,6 +2764,7 @@
           const l = v.lineas[i]; if (!l) return;
           l.cantidad = parseNum(row.querySelector('[data-c]').value, true); l.precio = parseNum(row.querySelector('[data-p]').value); const imp = parseNum(row.querySelector('[data-i]').value, true);
           l.importe = Number.isFinite(imp) && imp !== null ? imp : null;
+          const iv = row.querySelector('[data-iva]'); if (iv) l.iva = +iv.value;
           const rn = row.querySelector('[data-rn]');
           if (rn) { const r3 = ['[data-rn]', '[data-rp]', '[data-rk]'].map(q => parseNum(row.querySelector(q).value)); l._riq = r3.some(x => x != null && !Number.isNaN(x)) ? r3.map(x => Number.isFinite(x) ? x : 0) : null; }
         });
@@ -2773,10 +2780,17 @@
       const pintarLineas = () => {
         el.querySelector('#dLineas').innerHTML = v.lineas.length ? v.lineas.map((l, i) => { const p = producto(l.productoId) || { nombre: '¿?', unidad: '' };
           return `<div class="linea"><div class="linea-top"><b>${esc(p.nombre)}</b><span class="small muted">${esc([p.tipo, p.registro ? 'Nº reg. ' + p.registro : ''].filter(Boolean).join(' · '))}</span><button type="button" class="iconbtn" data-dell="${i}" aria-label="Quitar producto">${ico.x}</button></div>
-            <div class="grid3"><label class="mini">Cantidad (${esc(p.unidad)})<input data-c inputmode="decimal" value="${esc(numStr(l.cantidad))}" autocomplete="off"></label><label class="mini">Precio €/${esc(p.unidad)}<input data-p inputmode="decimal" value="${esc(numStr(l.precio))}" autocomplete="off"></label><label class="mini">Importe €<input data-i inputmode="decimal" value="${esc(numStr(l.importe))}" autocomplete="off"></label></div>${p.tipo === 'Abono' ? (() => { const ri = l._riq ? { n: l._riq[0], p: l._riq[1], k: l._riq[2] } : riqueza(p); return `<div class="grid3 riq"><label class="mini">N %<input data-rn inputmode="decimal" value="${esc(numStr(ri ? ri.n : null))}" autocomplete="off"></label><label class="mini">P₂O₅ %<input data-rp inputmode="decimal" value="${esc(numStr(ri ? ri.p : null))}" autocomplete="off"></label><label class="mini">K₂O %<input data-rk inputmode="decimal" value="${esc(numStr(ri ? ri.k : null))}" autocomplete="off"></label></div>${ri && ri.auto ? '<div class="small muted">Riqueza sacada del nombre: compruébala con el saco.</div>' : ri ? '' : '<div class="small neg">Pon la riqueza del saco (N-P-K) para calcular el abonado.</div>'}`; })() : ''}</div>`; }).join('')
-          + `<p class="small" style="margin:6px 2px 0"><b id="dTot">Total productos: ${eur(totalDoc(v), 2)}</b>${esFac ? '' : ' (sin IVA)'}</p>` : '<p class="note" style="margin:0">Añade cada producto con su cantidad.</p>';
+            <div class="grid3"><label class="mini">Cantidad (${esc(p.unidad)})<input data-c inputmode="decimal" value="${esc(numStr(l.cantidad))}" autocomplete="off"></label><label class="mini">Precio €/${esc(p.unidad)}<input data-p inputmode="decimal" value="${esc(numStr(l.precio))}" autocomplete="off"></label><label class="mini">Importe €<input data-i inputmode="decimal" value="${esc(numStr(l.importe))}" autocomplete="off"></label></div>${esFac ? '' : (() => { const iv = ivaLinea(l, v); return `<div class="linea-iva small"><label>IVA <select data-iva>${[...new Set([0, 4, 5, 10, 21, iv])].sort((a, b) => a - b).map(n => `<option value="${n}"${n === iv ? ' selected' : ''}>${fmtN(n, 0)} %</option>`).join('')}</select></label><span class="muted" data-civa></span></div>`; })()}${p.tipo === 'Abono' ? (() => { const ri = l._riq ? { n: l._riq[0], p: l._riq[1], k: l._riq[2] } : riqueza(p); return `<div class="grid3 riq"><label class="mini">N %<input data-rn inputmode="decimal" value="${esc(numStr(ri ? ri.n : null))}" autocomplete="off"></label><label class="mini">P₂O₅ %<input data-rp inputmode="decimal" value="${esc(numStr(ri ? ri.p : null))}" autocomplete="off"></label><label class="mini">K₂O %<input data-rk inputmode="decimal" value="${esc(numStr(ri ? ri.k : null))}" autocomplete="off"></label></div>${ri && ri.auto ? '<div class="small muted">Riqueza sacada del nombre: compruébala con el saco.</div>' : ri ? '' : '<div class="small neg">Pon la riqueza del saco (N-P-K) para calcular el abonado.</div>'}`; })() : ''}</div>`; }).join('')
+          + `<p class="small" style="margin:6px 2px 0"><b id="dTot"></b></p>` : '<p class="note" style="margin:0">Añade cada producto con su cantidad.</p>';
+        pintarTotal();
       };
-      const pintarTotal = () => { const t = el.querySelector('#dTot'); if (t) t.textContent = `Total productos: ${eur(totalDoc(v), 2)}`; };
+      const pintarTotal = () => {
+        const t = el.querySelector('#dTot'); if (!t) return;
+        if (esFac) { t.textContent = `Total productos: ${eur(totalDoc(v), 2)}`; return; }
+        const base = totalDoc(v), conIva = Math.round(sum(v.lineas, x => importeConIva(x, v)) * 100) / 100;
+        t.textContent = base ? `Total productos: ${eur(base, 2)} + IVA ${eur(conIva - base, 2)} = ${eur(conIva, 2)}` : 'Total productos: 0,00 €';
+        el.querySelectorAll('.linea').forEach((row, i) => { const x = v.lineas[i], o = row.querySelector('[data-civa]'); if (x && o) { const imp = +x.importe || (+x.precio ? +x.precio * (+x.cantidad || 0) : 0); o.textContent = imp ? `con IVA: ${eur(importeConIva(x, v), 2)}` : ''; } });
+      };
       const pintarAlbs = () => {
         if (!esFac) return;
         const cont = el.querySelector('#dAlbs');
@@ -2866,7 +2880,7 @@
           return;
         }
         if (e.target.id === 'dTit' || e.target.id === 'dProv') { leer(); pintarAlbs(); }
-        todo(); if (e.target.matches('[data-alb]')) pintarCot();
+        todo(); if (e.target.matches('[data-alb]')) pintarCot(); if (e.target.matches('[data-iva]')) pintarTotal();
       });
       form.addEventListener('click', e => {
         if (e.target.closest('[data-leer]')) { leerDocumento(); return; }
