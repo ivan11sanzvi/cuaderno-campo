@@ -437,3 +437,5 @@ tr[data-act] { cursor: pointer; }
 .av-acc .iconbtn svg { width: 18px; height: 18px; }
 .avisos .list, .avisos .row, .avisos h3 { flex-shrink: 0; }
 .av-acc input[type=date] { width: 132px; font-size: .85rem; }
+/* En las hojas, nada se encoge: el contenido baja con la barra de la hoja (si no, las listas largas se cortaban) */
+.sheet .body > * { flex-shrink: 0; }
